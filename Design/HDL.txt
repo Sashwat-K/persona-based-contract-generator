@@ -65,6 +65,7 @@ Key Points:
 - Backend is never directly internet-exposed.
 - All crypto operations occur locally.
 - Backend stores only encrypted or hashed data.
+- Contract CLI (Using Contract Go) is used in desktop application
 
 ---------------------------------------------------------------------
 4. PERSONAS & RESPONSIBILITIES
@@ -77,7 +78,7 @@ Provides:
 - Encryption certificate
 
 Local Actions:
-- Encrypt workload using contract-cli
+- Encrypt workload using contract-cli (using contract-go)
 - Compute SHA256 hash of encrypted workload
 - Sign hash
 
@@ -131,11 +132,10 @@ Local Actions:
    - encrypted_symmetric_key
 5. Decrypt symmetric key locally.
 6. Decrypt staged environment section.
-7. Perform final encryption of environment using attestation details.
-8. Assemble final YAML contract locally:
+7. Perform final encryption of environment using contract-cli
+8. Assemble final YAML contract 
 9. Compute:
    contract_hash = SHA256(contract.yaml)
-
 10. Sign contract_hash.
 11. Upload:
     - contract.yaml
@@ -346,11 +346,6 @@ Components:
 - ExportService
 - UserService
 - Repository Layer (sqlc + pgx)
-
-Removed:
-- contract-go
-- Backend-side crypto execution
-- Backend-side contract assembly
 
 Database:
 - PostgreSQL 16
