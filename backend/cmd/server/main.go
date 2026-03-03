@@ -53,15 +53,21 @@ func main() {
 	queries := repository.New(pool)
 
 	// Initialize services
+	auditService := service.NewAuditService(queries)
+	sectionService := service.NewSectionService(queries)
+	buildService := service.NewBuildService(queries, auditService)
 	authService := service.NewAuthService(queries, cfg.BcryptCost)
 	userService := service.NewUserService(queries, cfg.BcryptCost)
 
 	// Initialize handlers
+	auditHandler := handler.NewAuditHandler(auditService)
+	sectionHandler := handler.NewSectionHandler(sectionService)
+	buildHandler := handler.NewBuildHandler(buildService)
 	authHandler := handler.NewAuthHandler(authService)
 	userHandler := handler.NewUserHandler(userService)
 
 	// Build router
-	r := buildRouter(cfg, queries, authHandler, userHandler)
+	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -110,6 +116,9 @@ func buildRouter(
 	queries repository.Querier,
 	authHandler *handler.AuthHandler,
 	userHandler *handler.UserHandler,
+	buildHandler *handler.BuildHandler,
+	sectionHandler *handler.SectionHandler,
+	auditHandler *handler.AuditHandler,
 ) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -144,6 +153,26 @@ func buildRouter(
 			r.With(middleware.RequireOwnerOrAdmin("id")).Get("/{id}/tokens", userHandler.ListTokens)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Post("/{id}/tokens", userHandler.CreateToken)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Delete("/{id}/tokens/{token_id}", userHandler.RevokeToken)
+		})
+
+		// Builds management
+		r.Route("/builds", func(r chi.Router) {
+			r.Get("/", buildHandler.ListBuilds) // Any authenticated user can list builds
+			r.With(middleware.RequireRole("ADMIN")).Post("/", buildHandler.CreateBuild)
+
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", buildHandler.GetBuild)
+				r.Patch("/status", buildHandler.TransitionStatus) // Role validation done internally in service based on transition state
+				r.With(middleware.RequireRole("AUDITOR")).Post("/finalize", buildHandler.FinalizeBuild)
+				r.With(middleware.RequireRole("ADMIN")).Post("/cancel", buildHandler.CancelBuild)
+
+				// Sections
+				r.Get("/sections", sectionHandler.GetSections)
+				r.Post("/sections", sectionHandler.SubmitSection) // Role validation done internally
+
+				// Audit Trail
+				r.Get("/audit-trail", auditHandler.GetAuditTrail)
+			})
 		})
 	})
 
