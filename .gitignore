@@ -63,3 +63,6 @@ docker-volume/
 
 # CLI
 contract-cli
+
+# Save data
+data
