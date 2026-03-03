@@ -22,8 +22,9 @@ sql:
           - db_type: "inet"
             go_type: "string"
           - db_type: "jsonb"
-            go_type: "json.RawMessage"
-            import: "encoding/json"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
           - db_type: "build_status"
             go_type: "string"
           - db_type: "persona_role"
