@@ -65,9 +65,10 @@ func main() {
 	buildHandler := handler.NewBuildHandler(buildService)
 	authHandler := handler.NewAuthHandler(authService)
 	userHandler := handler.NewUserHandler(userService)
+	swaggerHandler := handler.NewSwaggerHandler()
 
 	// Build router
-	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler)
+	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler, swaggerHandler)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -119,6 +120,7 @@ func buildRouter(
 	buildHandler *handler.BuildHandler,
 	sectionHandler *handler.SectionHandler,
 	auditHandler *handler.AuditHandler,
+	swaggerHandler *handler.SwaggerHandler,
 ) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -132,6 +134,9 @@ func buildRouter(
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
+	r.Get("/openapi.json", swaggerHandler.OpenAPISpec)
+	r.Get("/swagger", swaggerHandler.UI)
+	r.Get("/swagger/", swaggerHandler.UI)
 
 	// Auth routes (unauthenticated)
 	r.Post("/auth/login", authHandler.Login)

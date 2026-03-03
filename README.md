@@ -54,14 +54,19 @@ This repository is a monorepo containing:
 
 2. **Run Migrations:**
    ```bash
-   cd backend
-   migrate -path ./migrations -database "postgres://hpcr:devpass@localhost:5432/hpcr_builder?sslmode=disable" up
+   docker run --rm -v "$PWD/backend/migrations:/migrations" --network host migrate/migrate \
+  -path=/migrations \
+  -database "postgres://hpcr:devpass@localhost:5432/hpcr_builder?sslmode=disable" up
    ```
 
 3. **Start the API Server:**
    ```bash
    DATABASE_URL="postgres://hpcr:devpass@localhost:5432/hpcr_builder?sslmode=disable" go run ./cmd/server/
    ```
+
+4. **Open API Documentation (Swagger UI):**
+   - Swagger UI: `http://localhost:8080/swagger`
+   - OpenAPI JSON: `http://localhost:8080/openapi.json`
 
 *(On first boot with an empty database, the server will automatically seed an initial `System Admin` user).*
 
