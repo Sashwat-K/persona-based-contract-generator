@@ -1,9 +1,9 @@
 # HPCR Contract Builder — Low-Level Design (LLD)
 
-> **Version:** 0.1  
-> **Date:** 2026-03-03  
+> **Version:** 0.2  
+> **Date:** 2026-04-05  
 > **Status:** Draft  
-> **Parent Document:** [high-level-design.md](file:///Users/sashwatk/Development/github.com/Sashwat-K/persona-based-contract-generator/Design/high-level-design.md)
+> **Parent Document:** [high-level-design.md](./high-level-design.md)
 
 ---
 
@@ -22,18 +22,19 @@ backend/
 │   ├── middleware/
 │   │   ├── auth.go                  # Bearer token authentication
 │   │   ├── rbac.go                  # Role-based access control
+│   │   ├── assignment.go            # Per-build assignment enforcement
 │   │   ├── logging.go               # Request/response logging
 │   │   └── ratelimit.go             # Per-IP / per-user rate limiting
 │   ├── handler/
 │   │   ├── auth_handler.go          # POST /auth/login, /auth/logout
-│   │   ├── user_handler.go          # User CRUD + token management
-│   │   ├── build_handler.go         # Build CRUD
+│   │   ├── user_handler.go          # User CRUD + token + public key management
+│   │   ├── build_handler.go         # Build CRUD + assignments
 │   │   ├── section_handler.go       # Workload, env, attestation, finalize
 │   │   └── audit_handler.go         # Audit log, verify, export, userdata
 │   ├── service/
 │   │   ├── auth_service.go          # Login/logout logic, token hashing
-│   │   ├── user_service.go          # User + role + API token management
-│   │   ├── build_service.go         # Build lifecycle & state machine
+│   │   ├── user_service.go          # User + role + API token + public key mgmt
+│   │   ├── build_service.go         # Build lifecycle, state machine, assignments
 │   │   ├── section_service.go       # Section submission & validation
 │   │   ├── audit_service.go         # Audit event creation & hash chain
 │   │   ├── verification_service.go  # Hash chain + signature verification
@@ -42,6 +43,7 @@ backend/
 │   │   ├── queries/                 # sqlc SQL query files
 │   │   │   ├── users.sql
 │   │   │   ├── builds.sql
+│   │   │   ├── build_assignments.sql
 │   │   │   ├── sections.sql
 │   │   │   ├── audit_events.sql
 │   │   │   └── api_tokens.sql
@@ -55,18 +57,26 @@ backend/
 │   │   └── errors.go                # Domain-specific error types
 │   └── crypto/
 │       ├── hash.go                  # SHA256 helpers
-│       └── signature.go             # Signature verification (public key only)
+│       └── signature.go             # Signature verification (registered public keys only)
 ├── migrations/
-│   ├── 001_create_users.up.sql
-│   ├── 001_create_users.down.sql
-│   ├── 002_create_builds.up.sql
-│   ├── 002_create_builds.down.sql
-│   ├── 003_create_sections.up.sql
-│   ├── 003_create_sections.down.sql
-│   ├── 004_create_audit_events.up.sql
-│   ├── 004_create_audit_events.down.sql
+│   ├── 001_create_enums.up.sql
+│   ├── 001_create_enums.down.sql
+│   ├── 002_create_roles.up.sql
+│   ├── 002_create_roles.down.sql
+│   ├── 003_create_users.up.sql
+│   ├── 003_create_users.down.sql
+│   ├── 004_create_user_roles.up.sql
+│   ├── 004_create_user_roles.down.sql
 │   ├── 005_create_api_tokens.up.sql
-│   └── 005_create_api_tokens.down.sql
+│   ├── 005_create_api_tokens.down.sql
+│   ├── 006_create_builds.up.sql
+│   ├── 006_create_builds.down.sql
+│   ├── 007_create_build_assignments.up.sql
+│   ├── 007_create_build_assignments.down.sql
+│   ├── 008_create_build_sections.up.sql
+│   ├── 008_create_build_sections.down.sql
+│   ├── 009_create_audit_events.up.sql
+│   └── 009_create_audit_events.down.sql
 ├── go.mod
 ├── go.sum
 ├── sqlc.yaml
@@ -86,20 +96,21 @@ desktop_app/
 │   ├── models/
 │   │   ├── user.dart
 │   │   ├── build.dart
+│   │   ├── build_assignment.dart
 │   │   ├── section.dart
 │   │   └── audit_event.dart
 │   ├── services/
 │   │   ├── api_client.dart           # HTTP client wrapper (Dio)
 │   │   ├── auth_service.dart         # Login, logout, token storage
-│   │   ├── build_service.dart        # Build CRUD API calls
+│   │   ├── build_service.dart        # Build CRUD + assignment API calls
 │   │   ├── section_service.dart      # Section upload API calls
 │   │   ├── audit_service.dart        # Audit log + verification API calls
 │   │   └── crypto_service.dart       # Local crypto operations (FFI bridge)
 │   ├── crypto/
 │   │   ├── contract_cli_bridge.dart  # FFI/Process bridge to contract-cli
 │   │   ├── key_manager.dart          # Local key generation & storage
-│   │   ├── encryptor.dart            # AES-256 / RSA encryption
-│   │   ├── signer.dart               # SHA256 + ECDSA/RSA signing
+│   │   ├── encryptor.dart            # AES-256-GCM / RSA-OAEP encryption
+│   │   ├── signer.dart               # SHA256 + RSA-PSS signing
 │   │   └── hash_utils.dart           # SHA256 helpers
 │   ├── providers/
 │   │   ├── auth_provider.dart        # Auth state (Riverpod)
@@ -140,18 +151,8 @@ CREATE TYPE build_status AS ENUM (
     'WORKLOAD_SUBMITTED',
     'ENVIRONMENT_STAGED',
     'AUDITOR_KEYS_REGISTERED',
-    'CONTRACT_ASSEMBLED',
     'FINALIZED',
     'CANCELLED'
-);
-
-CREATE TYPE persona_role AS ENUM (
-    'SOLUTION_PROVIDER',
-    'DATA_OWNER',
-    'AUDITOR',
-    'ENV_OPERATOR',
-    'ADMIN',
-    'VIEWER'
 );
 
 CREATE TYPE audit_event_type AS ENUM (
@@ -159,121 +160,188 @@ CREATE TYPE audit_event_type AS ENUM (
     'WORKLOAD_SUBMITTED',
     'ENVIRONMENT_STAGED',
     'AUDITOR_KEYS_REGISTERED',
-    'CONTRACT_ASSEMBLED',
     'BUILD_FINALIZED',
     'BUILD_CANCELLED',
     'USER_CREATED',
     'ROLE_ASSIGNED',
     'TOKEN_CREATED',
     'TOKEN_REVOKED',
-    'CONTRACT_DOWNLOADED'
+    'PUBLIC_KEY_REGISTERED',
+    'CONTRACT_DOWNLOADED',
+    'DOWNLOAD_ACKNOWLEDGED'
 );
 ```
 
-### 2.2 Users Table
+### 2.2 Roles Table (Reference Data)
 
 ```sql
-CREATE TABLE users (
+CREATE TABLE roles (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        VARCHAR(255)    NOT NULL,
-    email       VARCHAR(255)    NOT NULL UNIQUE,
-    password_hash TEXT          NOT NULL,
-    is_active   BOOLEAN         NOT NULL DEFAULT true,
+    name        VARCHAR(50)     NOT NULL UNIQUE,
+    description TEXT,
     created_at  TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_users_email ON users (email);
+-- Seed data (run once at deployment)
+INSERT INTO roles (name, description) VALUES
+    ('SOLUTION_PROVIDER', 'Provides workload definition and HPCR encryption certificate'),
+    ('DATA_OWNER',        'Provides environment configuration, logging credentials, and secrets'),
+    ('AUDITOR',           'Performs final contract assembly, encryption, and signing'),
+    ('ENV_OPERATOR',      'Downloads and deploys finalized contracts to HPCR instances'),
+    ('ADMIN',             'System administration: user management, role assignment, build cancellation'),
+    ('VIEWER',            'Read-only access to builds and audit logs');
 ```
 
-### 2.3 User Roles Table
+> **Note:** Roles are a reference table — not an ENUM. All other tables (user_roles, build_assignments, build_sections) reference `roles(id)` via foreign key. This allows adding new roles without a schema migration.
+
+### 2.3 Users Table
+
+```sql
+CREATE TABLE users (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                     VARCHAR(255)    NOT NULL,
+    email                    VARCHAR(255)    NOT NULL UNIQUE,
+    password_hash            TEXT            NOT NULL,
+    must_change_password     BOOLEAN         NOT NULL DEFAULT true,
+    password_changed_at      TIMESTAMPTZ,
+    public_key               TEXT,
+    public_key_fingerprint   VARCHAR(64),
+    public_key_registered_at TIMESTAMPTZ,
+    public_key_expires_at    TIMESTAMPTZ,
+    is_active                BOOLEAN         NOT NULL DEFAULT true,
+    created_at               TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ     NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_users_email ON users (email);
+CREATE INDEX idx_users_fingerprint ON users (public_key_fingerprint);
+CREATE INDEX idx_users_key_expiry ON users (public_key_expires_at);
+
+-- Auto-update updated_at on row modification
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+```
+
+### 2.4 User Roles Table
 
 ```sql
 CREATE TABLE user_roles (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role        persona_role    NOT NULL,
+    role_id     UUID            NOT NULL REFERENCES roles(id),
     assigned_by UUID            NOT NULL REFERENCES users(id),
     assigned_at TIMESTAMPTZ     NOT NULL DEFAULT now(),
 
-    UNIQUE (user_id, role)
+    UNIQUE (user_id, role_id)
 );
 
 CREATE INDEX idx_user_roles_user_id ON user_roles (user_id);
+CREATE INDEX idx_user_roles_role_id ON user_roles (role_id);
 ```
 
-### 2.4 API Tokens Table
+### 2.5 API Tokens Table
 
 ```sql
 CREATE TABLE api_tokens (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name        VARCHAR(255)    NOT NULL,
-    token_hash  TEXT            NOT NULL UNIQUE,
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name         VARCHAR(255)    NOT NULL,
+    token_hash   TEXT            NOT NULL UNIQUE,
+    expires_at   TIMESTAMPTZ     NOT NULL,
     last_used_at TIMESTAMPTZ,
-    revoked_at  TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ     NOT NULL DEFAULT now()
+    revoked_at   TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_api_tokens_user_id ON api_tokens (user_id);
 CREATE INDEX idx_api_tokens_token_hash ON api_tokens (token_hash);
 ```
 
-### 2.5 Builds Table
+### 2.6 Builds Table
 
 ```sql
 CREATE TABLE builds (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name            VARCHAR(255)    NOT NULL,
-    status          build_status    NOT NULL DEFAULT 'CREATED',
-    created_by      UUID            NOT NULL REFERENCES users(id),
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
-    finalized_at    TIMESTAMPTZ,
-    contract_hash   TEXT,
-    contract_yaml   TEXT,
-    is_immutable    BOOLEAN         NOT NULL DEFAULT false
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                    VARCHAR(255)    NOT NULL,
+    status                  build_status    NOT NULL DEFAULT 'CREATED',
+    created_by              UUID            NOT NULL REFERENCES users(id),
+    encryption_certificate  TEXT,
+    created_at              TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    finalized_at            TIMESTAMPTZ,
+    contract_hash           TEXT,
+    contract_yaml           TEXT,           -- stored as base64-encoded string
+    is_immutable            BOOLEAN         NOT NULL DEFAULT false
 );
 
 CREATE INDEX idx_builds_status ON builds (status);
 CREATE INDEX idx_builds_created_by ON builds (created_by);
 ```
 
-### 2.6 Build Sections Table
+> **Note:** `contract_yaml` is stored as a base64-encoded string; the Flutter desktop app decodes it to produce the raw YAML file for deployment. Attestation keys and signing certificates are embedded (encrypted) within the final contract — the backend does not store them.
+
+### 2.7 Build Assignments Table
+
+```sql
+CREATE TABLE build_assignments (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    build_id     UUID            NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
+    role_id      UUID            NOT NULL REFERENCES roles(id),
+    user_id      UUID            NOT NULL REFERENCES users(id),
+    assigned_by  UUID            NOT NULL REFERENCES users(id),
+    assigned_at  TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    UNIQUE (build_id, role_id)
+);
+
+CREATE INDEX idx_build_assignments_build_id ON build_assignments (build_id);
+CREATE INDEX idx_build_assignments_user_id ON build_assignments (user_id);
+CREATE INDEX idx_build_assignments_role_id ON build_assignments (role_id);
+```
+
+### 2.8 Build Sections Table
 
 ```sql
 CREATE TABLE build_sections (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    build_id                UUID            NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
-    persona_role            persona_role    NOT NULL,
-    submitted_by            UUID            NOT NULL REFERENCES users(id),
-    encrypted_payload       TEXT            NOT NULL,
-    encrypted_symmetric_key TEXT,
-    section_hash            TEXT            NOT NULL,
-    signature               TEXT            NOT NULL,
-    submitted_at            TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    build_id               UUID            NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
+    role_id                UUID            NOT NULL REFERENCES roles(id),
+    submitted_by           UUID            NOT NULL REFERENCES users(id),
+    encrypted_payload      TEXT            NOT NULL,
+    wrapped_symmetric_key  TEXT,
+    section_hash           TEXT            NOT NULL,
+    signature              TEXT            NOT NULL,
+    submitted_at           TIMESTAMPTZ     NOT NULL DEFAULT now(),
 
-    UNIQUE (build_id, persona_role)
+    UNIQUE (build_id, role_id)
 );
 
 CREATE INDEX idx_build_sections_build_id ON build_sections (build_id);
+CREATE INDEX idx_build_sections_role_id ON build_sections (role_id);
 ```
 
-### 2.7 Audit Events Table
+### 2.9 Audit Events Table
 
 ```sql
 CREATE TABLE audit_events (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    build_id            UUID                NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
-    sequence_no         INTEGER             NOT NULL,
-    event_type          audit_event_type    NOT NULL,
-    actor_user_id       UUID                NOT NULL REFERENCES users(id),
-    actor_public_key    TEXT,
-    ip_address          INET,
-    device_metadata     JSONB,
-    event_data          JSONB               NOT NULL,
-    previous_event_hash TEXT                NOT NULL,
-    event_hash          TEXT                NOT NULL,
-    signature           TEXT,
-    created_at          TIMESTAMPTZ         NOT NULL DEFAULT now(),
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    build_id              UUID                REFERENCES builds(id) ON DELETE CASCADE,
+    sequence_no           INTEGER             NOT NULL,
+    event_type            audit_event_type    NOT NULL,
+    actor_user_id         UUID                NOT NULL REFERENCES users(id),
+    actor_key_fingerprint VARCHAR(64),
+    ip_address            INET,
+    device_metadata       JSONB,
+    event_data            JSONB               NOT NULL,
+    previous_event_hash   TEXT                NOT NULL,
+    event_hash            TEXT                NOT NULL,
+    signature             TEXT,
+    created_at            TIMESTAMPTZ         NOT NULL DEFAULT now(),
 
     UNIQUE (build_id, sequence_no)
 );
@@ -282,15 +350,22 @@ CREATE INDEX idx_audit_events_build_id ON audit_events (build_id);
 CREATE INDEX idx_audit_events_build_seq ON audit_events (build_id, sequence_no);
 ```
 
-### 2.8 Entity-Relationship Diagram
+> **Note:** `build_id` is nullable to support system-level audit events (e.g., `USER_CREATED`, `ROLE_ASSIGNED`, `TOKEN_CREATED`) that are not associated with any build.
+
+### 2.10 Entity-Relationship Diagram
 
 ```mermaid
 erDiagram
+    ROLES ||--o{ USER_ROLES : "referenced by"
+    ROLES ||--o{ BUILD_ASSIGNMENTS : "referenced by"
+    ROLES ||--o{ BUILD_SECTIONS : "referenced by"
     USERS ||--o{ USER_ROLES : has
     USERS ||--o{ API_TOKENS : owns
     USERS ||--o{ BUILDS : creates
+    USERS ||--o{ BUILD_ASSIGNMENTS : "assigned to"
     USERS ||--o{ BUILD_SECTIONS : submits
     USERS ||--o{ AUDIT_EVENTS : triggers
+    BUILDS ||--o{ BUILD_ASSIGNMENTS : "has assignments"
     BUILDS ||--o{ BUILD_SECTIONS : contains
     BUILDS ||--o{ AUDIT_EVENTS : tracks
 ```
@@ -301,14 +376,13 @@ erDiagram
 
 ### 3.1 Transition Rules
 
-| Current State | Action | Next State | Required Role | Validations |
-|---|---|---|---|---|
-| `CREATED` | Submit workload | `WORKLOAD_SUBMITTED` | `SOLUTION_PROVIDER` | Payload non-empty, hash matches payload, valid signature |
-| `WORKLOAD_SUBMITTED` | Stage environment | `ENVIRONMENT_STAGED` | `DATA_OWNER` | Payload non-empty, symmetric key present, hash matches, valid signature |
-| `ENVIRONMENT_STAGED` | Register attestation keys | `AUDITOR_KEYS_REGISTERED` | `AUDITOR` | Public key + signing cert valid |
-| `AUDITOR_KEYS_REGISTERED` | Assemble contract | `CONTRACT_ASSEMBLED` | `AUDITOR` | Contract YAML present, hash matches, valid signature |
-| `CONTRACT_ASSEMBLED` | Finalize | `FINALIZED` | `AUDITOR` | Re-verify contract hash + signature, set `is_immutable = true` |
-| Any (pre-FINALIZED) | Cancel | `CANCELLED` | `ADMIN` | Build not already FINALIZED |
+| Current State | Action | Next State | Required Role | Assignment Required | Validations |
+|---|---|---|---|---|---|
+| `CREATED` | Submit workload | `WORKLOAD_SUBMITTED` | `SOLUTION_PROVIDER` | Yes | Payload non-empty, hash matches payload, valid signature against registered key, encryption cert valid PEM |
+| `WORKLOAD_SUBMITTED` | Stage environment | `ENVIRONMENT_STAGED` | `DATA_OWNER` | Yes | Payload non-empty, wrapped key present, hash matches, valid signature against registered key |
+| `ENVIRONMENT_STAGED` | Confirm attestation readiness | `AUDITOR_KEYS_REGISTERED` | `AUDITOR` | Yes | Auditor confirms keys are generated locally (no payload) |
+| `AUDITOR_KEYS_REGISTERED` | Finalize contract | `FINALIZED` | `AUDITOR` | Yes | Contract YAML (base64) present, hash matches decoded content, valid signature against registered public key, set `is_immutable = true` |
+| Any (pre-FINALIZED) | Cancel | `CANCELLED` | `ADMIN` | No | Build not already FINALIZED or CANCELLED |
 
 ### 3.2 Implementation (Go)
 
@@ -322,7 +396,6 @@ const (
     StatusWorkloadSubmitted    BuildStatus = "WORKLOAD_SUBMITTED"
     StatusEnvironmentStaged    BuildStatus = "ENVIRONMENT_STAGED"
     StatusAuditorKeysRegistered BuildStatus = "AUDITOR_KEYS_REGISTERED"
-    StatusContractAssembled    BuildStatus = "CONTRACT_ASSEMBLED"
     StatusFinalized            BuildStatus = "FINALIZED"
     StatusCancelled            BuildStatus = "CANCELLED"
 )
@@ -332,8 +405,7 @@ var ValidTransitions = map[BuildStatus]BuildStatus{
     StatusCreated:               StatusWorkloadSubmitted,
     StatusWorkloadSubmitted:     StatusEnvironmentStaged,
     StatusEnvironmentStaged:     StatusAuditorKeysRegistered,
-    StatusAuditorKeysRegistered: StatusContractAssembled,
-    StatusContractAssembled:     StatusFinalized,
+    StatusAuditorKeysRegistered: StatusFinalized,
 }
 
 func (s BuildStatus) CanTransitionTo(next BuildStatus) bool {
@@ -349,27 +421,49 @@ func (s BuildStatus) CanTransitionTo(next BuildStatus) bool {
 
 ```mermaid
 flowchart TD
-    A[CREATED] -->|"POST /builds/{id}/workload<br/>Role: SOLUTION_PROVIDER"| B[WORKLOAD_SUBMITTED]
-    B -->|"POST /builds/{id}/environment<br/>Role: DATA_OWNER"| C[ENVIRONMENT_STAGED]
-    C -->|"POST /builds/{id}/attestation<br/>Role: AUDITOR"| D[AUDITOR_KEYS_REGISTERED]
-    D -->|"POST /builds/{id}/finalize<br/>Role: AUDITOR"| E[CONTRACT_ASSEMBLED]
-    E -->|"Automatic on verification<br/>Role: AUDITOR"| F[FINALIZED]
+    A[CREATED] -->|"POST /builds/{id}/workload<br/>Role: SOLUTION_PROVIDER<br/>+ Build Assignment"| B[WORKLOAD_SUBMITTED]
+    B -->|"POST /builds/{id}/environment<br/>Role: DATA_OWNER<br/>+ Build Assignment"| C[ENVIRONMENT_STAGED]
+    C -->|"POST /builds/{id}/attestation<br/>Role: AUDITOR<br/>+ Build Assignment"| D[AUDITOR_KEYS_REGISTERED]
+    D -->|"POST /builds/{id}/finalize<br/>Role: AUDITOR<br/>+ Build Assignment"| E[FINALIZED]
 
-    A -->|"DELETE /builds/{id}<br/>Role: ADMIN"| G[CANCELLED]
-    B --> G
-    C --> G
-    D --> G
-    E --> G
+    A -->|"DELETE /builds/{id}<br/>Role: ADMIN"| F[CANCELLED]
+    B --> F
+    C --> F
+    D --> F
 
-    style F fill:#2d6a4f,color:#fff
-    style G fill:#d00000,color:#fff
+    style E fill:#2d6a4f,color:#fff
+    style F fill:#d00000,color:#fff
 ```
 
 ---
 
 ## 4. API Contracts (Detailed)
 
-### 4.1 Authentication
+> **Convention:** All endpoints except `POST /auth/login` require the header `Authorization: Bearer <token>`. All request/response bodies use `Content-Type: application/json`. Roles are referenced by `role_id` (UUID) — use `GET /roles` to resolve names to IDs.
+
+### 4.1 Roles (Reference Data)
+
+#### `GET /roles`
+
+**Required Role:** Any authenticated user
+
+**Response (200):**
+```json
+{
+    "roles": [
+        { "id": "uuid-sp", "name": "SOLUTION_PROVIDER", "description": "Provides workload definition and HPCR encryption certificate" },
+        { "id": "uuid-do", "name": "DATA_OWNER", "description": "Provides environment configuration..." },
+        { "id": "uuid-aud", "name": "AUDITOR", "description": "Performs final contract assembly..." },
+        { "id": "uuid-eo", "name": "ENV_OPERATOR", "description": "Downloads and deploys finalized contracts..." },
+        { "id": "uuid-adm", "name": "ADMIN", "description": "System administration..." },
+        { "id": "uuid-vw", "name": "VIEWER", "description": "Read-only access..." }
+    ]
+}
+```
+
+---
+
+### 4.2 Authentication
 
 #### `POST /auth/login`
 
@@ -385,15 +479,27 @@ flowchart TD
 ```json
 {
     "token": "bearer-token-value",
+    "expires_at": "2026-04-06T10:00:00Z",
+    "requires_setup": true,
+    "setup_pending": ["password_change", "public_key_registration"],
     "user": {
         "id": "uuid",
         "name": "Jane Doe",
         "email": "user@example.com",
-        "roles": ["SOLUTION_PROVIDER"],
+        "roles": [
+            { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER" }
+        ],
+        "has_public_key": true,
+        "public_key_expired": false,
         "is_active": true
     }
 }
 ```
+
+**`requires_setup` Logic:**
+- `true` if `must_change_password = true` OR `public_key IS NULL` OR `public_key_expires_at < now()`.
+- `setup_pending` lists the specific actions needed.
+- When `requires_setup` is `true`, the token is restricted to: `PATCH /users/{id}/password`, `PUT /users/{id}/public-key`, `POST /auth/logout`. All other endpoints return `403 ACCOUNT_SETUP_REQUIRED`.
 
 **Errors:** `401 Unauthorized` (invalid credentials), `423 Locked` (user deactivated)
 
@@ -405,28 +511,7 @@ flowchart TD
 
 ---
 
-### 4.2 User Management
-
-#### `GET /users`
-
-**Headers:** `Authorization: Bearer <token>`  
-**Required Role:** `ADMIN`
-
-**Response (200):**
-```json
-{
-    "users": [
-        {
-            "id": "uuid",
-            "name": "Jane Doe",
-            "email": "user@example.com",
-            "roles": ["SOLUTION_PROVIDER"],
-            "is_active": true,
-            "created_at": "2026-01-15T10:00:00Z"
-        }
-    ]
-}
-```
+### 4.3 User Management
 
 #### `POST /users`
 
@@ -438,12 +523,36 @@ flowchart TD
     "name": "John Smith",
     "email": "john@example.com",
     "password": "initial-password",
-    "roles": ["DATA_OWNER"]
+    "roles": ["uuid-do"]
 }
 ```
 
 **Response (201):** Created user object.  
 **Errors:** `409 Conflict` (email exists), `400 Bad Request` (invalid role)
+
+#### `GET /users`
+
+**Required Role:** `ADMIN`
+
+**Response (200):**
+```json
+{
+    "users": [
+        {
+            "id": "uuid",
+            "name": "Jane Doe",
+            "email": "user@example.com",
+            "roles": [
+                { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER" }
+            ],
+            "has_public_key": true,
+            "public_key_fingerprint": "sha256-hex",
+            "is_active": true,
+            "created_at": "2026-01-15T10:00:00Z"
+        }
+    ]
+}
+```
 
 #### `PATCH /users/{id}/roles`
 
@@ -452,15 +561,83 @@ flowchart TD
 **Request:**
 ```json
 {
-    "roles": ["AUDITOR", "VIEWER"]
+    "role_ids": ["uuid-aud", "uuid-vw"]
 }
 ```
 
 **Response (200):** Updated user object with new roles.
 
+#### `PUT /users/{id}/public-key`
+
+**Required Role:** `ADMIN` or own user
+
+**Request:**
+```json
+{
+    "public_key": "PEM-encoded-RSA-4096-public-key"
+}
+```
+
+**Response (200):**
+```json
+{
+    "public_key_fingerprint": "sha256-hex-of-public-key-der",
+    "registered_at": "2026-04-05T10:00:00Z",
+    "expires_at": "2026-07-04T10:00:00Z"
+}
+```
+
+**Backend Validations:**
+1. Key is valid RSA-4096 PEM format.
+2. Compute `SHA256(DER-encoded-public-key)` → fingerprint.
+3. Set `public_key_registered_at = now()`.
+4. Set `public_key_expires_at = now() + PUBLIC_KEY_EXPIRY_DAYS` (default 90 days).
+5. Store public key, fingerprint, and expiry.
+6. Emit audit event.
+
+> [!CAUTION]
+> Updating a public key invalidates all prior signatures from this user. The backend should warn if the user has active build assignments.
+
+#### `GET /users/{id}/public-key`
+
+**Required Role:** Any authenticated user
+
+**Response (200):**
+```json
+{
+    "public_key": "PEM-encoded-RSA-4096-public-key",
+    "public_key_fingerprint": "sha256-hex",
+    "registered_at": "2026-04-05T10:00:00Z",
+    "expires_at": "2026-07-04T10:00:00Z",
+    "is_expired": false
+}
+```
+
+#### `PATCH /users/{id}/password`
+
+**Required Role:** `ADMIN` or own user
+
+**Request:**
+```json
+{
+    "current_password": "old-password",
+    "new_password": "new-password"
+}
+```
+
+**Response:** `204 No Content`
+
+**Backend:**
+1. If own user: validate `current_password` matches.
+2. Hash `new_password` and store.
+3. Set `must_change_password = false`, `password_changed_at = now()`.
+4. Emit audit event.
+
+> **Note:** When `ADMIN` resets another user's password, `current_password` is not required. The target user's `must_change_password` is set to `true`, forcing them to change it again on next login.
+
 #### `GET /users/{id}/tokens`
 
-**Required Role:** `ADMIN` or own user  
+**Required Role:** `ADMIN` or own user
 
 **Response (200):**
 ```json
@@ -469,6 +646,7 @@ flowchart TD
         {
             "id": "uuid",
             "name": "ci-pipeline",
+            "expires_at": "2026-07-10T09:00:00Z",
             "last_used_at": "2026-02-20T14:30:00Z",
             "revoked_at": null,
             "created_at": "2026-01-10T09:00:00Z"
@@ -484,7 +662,8 @@ flowchart TD
 **Request:**
 ```json
 {
-    "name": "ci-pipeline"
+    "name": "ci-pipeline",
+    "expires_in": "720h"
 }
 ```
 
@@ -493,7 +672,8 @@ flowchart TD
 {
     "id": "uuid",
     "name": "ci-pipeline",
-    "token": "raw-token-value-shown-once-only"
+    "token": "raw-token-value-shown-once-only",
+    "expires_at": "2026-05-05T10:00:00Z"
 }
 ```
 
@@ -508,18 +688,27 @@ flowchart TD
 
 ---
 
-### 4.3 Builds
+### 4.4 Builds
 
 #### `POST /builds`
 
-**Required Role:** Any authenticated user
+**Required Role:** `ADMIN`
 
 **Request:**
 ```json
 {
-    "name": "production-deploy-v2.1"
+    "name": "production-deploy-v2.1",
+    "assignments": [
+        { "role_id": "uuid-sp", "user_id": "alice-user-uuid" },
+        { "role_id": "uuid-do", "user_id": "bob-user-uuid" },
+        { "role_id": "uuid-aud", "user_id": "charlie-user-uuid" },
+        { "role_id": "uuid-eo", "user_id": "dave-user-uuid" }
+    ],
+    "signature": "base64-encoded-signature-of-metadata-hash"
 }
 ```
+
+> **Signing:** The Admin computes `SHA256(canonical_json({"name": ..., "assignments": [...]}))` locally and signs it with their registered identity private key.
 
 **Response (201):**
 ```json
@@ -527,11 +716,24 @@ flowchart TD
     "id": "uuid",
     "name": "production-deploy-v2.1",
     "status": "CREATED",
-    "created_by": "user-uuid",
-    "created_at": "2026-03-03T10:00:00Z",
-    "is_immutable": false
+    "created_by": "admin-uuid",
+    "created_at": "2026-04-05T10:00:00Z",
+    "is_immutable": false,
+    "assignments": [
+        { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER", "user_id": "alice-uuid", "user_name": "Alice", "has_public_key": true },
+        { "role_id": "uuid-do", "role_name": "DATA_OWNER", "user_id": "bob-uuid", "user_name": "Bob", "has_public_key": true },
+        { "role_id": "uuid-aud", "role_name": "AUDITOR", "user_id": "charlie-uuid", "user_name": "Charlie", "has_public_key": true },
+        { "role_id": "uuid-eo", "role_name": "ENV_OPERATOR", "user_id": "dave-uuid", "user_name": "Dave", "has_public_key": true }
+    ]
 }
 ```
+
+**Backend Validations:**
+1. All assigned users exist, are active, and have the corresponding role.
+2. All assigned users (`SOLUTION_PROVIDER`, `DATA_OWNER`, `AUDITOR`, `ENV_OPERATOR`) must have a registered, non-expired public key.
+3. Signature is valid against the Admin's **registered public key**.
+4. Create build + assignment records in a transaction.
+5. Emit `BUILD_CREATED` audit event with Admin's signature and key fingerprint.
 
 #### `GET /builds`
 
@@ -551,7 +753,24 @@ flowchart TD
 
 #### `GET /builds/{id}`
 
-**Response (200):** Full build object with sections summary (no encrypted payloads).
+**Response (200):** Full build object with assignments and sections summary (no encrypted payloads in this response).
+
+#### `GET /builds/{id}/assignments`
+
+**Response (200):**
+```json
+{
+    "build_id": "uuid",
+    "assignments": [
+        { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER", "user_id": "alice-uuid", "user_name": "Alice", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" },
+        { "role_id": "uuid-do", "role_name": "DATA_OWNER", "user_id": "bob-uuid", "user_name": "Bob", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" },
+        { "role_id": "uuid-aud", "role_name": "AUDITOR", "user_id": "charlie-uuid", "user_name": "Charlie", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" },
+        { "role_id": "uuid-eo", "role_name": "ENV_OPERATOR", "user_id": "dave-uuid", "user_name": "Dave", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" }
+    ]
+}
+```
+
+> **Note:** This endpoint is how the Data Owner retrieves the Auditor's public key for symmetric key wrapping.
 
 #### `DELETE /builds/{id}`
 
@@ -562,21 +781,20 @@ flowchart TD
 
 ---
 
-### 4.4 Section Submissions
+### 4.5 Section Submissions
 
 #### `POST /builds/{id}/workload`
 
-**Required Role:** `SOLUTION_PROVIDER`  
-**Required Build Status:** `CREATED`  
-**Content-Type:** `application/json`
+**Required Role:** `SOLUTION_PROVIDER` (assigned to this build)  
+**Required Build Status:** `CREATED`
 
 **Request:**
 ```json
 {
     "encrypted_payload": "base64-encoded-encrypted-workload",
+    "encryption_certificate": "PEM-encoded-HPCR-encryption-cert",
     "section_hash": "sha256-hex-of-encrypted-payload",
-    "signature": "base64-encoded-signature-of-section-hash",
-    "public_key": "PEM-encoded-public-key"
+    "signature": "base64-encoded-signature-of-section-hash"
 }
 ```
 
@@ -587,37 +805,38 @@ flowchart TD
     "status": "WORKLOAD_SUBMITTED",
     "section": {
         "id": "uuid",
-        "persona_role": "SOLUTION_PROVIDER",
+        "role_id": "uuid-sp",
+        "role_name": "SOLUTION_PROVIDER",
         "section_hash": "sha256-hex",
-        "submitted_at": "2026-03-03T10:05:00Z"
+        "submitted_at": "2026-04-05T10:05:00Z"
     }
 }
 ```
 
 **Backend Validations:**
 1. Build exists and is in `CREATED` state.
-2. User has `SOLUTION_PROVIDER` role.
-3. `section_hash == SHA256(encrypted_payload)`.
-4. Signature is valid against provided public key.
-5. Transition build to `WORKLOAD_SUBMITTED`.
-6. Emit audit event.
+2. User is the assigned `SOLUTION_PROVIDER` for this build.
+3. `section_hash == SHA256(base64_decode(encrypted_payload))`.
+4. Signature is valid against the user's **registered public key**.
+5. Encryption certificate is valid PEM format.
+6. Store section + encryption certificate on the build.
+7. Transition build to `WORKLOAD_SUBMITTED`.
+8. Emit audit event (includes `actor_key_fingerprint`).
 
 ---
 
 #### `POST /builds/{id}/environment`
 
-**Required Role:** `DATA_OWNER`  
-**Required Build Status:** `WORKLOAD_SUBMITTED`  
-**Content-Type:** `application/json`
+**Required Role:** `DATA_OWNER` (assigned to this build)  
+**Required Build Status:** `WORKLOAD_SUBMITTED`
 
 **Request:**
 ```json
 {
-    "encrypted_payload": "base64-encoded-encrypted-environment",
-    "encrypted_symmetric_key": "base64-encoded-encrypted-symmetric-key",
+    "encrypted_payload": "base64-encoded-AES-encrypted-environment",
+    "wrapped_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-AES-key",
     "section_hash": "sha256-hex-of-encrypted-payload",
-    "signature": "base64-encoded-signature-of-section-hash",
-    "public_key": "PEM-encoded-public-key"
+    "signature": "base64-encoded-signature-of-section-hash"
 }
 ```
 
@@ -625,44 +844,42 @@ flowchart TD
 
 **Backend Validations:**
 1. Build is in `WORKLOAD_SUBMITTED` state.
-2. User has `DATA_OWNER` role.
-3. Hash verification + signature verification.
-4. Store both `encrypted_payload` and `encrypted_symmetric_key`.
-5. Transition to `ENVIRONMENT_STAGED`.
-6. Emit audit event.
+2. User is the assigned `DATA_OWNER` for this build.
+3. `section_hash == SHA256(base64_decode(encrypted_payload))`.
+4. Signature is valid against the user's **registered public key**.
+5. `wrapped_symmetric_key` is present and non-empty.
+6. Store both `encrypted_payload` and `wrapped_symmetric_key`.
+7. Transition to `ENVIRONMENT_STAGED`.
+8. Emit audit event.
+
+> [!IMPORTANT]
+> The backend cannot validate the contents of `wrapped_symmetric_key` since it is encrypted with the Auditor's RSA public key. Only the assigned Auditor can unwrap it.
 
 ---
 
 #### `POST /builds/{id}/attestation`
 
-**Required Role:** `AUDITOR`  
+**Required Role:** `AUDITOR` (assigned to this build)  
 **Required Build Status:** `ENVIRONMENT_STAGED`
 
-**Request:**
-```json
-{
-    "attestation_public_key": "PEM-encoded-public-key",
-    "signing_certificate": "PEM-encoded-certificate"
-}
-```
+**Request:** Empty body (no payload required).
 
 **Response (200):** Build status updated to `AUDITOR_KEYS_REGISTERED`.
 
 **Backend Validations:**
 1. Build is in `ENVIRONMENT_STAGED` state.
-2. User has `AUDITOR` role.
-3. Public key and certificate are valid PEM format.
-4. Store attestation key + signing cert.
-5. Transition to `AUDITOR_KEYS_REGISTERED`.
-6. Emit audit event.
+2. User is the assigned `AUDITOR` for this build.
+3. Transition to `AUDITOR_KEYS_REGISTERED`.
+4. Emit audit event.
+
+> **Note:** This is a state-transition confirmation only. The Auditor generates attestation keys and signing certificates **locally** and embeds them (encrypted) within the final contract YAML. The backend does not store any key material for this step.
 
 ---
 
 #### `POST /builds/{id}/finalize`
 
-**Required Role:** `AUDITOR`  
-**Required Build Status:** `AUDITOR_KEYS_REGISTERED`  
-**Content-Type:** `application/json`
+**Required Role:** `AUDITOR` (assigned to this build)  
+**Required Build Status:** `AUDITOR_KEYS_REGISTERED`
 
 **Request:**
 ```json
@@ -679,24 +896,58 @@ flowchart TD
     "build_id": "uuid",
     "status": "FINALIZED",
     "contract_hash": "sha256-hex",
-    "finalized_at": "2026-03-03T11:00:00Z",
+    "finalized_at": "2026-04-05T11:00:00Z",
     "is_immutable": true
 }
 ```
 
 **Backend Validations:**
 1. Build is in `AUDITOR_KEYS_REGISTERED` state.
-2. User has `AUDITOR` role.
-3. `contract_hash == SHA256(contract_yaml)`.
-4. Signature is valid against auditor's registered signing cert.
-5. Store `contract_yaml` and `contract_hash`.
+2. User is the assigned `AUDITOR` for this build.
+3. `contract_hash == SHA256(base64_decode(contract_yaml))`.
+4. Signature is valid against the Auditor's **registered public key** (the identity key pair registered at account setup).
+5. Store `contract_yaml` (base64-encoded) and `contract_hash`.
 6. Set `is_immutable = true`, `finalized_at = now()`.
-7. Transition through `CONTRACT_ASSEMBLED` → `FINALIZED`.
-8. Emit audit events for both transitions.
+7. Transition to `FINALIZED`.
+8. Emit audit event.
 
 ---
 
-### 4.5 Audit & Export
+#### `GET /builds/{id}/sections`
+
+**Required Role:** Assigned `AUDITOR` for this build, or `ADMIN`  
+**Required Build Status:** `ENVIRONMENT_STAGED` or later
+
+**Response (200):**
+```json
+{
+    "build_id": "uuid",
+    "encryption_certificate": "PEM-encoded-HPCR-cert",
+    "sections": [
+        {
+            "role_name": "SOLUTION_PROVIDER",
+            "encrypted_payload": "base64-encoded-encrypted-workload",
+            "section_hash": "sha256-hex",
+            "submitted_by": "alice-uuid",
+            "submitted_at": "2026-04-05T10:05:00Z"
+        },
+        {
+            "role_name": "DATA_OWNER",
+            "encrypted_payload": "base64-encoded-AES-encrypted-env",
+            "wrapped_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-key",
+            "section_hash": "sha256-hex",
+            "submitted_by": "bob-uuid",
+            "submitted_at": "2026-04-05T10:10:00Z"
+        }
+    ]
+}
+```
+
+> **Note:** This endpoint is used by the Auditor to download all encrypted artifacts for local assembly. The `wrapped_symmetric_key` can only be unwrapped by the assigned Auditor's private key.
+
+---
+
+### 4.6 Audit & Export
 
 #### `GET /builds/{id}/audit`
 
@@ -709,11 +960,12 @@ flowchart TD
             "sequence_no": 0,
             "event_type": "BUILD_CREATED",
             "actor_user_id": "uuid",
+            "actor_key_fingerprint": "sha256-hex",
             "event_data": { ... },
             "event_hash": "sha256-hex",
             "previous_event_hash": "sha256-hex",
             "signature": "base64-signature",
-            "created_at": "2026-03-03T10:00:00Z"
+            "created_at": "2026-04-05T10:00:00Z"
         }
     ]
 }
@@ -728,7 +980,7 @@ flowchart TD
     "chain_valid": true,
     "signatures_valid": true,
     "contract_hash_valid": true,
-    "events_verified": 6,
+    "events_verified": 5,
     "errors": []
 }
 ```
@@ -740,10 +992,10 @@ flowchart TD
     "chain_valid": false,
     "signatures_valid": false,
     "contract_hash_valid": true,
-    "events_verified": 6,
+    "events_verified": 5,
     "errors": [
         "Event #3: hash mismatch (expected abc..., got def...)",
-        "Event #4: invalid signature"
+        "Event #4: invalid signature for key fingerprint abc123..."
     ]
 }
 ```
@@ -751,14 +1003,50 @@ flowchart TD
 #### `GET /builds/{id}/export`
 
 **Required Build Status:** `FINALIZED`  
-**Response:** `200 OK` with `Content-Type: application/x-yaml`  
-Returns the raw `contract.yaml` file.
+**Required Role:** `ADMIN`, `AUDITOR` (assigned), or `ENV_OPERATOR` (assigned)  
+**Response:** `200 OK` with `Content-Type: application/json`  
+Returns the base64-encoded `contract_yaml` string. The Flutter desktop app decodes this to produce the raw YAML.
 
 #### `GET /builds/{id}/userdata`
 
 **Required Build Status:** `FINALIZED`  
-**Response:** `200 OK` with `Content-Disposition: attachment; filename="userdata.yaml"`  
-Returns the contract as a downloadable file for deploying to HPCR.
+**Required Role:** `ADMIN` or `ENV_OPERATOR` (assigned)  
+**Response:** `200 OK` with `Content-Type: application/json`  
+Returns the base64-encoded contract. The Flutter desktop app **decodes the base64** and saves the resulting YAML file for deployment to the HPCR instance.
+
+> [!IMPORTANT]
+> The backend always returns `contract_yaml` as base64. Decoding to raw YAML is the responsibility of the Flutter desktop client.
+
+#### `POST /builds/{id}/acknowledge`
+
+**Required Role:** `ENV_OPERATOR` (assigned to this build)  
+**Required Build Status:** `FINALIZED`
+
+**Request:**
+```json
+{
+    "contract_hash": "sha256-hex-of-contract-yaml",
+    "signature": "base64-encoded-signature-of-contract-hash"
+}
+```
+
+**Response (200):**
+```json
+{
+    "build_id": "uuid",
+    "acknowledged_at": "2026-04-05T12:00:00Z",
+    "acknowledged_by": "dave-uuid"
+}
+```
+
+**Backend Validations:**
+1. Build is in `FINALIZED` state.
+2. User is the assigned `ENV_OPERATOR` for this build.
+3. `contract_hash` matches the stored `contract_hash` on the build.
+4. Signature is valid against the Env Operator's **registered public key**.
+5. Emit `CONTRACT_DOWNLOADED` audit event with Env Operator's signature and key fingerprint.
+
+> **Note:** This endpoint provides cryptographic proof-of-receipt. The Env Operator confirms they downloaded and verified the correct contract. This closes the audit chain — every persona has now signed at least one event.
 
 ---
 
@@ -773,16 +1061,14 @@ type AuditEventData struct {
     BuildID    string `json:"build_id"`
     EventType  string `json:"event_type"`
     ActorID    string `json:"actor_id"`
+    ActorKeyFP string `json:"actor_key_fingerprint"`
     Timestamp  string `json:"timestamp"`      // RFC3339
     Details    any    `json:"details"`         // Event-specific payload
 }
-
-// CanonicalJSON produces deterministic JSON output.
-// Keys are sorted alphabetically, no extra whitespace.
-func CanonicalJSON(data AuditEventData) ([]byte, error) {
-    return json.Marshal(data) // Go's json.Marshal sorts map keys
-}
 ```
+
+> [!IMPORTANT]
+> Canonical JSON must follow **RFC 8785 (JSON Canonicalization Scheme)**. Do NOT rely on Go's `json.Marshal` for deterministic output — use a dedicated JCS library (e.g., `github.com/cyberphone/json-canonicalization`).
 
 ### 5.2 Hash Chain Computation
 
@@ -793,8 +1079,8 @@ func ComputeGenesisHash(buildID string) string {
     return hex.EncodeToString(hash[:])
 }
 
-func ComputeEventHash(eventDataJSON []byte, previousHash string) string {
-    payload := append(eventDataJSON, []byte(previousHash)...)
+func ComputeEventHash(canonicalEventJSON []byte, previousHash string) string {
+    payload := append(canonicalEventJSON, []byte(previousHash)...)
     hash := sha256.Sum256(payload)
     return hex.EncodeToString(hash[:])
 }
@@ -809,7 +1095,12 @@ func (s *VerificationService) VerifyBuildChain(ctx context.Context, buildID uuid
         return nil, err
     }
 
-    result := &VerificationResult{BuildID: buildID, EventsVerified: len(events)}
+    result := &VerificationResult{
+        BuildID:         buildID,
+        EventsVerified:  len(events),
+        ChainValid:      true,     // assume valid, set false on failure
+        SignaturesValid:  true,     // assume valid, set false on failure
+    }
     expectedPrevHash := ComputeGenesisHash(buildID.String())
 
     for i, event := range events {
@@ -828,21 +1119,21 @@ func (s *VerificationService) VerifyBuildChain(ctx context.Context, buildID uuid
             result.ChainValid = false
         }
 
-        // 3. Verify signature (if present)
+        // 3. Verify signature against REGISTERED public key
         if event.Signature != "" {
-            if err := VerifySignature(event.ActorPublicKey, event.EventHash, event.Signature); err != nil {
+            pubKey, err := s.repo.GetUserPublicKeyByFingerprint(ctx, event.ActorKeyFingerprint)
+            if err != nil {
                 result.Errors = append(result.Errors,
-                    fmt.Sprintf("Event #%d: invalid signature", i))
+                    fmt.Sprintf("Event #%d: cannot resolve public key for fingerprint %s", i, event.ActorKeyFingerprint))
+                result.SignaturesValid = false
+            } else if err := VerifyRSAPSSSignature(pubKey, event.EventHash, event.Signature); err != nil {
+                result.Errors = append(result.Errors,
+                    fmt.Sprintf("Event #%d: invalid signature for key %s", i, event.ActorKeyFingerprint))
                 result.SignaturesValid = false
             }
         }
 
         expectedPrevHash = event.EventHash
-    }
-
-    if len(result.Errors) == 0 {
-        result.ChainValid = true
-        result.SignaturesValid = true
     }
 
     return result, nil
@@ -864,18 +1155,38 @@ flowchart LR
     E -->|No| C
     E -->|Yes| F{Token revoked?}
     F -->|Yes| C
-    F -->|No| G[Load user + roles]
-    G --> H{User active?}
-    H -->|No| C
-    H -->|Yes| I[Set user in context]
-    I --> J[Next handler]
+    F -->|No| G{Token expired?}
+    G -->|Yes| C
+    G -->|No| H[Load user + roles]
+    H --> I{User active?}
+    I -->|No| C
+    I -->|Yes| J{Setup complete?}
+    J -->|No| K{Is setup endpoint?}
+    K -->|Yes| L[Set user in context]
+    K -->|No| M[403 Account setup required]
+    J -->|Yes| L
+    L --> N[Next handler]
+```
+
+**Setup Complete Check:**
+```go
+func isSetupComplete(user *model.User) bool {
+    return !user.MustChangePassword &&
+        user.PublicKey != nil &&
+        user.PublicKeyExpiresAt != nil &&
+        user.PublicKeyExpiresAt.After(time.Now())
+}
+
+var setupOnlyEndpoints = map[string]bool{
+    "PATCH /users/{id}/password":   true,
+    "PUT /users/{id}/public-key":   true,
+    "POST /auth/logout":            true,
+}
 ```
 
 ### 6.2 Token Hashing
 
 ```go
-// Tokens are hashed before storage (one-way).
-// Raw token is shown to the user ONCE at creation.
 func HashToken(rawToken string) string {
     hash := sha256.Sum256([]byte(rawToken))
     return hex.EncodeToString(hash[:])
@@ -890,30 +1201,61 @@ func GenerateToken() (raw string, hashed string) {
 }
 ```
 
-### 6.3 RBAC Matrix
+### 6.3 Build Assignment Check
 
-| Endpoint | ADMIN | SOLUTION_PROVIDER | DATA_OWNER | AUDITOR | ENV_OPERATOR | VIEWER |
-|---|---|---|---|---|---|---|
-| `GET /users` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `POST /users` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `PATCH /users/{id}/roles` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `GET /users/{id}/tokens` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ |
-| `POST /users/{id}/tokens` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ |
-| `DELETE /users/{id}/tokens/{tid}` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ |
-| `GET /builds` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `POST /builds` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `GET /builds/{id}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `DELETE /builds/{id}` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `POST .../workload` | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `POST .../environment` | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
-| `POST .../attestation` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| `POST .../finalize` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| `GET .../audit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `GET .../verify` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `GET .../export` | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
-| `GET .../userdata` | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+```go
+// middleware/assignment.go
 
-> ¹ ADMIN can access any user's tokens; other roles can only access their own (`user_id` must match authenticated user).
+// RequireAssignment returns middleware that verifies the authenticated user
+// is assigned to the build for the given persona role.
+func RequireAssignment(role model.PersonaRole) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            user := UserFromContext(r.Context())
+            buildID := chi.URLParam(r, "id")
+
+            assignment, err := repo.GetBuildAssignment(r.Context(), buildID, role)
+            if err != nil || assignment.UserID != user.ID {
+                http.Error(w, "not assigned to this build for role "+string(role), http.StatusForbidden)
+                return
+            }
+
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+### 6.4 RBAC + Assignment Matrix
+
+| Endpoint | ADMIN | SP | DO | AUD | EO | VIEWER | Assignment Required |
+|---|---|---|---|---|---|---|---|
+| `GET /users` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
+| `POST /users` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
+| `PATCH /users/{id}/roles` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
+| `PUT /users/{id}/public-key` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
+| `GET /users/{id}/public-key` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `PATCH /users/{id}/password` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
+| `GET /users/{id}/tokens` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
+| `POST /users/{id}/tokens` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
+| `DELETE /users/{id}/tokens/{tid}` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
+| `GET /builds` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `POST /builds` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
+| `GET /builds/{id}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `GET /builds/{id}/assignments` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `DELETE /builds/{id}` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
+| `POST .../workload` | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ SP |
+| `POST .../environment` | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ DO |
+| `POST .../attestation` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
+| `POST .../finalize` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
+| `GET .../sections` | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
+| `GET .../audit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `GET .../verify` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `GET .../export` | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ AUD/EO |
+| `GET .../userdata` | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
+| `POST .../acknowledge` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
+
+> ¹ ADMIN can access any user; other roles can only access their own (`user_id` must match authenticated user).
 
 ---
 
@@ -940,10 +1282,16 @@ func GenerateToken() (raw string, hashed string) {
 |---|---|---|
 | `400` | `INVALID_REQUEST` | Malformed request body or missing fields |
 | `400` | `HASH_MISMATCH` | Computed hash does not match submitted hash |
-| `400` | `INVALID_SIGNATURE` | Signature verification failed |
+| `400` | `INVALID_SIGNATURE` | Signature verification failed against registered public key |
 | `400` | `INVALID_CERTIFICATE` | PEM certificate is malformed or expired |
+| `400` | `INVALID_PUBLIC_KEY` | Public key is not valid RSA-4096 PEM |
+| `400` | `MISSING_PUBLIC_KEY` | Assigned user has not registered a public key |
+| `400` | `PUBLIC_KEY_EXPIRED` | User's public key has expired; must register a new key |
 | `401` | `UNAUTHORIZED` | Missing or invalid bearer token |
+| `401` | `TOKEN_EXPIRED` | Bearer token has expired |
 | `403` | `FORBIDDEN` | User lacks the required role |
+| `403` | `NOT_ASSIGNED` | User is not assigned to this build for the required role |
+| `403` | `ACCOUNT_SETUP_REQUIRED` | User must complete account setup (password change and/or public key registration) |
 | `404` | `BUILD_NOT_FOUND` | Build ID does not exist |
 | `404` | `USER_NOT_FOUND` | User ID does not exist |
 | `409` | `DUPLICATE_EMAIL` | Email already registered |
@@ -968,15 +1316,18 @@ type Config struct {
 
     // Database
     DatabaseURL string `env:"DATABASE_URL" required:"true"`
-    // e.g. "postgres://user:pass@localhost:5432/hpcr_builder?sslmode=require"
 
     // Auth
     TokenExpiry   time.Duration `env:"TOKEN_EXPIRY"    default:"24h"`
     BcryptCost    int           `env:"BCRYPT_COST"     default:"12"`
 
+    // Credential Rotation
+    PasswordRotationDays int `env:"PASSWORD_ROTATION_DAYS" default:"90"`
+    PublicKeyExpiryDays  int `env:"PUBLIC_KEY_EXPIRY_DAYS"  default:"90"`
+
     // Logging
-    LogLevel  string `env:"LOG_LEVEL"  default:"info"`    // debug, info, warn, error
-    LogFormat string `env:"LOG_FORMAT" default:"json"`    // json, text
+    LogLevel  string `env:"LOG_LEVEL"  default:"info"`
+    LogFormat string `env:"LOG_FORMAT" default:"json"`
 
     // Limits
     MaxPayloadSize int64 `env:"MAX_PAYLOAD_SIZE" default:"52428800"` // 50MB
@@ -1022,8 +1373,44 @@ server {
 
 ### 9.1 contract-cli Integration
 
-The Flutter app invokes `contract-cli` (built from `contract-go`) as a subprocess:
+The Flutter app invokes `contract-cli` (built from `contract-go`) as a subprocess. The CLI uses `encrypt-string` to encrypt individual sections (workload, env, attestation public key) with the HPCR encryption certificate.
 
+**HPCR Contract Structure:**
+
+Plain text contract (before encryption):
+```yaml
+env: |
+  type: env
+  logging:
+    logRouter:
+      hostname: example.logs.cloud.ibm.com
+      iamApiKey: your-api-key
+  signingKey: <signing-key-pem>
+workload: |
+  type: workload
+  compose:
+    archive: <docker-compose-base64>
+envWorkloadSignature: <signature>
+attestationPublicKey: <attestation-public-key-pem>
+```
+
+Final contract (after encryption):
+```yaml
+env: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
+workload: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
+envWorkloadSignature: <signature>
+attestationPublicKey: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
+```
+
+**CLI Usage:**
+```bash
+# Encrypt a section (workload, env, or attestation public key)
+echo "<plain-text-content>" | contract-cli encrypt-string --in - --cert <hpcr-encryption-cert-path>
+
+# Output: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
+```
+
+**Dart Bridge:**
 ```dart
 // lib/crypto/contract_cli_bridge.dart
 
@@ -1032,44 +1419,38 @@ class ContractCliBridge {
 
   ContractCliBridge({required this.cliPath});
 
-  /// Encrypt workload section using contract-cli.
-  Future<File> encryptWorkload({
-    required File workloadFile,
+  /// Encrypt a string section using contract-cli encrypt-string.
+  /// Used for workload, env, and attestation public key.
+  Future<String> encryptSection({
+    required String plainText,
     required File encryptionCert,
   }) async {
-    final result = await Process.run(cliPath, [
-      'encrypt',
-      '--input', workloadFile.path,
-      '--cert', encryptionCert.path,
-      '--output', '${workloadFile.path}.enc',
-    ]);
+    final result = await Process.run(
+      cliPath,
+      ['encrypt-string', '--in', '-', '--cert', encryptionCert.path],
+      stdinData: plainText,
+    );
 
     if (result.exitCode != 0) {
-      throw CryptoException('contract-cli encrypt failed: ${result.stderr}');
+      throw CryptoException('contract-cli encrypt-string failed: ${result.stderr}');
     }
 
-    return File('${workloadFile.path}.enc');
+    return result.stdout.toString().trim(); // hyper-protect-basic.xxx.yyy
   }
 
-  /// Encrypt environment section using contract-cli (final encryption by auditor).
-  Future<File> encryptEnvironment({
-    required File envFile,
-    required File encryptionCert,
-    required File signingKey,
-  }) async {
-    final result = await Process.run(cliPath, [
-      'encrypt',
-      '--input', envFile.path,
-      '--cert', encryptionCert.path,
-      '--signing-key', signingKey.path,
-      '--output', '${envFile.path}.enc',
-    ]);
-
-    if (result.exitCode != 0) {
-      throw CryptoException('contract-cli env encrypt failed: ${result.stderr}');
-    }
-
-    return File('${envFile.path}.enc');
+  /// Assemble final contract YAML from encrypted sections.
+  String assembleContract({
+    required String encryptedWorkload,
+    required String encryptedEnv,
+    required String envWorkloadSignature,
+    required String encryptedAttestationKey,
+  }) {
+    return '''
+env: $encryptedEnv
+workload: $encryptedWorkload
+envWorkloadSignature: $envWorkloadSignature
+attestationPublicKey: $encryptedAttestationKey
+''';
   }
 }
 ```
@@ -1080,8 +1461,8 @@ class ContractCliBridge {
 // lib/crypto/key_manager.dart
 
 class KeyManager {
-  /// Generate RSA 4096-bit key pair for signing.
-  Future<KeyPair> generateSigningKeyPair() async { ... }
+  /// Generate RSA 4096-bit key pair for user identity (signing + key wrapping).
+  Future<KeyPair> generateIdentityKeyPair() async { ... }
 
   /// Generate RSA 4096-bit key pair for attestation.
   Future<KeyPair> generateAttestationKeyPair() async { ... }
@@ -1096,6 +1477,15 @@ class KeyManager {
 
   /// Store key securely using OS keychain.
   Future<void> storeKey(String label, Uint8List key) async { ... }
+
+  /// Register public key with backend.
+  Future<String> registerPublicKey(RSAPublicKey publicKey) async {
+    final pem = encodePublicKeyToPem(publicKey);
+    final response = await apiClient.put('/users/me/public-key', {
+      'public_key': pem,
+    });
+    return response['public_key_fingerprint'];
+  }
 }
 ```
 
@@ -1106,14 +1496,14 @@ class Encryptor {
   /// AES-256-GCM encrypt data with given symmetric key.
   Uint8List encryptWithSymmetricKey(Uint8List data, Uint8List key) { ... }
 
-  /// RSA-OAEP encrypt symmetric key with public key.
-  Uint8List encryptSymmetricKey(Uint8List symmetricKey, RSAPublicKey publicKey) { ... }
+  /// RSA-OAEP wrap symmetric key with recipient's public key.
+  Uint8List wrapSymmetricKey(Uint8List symmetricKey, RSAPublicKey recipientPublicKey) { ... }
 
   /// AES-256-GCM decrypt data with given symmetric key.
   Uint8List decryptWithSymmetricKey(Uint8List encrypted, Uint8List key) { ... }
 
-  /// RSA-OAEP decrypt symmetric key with private key.
-  Uint8List decryptSymmetricKey(Uint8List encryptedKey, RSAPrivateKey privateKey) { ... }
+  /// RSA-OAEP unwrap symmetric key with own private key.
+  Uint8List unwrapSymmetricKey(Uint8List wrappedKey, RSAPrivateKey privateKey) { ... }
 }
 ```
 
@@ -1148,28 +1538,34 @@ sequenceDiagram
     participant EO as Env Operator (Desktop)
     participant BE as Go Backend
 
-    Note over SP: Generate/load encryption cert
+    Note over SP,AU: All personas have registered RSA-4096 public keys at account setup
+
+    Note over SP: Load HPCR encryption cert
     SP->>SP: Encrypt workload via contract-cli
     SP->>SP: SHA256(workload.enc) → hash
-    SP->>SP: Sign(hash, private_key) → signature
-    SP->>BE: POST /builds/{id}/workload
+    SP->>SP: Sign(hash, sp_private_key) → signature
+    SP->>BE: POST /builds/{id}/workload (+ encryption_cert)
 
-    Note over DO: Generate AES-256 symmetric key
-    DO->>DO: AES encrypt env section
-    DO->>DO: RSA encrypt symmetric key
+    Note over DO: Retrieve Auditor's registered public key
+    DO->>BE: GET /builds/{id}/assignments
+    BE-->>DO: Auditor's RSA public key
+    DO->>DO: Generate AES-256 symmetric key
+    DO->>DO: AES-256-GCM encrypt env section
+    DO->>DO: RSA-OAEP wrap AES key with Auditor's public key
     DO->>DO: SHA256(encrypted_env) → hash
-    DO->>DO: Sign(hash, private_key) → signature
+    DO->>DO: Sign(hash, do_private_key) → signature
     DO->>BE: POST /builds/{id}/environment
 
     Note over AU: Generate attestation + signing keys
     AU->>BE: POST /builds/{id}/attestation (public keys)
-    AU->>BE: GET sections (download encrypted artifacts)
-    AU->>AU: RSA decrypt symmetric key
-    AU->>AU: AES decrypt env section
-    AU->>AU: Final encrypt via contract-cli
+    AU->>BE: GET /builds/{id}/sections (download encrypted artifacts)
+    AU->>AU: RSA-OAEP unwrap AES key with own private key
+    AU->>AU: AES-256-GCM decrypt env section
+    AU->>AU: Inject signing certificate into env
+    AU->>AU: Encrypt env via contract-cli (HPCR cert)
     AU->>AU: Assemble contract.yaml
     AU->>AU: SHA256(contract.yaml) → hash
-    AU->>AU: Sign(hash, private_key) → signature
+    AU->>AU: Sign(hash, signing_key) → signature
     AU->>BE: POST /builds/{id}/finalize
 
     EO->>BE: GET /builds/{id}/userdata
@@ -1183,55 +1579,94 @@ sequenceDiagram
 ### 10.1 Docker Compose
 
 ```yaml
-version: "3.9"
-
 services:
+  reverse_proxy:
+    image: nginx:1.27-alpine
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "${REVERSE_PROXY_PORT:-8080}:80"
+    volumes:
+      - ./config/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - app_net
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: hpcr_builder
-      POSTGRES_USER: hpcr
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-hpcr_builder}
+      POSTGRES_USER: ${POSTGRES_USER:-hpcr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hpcr"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hpcr} -d ${POSTGRES_DB:-hpcr_builder}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+    networks:
+      - db_net
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgres://hpcr:${DB_PASSWORD}@postgres:5432/hpcr_builder?sslmode=disable
-      SERVER_PORT: "8080"
-      LOG_LEVEL: info
-    ports:
-      - "8080:8080"
+      DATABASE_URL: postgres://${POSTGRES_USER:-hpcr}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hpcr_builder}?sslmode=disable
+      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
+      SERVER_PORT: ${SERVER_PORT:-8080}
+      TOKEN_EXPIRY: ${TOKEN_EXPIRY:-24h}
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      MAX_PAYLOAD_SIZE: ${MAX_PAYLOAD_SIZE:-52428800}
+      ADMIN_NAME: ${ADMIN_NAME:-System Admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@hpcr-builder.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8080"
+    networks:
+      - app_net
+      - db_net
+    restart: unless-stopped
 
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./nginx/certs:/etc/ssl:ro
+  migrate:
+    image: migrate/migrate:4
     depends_on:
-      - backend
+      postgres:
+        condition: service_healthy
+    command:
+      [
+        "-path=/migrations",
+        "-database=postgres://${POSTGRES_USER:-hpcr}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hpcr_builder}?sslmode=disable",
+        "up"
+      ]
+    volumes:
+      - ./backend/migrations:/migrations:ro
+    networks:
+      - db_net
 
-volumes:
-  pgdata:
+networks:
+  app_net:
+    internal: true
+  db_net:
+    internal: true
 ```
+
+> [!WARNING]
+> The above Docker Compose is for **local development only**. For production, use TLS termination on the reverse proxy (see §8.2 nginx reference config) and set strong, randomly generated passwords via environment variables. Never use `sslmode=disable` in production.
 
 ### 10.2 Backend Dockerfile
 
 ```dockerfile
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -1239,7 +1674,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /server ./cmd/server
 
-FROM alpine:3.19
+FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /server /server
 
@@ -1265,25 +1700,30 @@ migrate -path ./migrations -database "$DATABASE_URL" down 1
 
 | Layer | Tool | Coverage Target |
 |---|---|---|
-| Unit (services) | Go `testing` + `testify` | State machine, hash chain, validation logic |
-| Unit (handlers) | `httptest` | Request parsing, response codes, error handling |
+| Unit (services) | Go `testing` + `testify` | State machine, hash chain, validation logic, assignment checks |
+| Unit (handlers) | `httptest` | Request parsing, response codes, error handling, RBAC + assignment enforcement |
 | Integration | `testcontainers-go` (PostgreSQL) | Full DB round-trip, migration tests |
-| API (E2E) | `httptest` + test fixtures | Complete build lifecycle flow |
-| Flutter unit | `flutter_test` | Crypto operations, model serialization |
+| API (E2E) | `httptest` + test fixtures | Complete build lifecycle flow with assignments |
+| Flutter unit | `flutter_test` | Crypto operations, key wrapping, model serialization |
 | Flutter integration | `integration_test` | Full persona workflow (mock backend) |
 
 ### Key Test Scenarios
 
-1. **Happy path:** Full build lifecycle from `CREATED` → `FINALIZED`.
+1. **Happy path:** Full build lifecycle from `CREATED` → `FINALIZED` with proper assignments.
 2. **Invalid transitions:** Attempt to skip a state (e.g., `CREATED` → `FINALIZED`).
 3. **Role enforcement:** Wrong persona attempts a section submission.
-4. **Hash mismatch:** Submit a section with an incorrect hash.
-5. **Signature failure:** Submit with an invalid signature.
-6. **Immutability:** Attempt to modify a `FINALIZED` build.
-7. **Audit chain integrity:** Verify a tampered event is detected.
-8. **Token lifecycle:** Create, use, revoke, attempt to reuse revoked token.
-9. **Cancellation:** Admin cancels at each pre-finalized state.
+4. **Assignment enforcement:** Correct role but not assigned to this build.
+5. **Hash mismatch:** Submit a section with an incorrect hash.
+6. **Signature failure:** Submit with an invalid signature.
+7. **Signature identity mismatch:** Submit with a valid signature from a non-registered key.
+8. **Immutability:** Attempt to modify a `FINALIZED` build.
+9. **Audit chain integrity:** Verify a tampered event is detected.
+10. **Token lifecycle:** Create, use, expire, revoke, attempt to reuse expired/revoked token.
+11. **Cancellation:** Admin cancels at each pre-finalized state.
+12. **Key wrapping:** Verify only the assigned Auditor can unwrap the symmetric key.
+13. **Public key registration:** Register, update, verify fingerprint computation.
+14. **Build creation validation:** Attempt to create a build assigning users without public keys.
 
 ---
 
-> *End of HPCR Contract Builder LLD v0.1*
+> *End of HPCR Contract Builder LLD v0.2*
