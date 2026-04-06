@@ -1,0 +1,350 @@
+// Modern IBM Cloud-inspired theme enhancements
+// Works with both light (white) and dark (g100) Carbon themes
+
+// Smooth transitions for theme switching
+* {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+// Enhanced header styling
+.cds--header {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+// Modern card styling with subtle shadows
+.cds--tile {
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  
+  &:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+  }
+}
+
+// Enhanced button styling
+.cds--btn {
+  border-radius: 4px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+  
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+}
+
+// Modern input fields
+.cds--text-input,
+.cds--text-area,
+.cds--select-input,
+.cds--dropdown {
+  border-radius: 4px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  
+  &:focus {
+    box-shadow: 0 0 0 2px var(--cds-focus);
+  }
+}
+
+// Enhanced data table
+.cds--data-table {
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.cds--data-table thead {
+  background: var(--cds-layer-accent);
+}
+
+.cds--data-table tbody tr {
+  transition: background-color 0.15s ease;
+  
+  &:hover {
+    background: var(--cds-layer-hover);
+  }
+}
+
+// Modern modal styling
+.cds--modal-container {
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+// Enhanced notification styling
+.cds--inline-notification,
+.cds--toast-notification {
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+// Modern tag styling
+.cds--tag {
+  border-radius: 12px;
+  font-weight: 500;
+  padding: 0.25rem 0.75rem;
+}
+
+// Enhanced side navigation
+.cds--side-nav {
+  box-shadow: 1px 0 2px rgba(0, 0, 0, 0.1);
+}
+
+.cds--side-nav__item {
+  transition: background-color 0.15s ease;
+  
+  &:hover {
+    background: var(--cds-layer-hover);
+  }
+  
+  &.cds--side-nav__item--active {
+    background: var(--cds-layer-selected);
+    border-left: 3px solid var(--cds-interactive);
+  }
+}
+
+// Modern progress bar
+.cds--progress-bar {
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cds--progress-bar__bar {
+  transition: width 0.3s ease;
+}
+
+// Enhanced accordion
+.cds--accordion__item {
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+// Modern overflow menu
+.cds--overflow-menu-options {
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+// Enhanced loading spinner
+.cds--loading {
+  &::after {
+    border-radius: 50%;
+  }
+}
+
+// Modern breadcrumb
+.cds--breadcrumb {
+  padding: 1rem 0;
+}
+
+.cds--breadcrumb-item {
+  &::after {
+    margin: 0 0.5rem;
+  }
+}
+
+// Enhanced tabs
+.cds--tabs {
+  border-bottom: 1px solid var(--cds-border-subtle);
+}
+
+.cds--tabs__nav-item {
+  transition: color 0.15s ease, border-color 0.15s ease;
+  
+  &:hover {
+    color: var(--cds-text-primary);
+  }
+  
+  &--selected {
+    border-bottom: 2px solid var(--cds-interactive);
+  }
+}
+
+// Modern search
+.cds--search {
+  border-radius: 4px;
+  
+  &:focus-within {
+    box-shadow: 0 0 0 2px var(--cds-focus);
+  }
+}
+
+// Enhanced toggle
+.cds--toggle {
+  &__switch {
+    border-radius: 12px;
+    transition: background-color 0.2s ease;
+  }
+  
+  &__button {
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+  }
+}
+
+// Modern checkbox and radio
+.cds--checkbox-label,
+.cds--radio-button__label {
+  transition: color 0.15s ease;
+  
+  &:hover {
+    color: var(--cds-text-primary);
+  }
+}
+
+// Enhanced tooltip
+.cds--tooltip {
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+// Modern pagination
+.cds--pagination {
+  border-radius: 4px;
+}
+
+.cds--pagination__button {
+  transition: background-color 0.15s ease;
+  
+  &:hover:not(:disabled) {
+    background: var(--cds-layer-hover);
+  }
+}
+
+// Enhanced content switcher
+.cds--content-switcher {
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cds--content-switcher-btn {
+  transition: background-color 0.15s ease, color 0.15s ease;
+  
+  &:hover {
+    background: var(--cds-layer-hover);
+  }
+  
+  &--selected {
+    background: var(--cds-layer-selected);
+  }
+}
+
+// Modern file uploader
+.cds--file__drop-container {
+  border-radius: 4px;
+  border: 2px dashed var(--cds-border-subtle);
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+  
+  &:hover {
+    border-color: var(--cds-interactive);
+    background: var(--cds-layer-hover);
+  }
+}
+
+// Enhanced slider
+.cds--slider__track {
+  border-radius: 4px;
+}
+
+.cds--slider__thumb {
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: box-shadow 0.2s ease;
+  
+  &:hover {
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+  }
+}
+
+// Modern date picker
+.cds--date-picker__input {
+  border-radius: 4px;
+}
+
+.flatpickr-calendar {
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+// Enhanced number input
+.cds--number {
+  border-radius: 4px;
+  
+  input {
+    border-radius: 4px 0 0 4px;
+  }
+}
+
+// Modern structured list
+.cds--structured-list {
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.cds--structured-list-row {
+  transition: background-color 0.15s ease;
+  
+  &:hover {
+    background: var(--cds-layer-hover);
+  }
+}
+
+// Enhanced code snippet
+.cds--snippet {
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+// Modern link styling
+.cds--link {
+  transition: color 0.15s ease;
+  
+  &:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
+// Smooth scrollbar styling
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--cds-layer);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--cds-border-subtle);
+  border-radius: 4px;
+  
+  &:hover {
+    background: var(--cds-border-strong);
+  }
+}
+
+// Focus visible styling
+*:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: 2px;
+}
+
+// Reduced motion support
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+// Made with Bob
