@@ -1,6 +1,6 @@
-# HPCR Contract Builder
+#IBM Confidential Computing Contract Generator
 
-> **HPCR Contract Builder** is a self-hosted, open-source system that enables organizations to collaboratively construct, sign, and finalize encrypted userdata contracts (YAML format) for HPCR (Hyper Protect Container Runtime), HPCR4RHVS, and HPCC deployments.
+> **IBM Confidential Computing Contract Generator** is a self-hosted, open-source system that enables organizations to collaboratively construct, sign, and finalize encrypted userdata contracts (YAML format) for HPCR (Hyper Protect Container Runtime), HPCR4RHVS, and HPCC deployments.
 
 The system enforces a strict, linear, multi-persona workflow. Each persona contributes exactly once per build. Once finalized, the contract becomes immutable.
 

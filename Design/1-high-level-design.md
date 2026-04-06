@@ -1,4 +1,4 @@
-# HPCR Contract Builder — High-Level Design (HLD)
+#IBM Confidential Computing Contract Generator — High-Level Design (HLD)
 
 > **Version:** 0.4  
 > **Date:** 2026-04-05  
@@ -8,13 +8,13 @@
 
 ## 1. Introduction
 
-The HPCR Contract Builder is a self-hosted, open-source system that enables organizations to collaboratively construct, sign, and finalize encrypted userdata contracts (YAML format) for **HPCR**, **HPCR4RHVS**, and **HPCC** deployments.
+TheIBM Confidential Computing Contract Generator is a self-hosted, open-source system that enables organizations to collaboratively construct, sign, and finalize encrypted userdata contracts (YAML format) for **HPCR**, **HPCR4RHVS**, and **HPCC** deployments.
 
 The system enforces a strict, linear, multi-persona workflow with cryptographic identity binding. Each persona registers an RSA public key at account creation and contributes exactly once per build. Builds require explicit user-to-role assignments, ensuring accountability. Once finalized, the contract becomes immutable.
 
 ### Architectural Principles
 
-- All cryptographic operations are executed locally on the **Flutter desktop application**.
+- All cryptographic operations are executed locally on the **Electron desktop application** (React + IBM Carbon UI).
 - The backend **never** performs encryption, signing, or contract assembly.
 - The backend only orchestrates workflow, verifies signatures against **registered public keys**, stores encrypted artifacts, and maintains an audit hash chain.
 - Every user registers a public key; the corresponding private key **never** leaves the user's machine.
@@ -51,7 +51,7 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
 ### Customer Environment
 
 ```
-[ Flutter Desktop App ]  <--HTTPS-->  [ nginx Reverse Proxy ]
+[ Electron Desktop App ]  <--HTTPS-->  [ nginx Reverse Proxy ]
                                               |
                                               v
                                         [ Go Backend ]
@@ -73,7 +73,61 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
 - All crypto operations occur locally.
 - Backend stores only encrypted or hashed data.
 - Backend verifies signatures against registered public keys — never against request-supplied keys.
-- Contract CLI (using Contract Go) is used in the desktop application.
+- Contract CLI (using Contract Go) is invoked via Node.js child_process in the Electron main process.
+
+### Desktop Application Architecture
+
+The Electron desktop application is the primary client interface for all users. It enforces client-side cryptography and provides a secure, user-friendly interface built with React and IBM Carbon Design System.
+
+**Key Features:**
+
+1. **Security-First Design**
+   - All cryptographic operations execute in the Electron main process (Node.js)
+   - Renderer process (React UI) has no direct access to crypto APIs
+   - Context isolation and sandbox mode enabled
+   - Secure IPC communication via preload script
+   - Private keys never leave the user's machine
+
+2. **User Interface**
+   - IBM Carbon Design System for consistent, professional UI
+   - Dark mode (g100) as default theme
+   - Custom frameless window with branded title bar
+   - Role-based navigation and access control
+   - Boot screen with progressive loading
+   - Split-screen login with feature showcase
+
+3. **State Management**
+   - Zustand for lightweight, performant state management
+   - Persistent storage for auth tokens and configuration
+   - Session-only storage for sensitive build data
+   - Automatic cleanup on logout and app close
+
+4. **Key Views**
+   - **Home Dashboard**: Account overview, system alerts, build actions
+   - **Build Management**: Create, view, and manage contract builds
+   - **Build Details**: Section-by-section signing and status tracking
+   - **User Management**: CRUD operations, role assignment (Admin only)
+   - **Admin Analytics**: System diagnostics, security monitoring (Admin only)
+   - **System Logs**: Comprehensive audit trail with search and export (Admin/Auditor)
+   - **Account Settings**: Profile, password, and key management
+   - **Login**: Split-screen with server configuration and remember email
+
+5. **Cryptographic Operations**
+   - RSA-4096 key pair generation (identity and attestation)
+   - AES-256-GCM symmetric encryption
+   - RSA-OAEP key wrapping/unwrapping
+   - SHA-256 hashing
+   - RSA-PSS signing and verification
+   - Secure key storage per user ID
+   - Integration with contract-cli via child_process
+
+6. **Production Distribution**
+   - Cross-platform builds (macOS, Windows, Linux)
+   - Code signing support for trusted distribution
+   - Auto-update capability (configurable)
+   - Installer and portable versions
+   - Comprehensive build documentation
+
 
 ---
 
@@ -81,7 +135,7 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
 
 ### Account Setup (First Login)
 
-When a user is created (by Admin or seeded at deployment), they receive an initial password. On first login, the Flutter desktop app enforces a **mandatory setup flow** before the user can access any functionality:
+When a user is created (by Admin or seeded at deployment), they receive an initial password. On first login, the Electron desktop app enforces a **mandatory setup flow** before the user can access any functionality:
 
 1. **Change password** — user must replace the admin-assigned initial password.
 2. **Generate RSA-4096 key pair** locally on the desktop application.
@@ -213,7 +267,7 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 **Local Actions:**
 
 1. Download finalized YAML contract (base64-encoded from backend).
-2. Flutter desktop app **decodes the base64** to produce the raw YAML file.
+2. Electron desktop app **decodes the base64** to produce the raw YAML file.
 3. Compute `SHA256(contract.yaml)` locally and verify it matches the build's `contract_hash`.
 4. Sign the `contract_hash` with the Env Operator's **registered identity private key**.
 5. Upload signed acknowledgment to backend.
@@ -653,7 +707,8 @@ The `GET /builds/{id}/verify` endpoint:
 ## 12. Deployment Topology
 
 ```
-[ Desktop App ]
+[ Electron Desktop App ]
+(React + IBM Carbon UI)
        |
        v
 [ nginx Reverse Proxy ]
@@ -691,4 +746,4 @@ The `GET /builds/{id}/verify` endpoint:
 
 ---
 
-> *End of HPCR Contract Builder HLD v0.4*
+> *End ofIBM Confidential Computing Contract Generator HLD v0.4*

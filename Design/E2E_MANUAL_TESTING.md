@@ -1,4 +1,4 @@
-# HPCR Contract Builder — End-to-End Manual Testing Guide
+#IBM Confidential Computing Contract Generator — End-to-End Manual Testing Guide
 
 This guide walks you through manually testing the entire backend API workflow using `curl`, matching the High-Level Design (HLD) and Low-Level Design (LLD) specifications.
 

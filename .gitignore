@@ -34,16 +34,6 @@ backend/*.out
 backend/vendor/
 backend/coverage.txt
 
-# Flutter App
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.packages
-build/
-.app/
-flutter_export_environment.sh
-.fvm/
-
 # macOS Build
 DerivedData/
 *.pbxuser
@@ -66,3 +56,9 @@ contract-cli
 
 # Save data
 data
+
+# Electon
+
+node_modules/
+dist/
+dist-electron/

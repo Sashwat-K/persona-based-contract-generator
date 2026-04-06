@@ -1,4 +1,4 @@
-# HPCR Contract Builder — Low-Level Design (LLD)
+#IBM Confidential Computing Contract Generator — Low-Level Design (LLD)
 
 > **Version:** 0.2  
 > **Date:** 2026-04-05  
@@ -83,61 +83,99 @@ backend/
 └── Dockerfile
 ```
 
-### 1.2 Flutter Desktop App
+### 1.2 Electron Desktop App (React + IBM Carbon UI)
 
 ```
-desktop_app/
-├── lib/
-│   ├── main.dart
-│   ├── app.dart
-│   ├── config/
-│   │   ├── app_config.dart           # Server URL, timeouts
-│   │   └── routes.dart               # Named route definitions
-│   ├── models/
-│   │   ├── user.dart
-│   │   ├── build.dart
-│   │   ├── build_assignment.dart
-│   │   ├── section.dart
-│   │   └── audit_event.dart
-│   ├── services/
-│   │   ├── api_client.dart           # HTTP client wrapper (Dio)
-│   │   ├── auth_service.dart         # Login, logout, token storage
-│   │   ├── build_service.dart        # Build CRUD + assignment API calls
-│   │   ├── section_service.dart      # Section upload API calls
-│   │   ├── audit_service.dart        # Audit log + verification API calls
-│   │   └── crypto_service.dart       # Local crypto operations (FFI bridge)
-│   ├── crypto/
-│   │   ├── contract_cli_bridge.dart  # FFI/Process bridge to contract-cli
-│   │   ├── key_manager.dart          # Local key generation & storage
-│   │   ├── encryptor.dart            # AES-256-GCM / RSA-OAEP encryption
-│   │   ├── signer.dart               # SHA256 + RSA-PSS signing
-│   │   └── hash_utils.dart           # SHA256 helpers
-│   ├── providers/
-│   │   ├── auth_provider.dart        # Auth state (Riverpod)
-│   │   ├── build_provider.dart       # Build list + detail state
-│   │   └── theme_provider.dart       # Theme state
-│   ├── screens/
-│   │   ├── login_screen.dart
-│   │   ├── dashboard_screen.dart
-│   │   ├── build_list_screen.dart
-│   │   ├── build_detail_screen.dart
-│   │   ├── workload_submission_screen.dart
-│   │   ├── environment_staging_screen.dart
-│   │   ├── auditor_screen.dart
-│   │   ├── admin/
-│   │   │   ├── user_management_screen.dart
-│   │   │   └── role_assignment_screen.dart
-│   │   └── audit_log_screen.dart
-│   └── widgets/
-│       ├── build_status_badge.dart
-│       ├── file_picker_card.dart
-│       ├── hash_display.dart
-│       └── signature_status.dart
-├── assets/
-├── test/
-├── pubspec.yaml
-└── Makefile
+app/
+├── main/                             # Main Process (Node.js)
+│   ├── index.js                      # Electron main process entry, window management, IPC handlers
+│   ├── preload.js                    # Preload script for secure IPC bridge (contextBridge)
+│   └── crypto/                       # Cryptographic operations (main process only)
+│       ├── contractCli.js            # Node.js bridge to contract-cli (child_process)
+│       ├── keyManager.js             # RSA-4096 key generation, fingerprints
+│       ├── encryptor.js              # AES-256-GCM encryption, RSA-OAEP key wrapping
+│       ├── signer.js                 # SHA-256 hashing, RSA-PSS signing/verification
+│       └── keyStorage.js             # Secure key storage per user ID
+│
+├── src/                              # Renderer Process (React)
+│   ├── main.jsx                      # React app entry point
+│   ├── App.jsx                       # Root component with routing, boot screen
+│   ├── index.scss                    # Global styles (Carbon theme)
+│   │
+│   ├── assets/                       # Static assets
+│   │   └── CloudHyperProtect.svg     # IBM Cloud Hyper Protect logo
+│   │
+│   ├── components/                   # Reusable UI components
+│   │   ├── AppShell.jsx              # Main layout: Header, SideNav, Footer, Window Controls
+│   │   └── HyperProtectIcon.jsx      # Custom IBM Hyper Protect icon component
+│   │
+│   ├── views/                        # Page components (route-based)
+│   │   ├── Login.jsx                 # Split-screen login with server config, remember email
+│   │   ├── Home.jsx                  # Dashboard: account overview, build overview, alerts
+│   │   ├── BuildManagement.jsx       # Build list, filtering, search
+│   │   ├── BuildDetails.jsx          # Build details, section signing, status tracking
+│   │   ├── UserManagement.jsx        # User CRUD, role assignment, key/password status
+│   │   ├── AdminAnalytics.jsx        # System diagnostics, expired keys/passwords, statistics
+│   │   ├── SystemLogs.jsx            # Audit trail, search, filter, CSV export
+│   │   ├── AccountSettings.jsx       # Profile, password change, key management
+│   │   └── NotFound.jsx              # 404 error page
+│   │
+│   ├── services/                     # API & business logic
+│   │   ├── apiClient.js              # Axios HTTP client with interceptors
+│   │   ├── authService.js            # Login, logout, token management
+│   │   ├── buildService.js           # Build CRUD + assignment API calls
+│   │   └── cryptoService.js          # IPC bridge to main process crypto operations
+│   │
+│   ├── store/                        # State management (Zustand)
+│   │   ├── authStore.js              # Authentication state with persistence
+│   │   ├── buildStore.js             # Build list + detail state
+│   │   ├── configStore.js            # Server URL configuration with persistence
+│   │   ├── themeStore.js             # Theme preferences (dark/light mode)
+│   │   ├── uiStore.js                # UI state (modals, notifications, loading)
+│   │   └── mockData.js               # Mock data for development (10 test users)
+│   │
+│   ├── styles/                       # Custom styling
+│   │   └── modern-theme.scss         # Carbon Design System theme overrides
+│   │
+│   └── utils/                        # Utility functions
+│       ├── constants.js              # Application constants
+│       ├── formatters.js             # Data formatting utilities
+│       ├── validators.js             # Input validation utilities
+│       └── cryptoMock.js             # Mock crypto for development
+│
+├── package.json                      # Dependencies, scripts, metadata
+├── vite.config.js                    # Vite bundler configuration
+├── electron-builder.json             # Electron Builder configuration for packaging
+├── index.html                        # HTML template
+├── BUILD.md                          # Production build instructions
+└── DUMMY_CREDENTIALS.md              # Test credentials for development
 ```
+
+#### Key Implementation Details
+
+**Main Process (Electron)**:
+- Frameless window with custom title bar
+- Window controls (minimize, maximize, close)
+- IPC handlers for crypto, file operations, shell operations
+- Session management and cleanup on close/quit
+- Sandbox mode enabled for security
+
+**Renderer Process (React)**:
+- Carbon Design System (IBM) for UI components
+- Zustand for state management with persistence
+- Axios for HTTP client with interceptors
+- Role-based navigation and access control
+- Boot screen with progressive loading
+- Split-screen login with feature showcase
+- External links open in system default browser
+
+**Security Features**:
+- Context isolation enabled
+- Node integration disabled
+- Sandbox mode enabled
+- Content Security Policy configured
+- All crypto operations in main process
+- Secure IPC communication via preload script
 
 ---
 
@@ -1369,11 +1407,11 @@ server {
 
 ---
 
-## 9. Flutter Desktop — Crypto Operations Detail
+## 9. Electron Desktop — Crypto Operations Detail
 
 ### 9.1 contract-cli Integration
 
-The Flutter app invokes `contract-cli` (built from `contract-go`) as a subprocess. The CLI uses `encrypt-string` to encrypt individual sections (workload, env, attestation public key) with the HPCR encryption certificate.
+The Electron app invokes `contract-cli` (built from `contract-go`) as a subprocess via Node.js child_process in the main process. The CLI uses `encrypt-string` to encrypt individual sections (workload, env, attestation public key) with the HPCR encryption certificate.
 
 **HPCR Contract Structure:**
 
@@ -1410,138 +1448,287 @@ echo "<plain-text-content>" | contract-cli encrypt-string --in - --cert <hpcr-en
 # Output: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
 ```
 
-**Dart Bridge:**
-```dart
-// lib/crypto/contract_cli_bridge.dart
+**Node.js Bridge (Main Process):**
+```javascript
+// main/crypto/contractCli.js
+
+const { spawn } = require('child_process');
+const fs = require('fs').promises;
 
 class ContractCliBridge {
-  final String cliPath;
-
-  ContractCliBridge({required this.cliPath});
-
-  /// Encrypt a string section using contract-cli encrypt-string.
-  /// Used for workload, env, and attestation public key.
-  Future<String> encryptSection({
-    required String plainText,
-    required File encryptionCert,
-  }) async {
-    final result = await Process.run(
-      cliPath,
-      ['encrypt-string', '--in', '-', '--cert', encryptionCert.path],
-      stdinData: plainText,
-    );
-
-    if (result.exitCode != 0) {
-      throw CryptoException('contract-cli encrypt-string failed: ${result.stderr}');
-    }
-
-    return result.stdout.toString().trim(); // hyper-protect-basic.xxx.yyy
+  constructor(cliPath) {
+    this.cliPath = cliPath;
   }
 
-  /// Assemble final contract YAML from encrypted sections.
-  String assembleContract({
-    required String encryptedWorkload,
-    required String encryptedEnv,
-    required String envWorkloadSignature,
-    required String encryptedAttestationKey,
+  /**
+   * Encrypt a string section using contract-cli encrypt-string.
+   * Used for workload, env, and attestation public key.
+   */
+  async encryptSection(plainText, encryptionCertPath) {
+    return new Promise((resolve, reject) => {
+      const process = spawn(this.cliPath, [
+        'encrypt-string',
+        '--in', '-',
+        '--cert', encryptionCertPath
+      ]);
+
+      let stdout = '';
+      let stderr = '';
+
+      process.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      process.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      process.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`contract-cli encrypt-string failed: ${stderr}`));
+        } else {
+          resolve(stdout.trim()); // hyper-protect-basic.xxx.yyy
+        }
+      });
+
+      process.stdin.write(plainText);
+      process.stdin.end();
+    });
+  }
+
+  /**
+   * Assemble final contract YAML from encrypted sections.
+   */
+  assembleContract({
+    encryptedWorkload,
+    encryptedEnv,
+    envWorkloadSignature,
+    encryptedAttestationKey
   }) {
-    return '''
-env: $encryptedEnv
-workload: $encryptedWorkload
-envWorkloadSignature: $envWorkloadSignature
-attestationPublicKey: $encryptedAttestationKey
-''';
+    return `env: ${encryptedEnv}
+workload: ${encryptedWorkload}
+envWorkloadSignature: ${envWorkloadSignature}
+attestationPublicKey: ${encryptedAttestationKey}
+`;
   }
 }
+
+module.exports = ContractCliBridge;
 ```
 
 ### 9.2 Local Key & Encryption Operations
 
-```dart
-// lib/crypto/key_manager.dart
+```javascript
+// main/crypto/keyManager.js
+
+const crypto = require('crypto');
+const { promisify } = require('util');
+
+const generateKeyPair = promisify(crypto.generateKeyPair);
 
 class KeyManager {
-  /// Generate RSA 4096-bit key pair for user identity (signing + key wrapping).
-  Future<KeyPair> generateIdentityKeyPair() async { ... }
+  /**
+   * Generate RSA 4096-bit key pair for user identity (signing + key wrapping).
+   */
+  async generateIdentityKeyPair() {
+    const { publicKey, privateKey } = await generateKeyPair('rsa', {
+      modulusLength: 4096,
+      publicKeyEncoding: {
+        type: 'spki',
+        format: 'pem'
+      },
+      privateKeyEncoding: {
+        type: 'pkcs8',
+        format: 'pem'
+      }
+    });
+    return { publicKey, privateKey };
+  }
 
-  /// Generate RSA 4096-bit key pair for attestation.
-  Future<KeyPair> generateAttestationKeyPair() async { ... }
+  /**
+   * Generate RSA 4096-bit key pair for attestation.
+   */
+  async generateAttestationKeyPair() {
+    return this.generateIdentityKeyPair();
+  }
 
-  /// Generate AES-256 symmetric key for environment staging.
-  Uint8List generateSymmetricKey() {
-    final random = Random.secure();
-    return Uint8List.fromList(
-      List.generate(32, (_) => random.nextInt(256)),
+  /**
+   * Generate AES-256 symmetric key for environment staging.
+   */
+  generateSymmetricKey() {
+    return crypto.randomBytes(32); // 256 bits
+  }
+
+  /**
+   * Store key securely using OS keychain (via keytar or similar).
+   */
+  async storeKey(label, key) {
+    // Implementation using electron-store or keytar
+    // For now, store encrypted in user data directory
+  }
+
+  /**
+   * Register public key with backend.
+   */
+  async registerPublicKey(publicKeyPem, apiClient) {
+    const response = await apiClient.put('/users/me/public-key', {
+      public_key: publicKeyPem
+    });
+    return response.data.public_key_fingerprint;
+  }
+}
+
+module.exports = KeyManager;
+```
+
+```javascript
+// main/crypto/encryptor.js
+
+const crypto = require('crypto');
+
+class Encryptor {
+  /**
+   * AES-256-GCM encrypt data with given symmetric key.
+   */
+  encryptWithSymmetricKey(data, key) {
+    const iv = crypto.randomBytes(12); // 96-bit IV for GCM
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    
+    const encrypted = Buffer.concat([
+      cipher.update(data),
+      cipher.final()
+    ]);
+    
+    const authTag = cipher.getAuthTag();
+    
+    // Return: iv + authTag + encrypted
+    return Buffer.concat([iv, authTag, encrypted]);
+  }
+
+  /**
+   * RSA-OAEP wrap symmetric key with recipient's public key.
+   */
+  wrapSymmetricKey(symmetricKey, recipientPublicKeyPem) {
+    return crypto.publicEncrypt(
+      {
+        key: recipientPublicKeyPem,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+        oaepHash: 'sha256'
+      },
+      symmetricKey
     );
   }
 
-  /// Store key securely using OS keychain.
-  Future<void> storeKey(String label, Uint8List key) async { ... }
+  /**
+   * AES-256-GCM decrypt data with given symmetric key.
+   */
+  decryptWithSymmetricKey(encrypted, key) {
+    const iv = encrypted.slice(0, 12);
+    const authTag = encrypted.slice(12, 28);
+    const ciphertext = encrypted.slice(28);
+    
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    
+    return Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final()
+    ]);
+  }
 
-  /// Register public key with backend.
-  Future<String> registerPublicKey(RSAPublicKey publicKey) async {
-    final pem = encodePublicKeyToPem(publicKey);
-    final response = await apiClient.put('/users/me/public-key', {
-      'public_key': pem,
-    });
-    return response['public_key_fingerprint'];
+  /**
+   * RSA-OAEP unwrap symmetric key with own private key.
+   */
+  unwrapSymmetricKey(wrappedKey, privateKeyPem) {
+    return crypto.privateDecrypt(
+      {
+        key: privateKeyPem,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+        oaepHash: 'sha256'
+      },
+      wrappedKey
+    );
   }
 }
-```
 
-```dart
-// lib/crypto/encryptor.dart
-
-class Encryptor {
-  /// AES-256-GCM encrypt data with given symmetric key.
-  Uint8List encryptWithSymmetricKey(Uint8List data, Uint8List key) { ... }
-
-  /// RSA-OAEP wrap symmetric key with recipient's public key.
-  Uint8List wrapSymmetricKey(Uint8List symmetricKey, RSAPublicKey recipientPublicKey) { ... }
-
-  /// AES-256-GCM decrypt data with given symmetric key.
-  Uint8List decryptWithSymmetricKey(Uint8List encrypted, Uint8List key) { ... }
-
-  /// RSA-OAEP unwrap symmetric key with own private key.
-  Uint8List unwrapSymmetricKey(Uint8List wrappedKey, RSAPrivateKey privateKey) { ... }
-}
+module.exports = Encryptor;
 ```
 
 ### 9.3 Signing & Hashing
 
-```dart
-// lib/crypto/signer.dart
+```javascript
+// main/crypto/signer.js
+
+const crypto = require('crypto');
+const fs = require('fs').promises;
 
 class Signer {
-  /// Compute SHA256 hash of file contents.
-  Future<String> hashFile(File file) async {
-    final bytes = await file.readAsBytes();
-    final digest = sha256.convert(bytes);
-    return digest.toString();
+  /**
+   * Compute SHA256 hash of file contents.
+   */
+  async hashFile(filePath) {
+    const data = await fs.readFile(filePath);
+    return crypto.createHash('sha256').update(data).digest('hex');
   }
 
-  /// Sign a hash using RSA-PSS with SHA-256.
-  String sign(String hash, RSAPrivateKey privateKey) { ... }
+  /**
+   * Compute SHA256 hash of buffer/string.
+   */
+  hash(data) {
+    return crypto.createHash('sha256').update(data).digest('hex');
+  }
 
-  /// Verify a signature against a hash and public key.
-  bool verify(String hash, String signature, RSAPublicKey publicKey) { ... }
+  /**
+   * Sign a hash using RSA-PSS with SHA-256.
+   */
+  sign(hash, privateKeyPem) {
+    const sign = crypto.createSign('RSA-SHA256');
+    sign.update(hash);
+    return sign.sign(
+      {
+        key: privateKeyPem,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
+      },
+      'base64'
+    );
+  }
+
+  /**
+   * Verify a signature against a hash and public key.
+   */
+  verify(hash, signature, publicKeyPem) {
+    const verify = crypto.createVerify('RSA-SHA256');
+    verify.update(hash);
+    return verify.verify(
+      {
+        key: publicKeyPem,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
+      },
+      signature,
+      'base64'
+    );
+  }
 }
+
+module.exports = Signer;
 ```
 
 ### 9.4 Persona Workflow (Client-Side)
 
 ```mermaid
 sequenceDiagram
-    participant SP as Solution Provider (Desktop)
-    participant DO as Data Owner (Desktop)
-    participant AU as Auditor (Desktop)
-    participant EO as Env Operator (Desktop)
+    participant SP as Solution Provider (Electron)
+    participant DO as Data Owner (Electron)
+    participant AU as Auditor (Electron)
+    participant EO as Env Operator (Electron)
     participant BE as Go Backend
 
     Note over SP,AU: All personas have registered RSA-4096 public keys at account setup
 
     Note over SP: Load HPCR encryption cert
-    SP->>SP: Encrypt workload via contract-cli
+    SP->>SP: Encrypt workload via contract-cli (Node.js)
     SP->>SP: SHA256(workload.enc) → hash
     SP->>SP: Sign(hash, sp_private_key) → signature
     SP->>BE: POST /builds/{id}/workload (+ encryption_cert)
@@ -1549,7 +1736,7 @@ sequenceDiagram
     Note over DO: Retrieve Auditor's registered public key
     DO->>BE: GET /builds/{id}/assignments
     BE-->>DO: Auditor's RSA public key
-    DO->>DO: Generate AES-256 symmetric key
+    DO->>DO: Generate AES-256 symmetric key (Node.js crypto)
     DO->>DO: AES-256-GCM encrypt env section
     DO->>DO: RSA-OAEP wrap AES key with Auditor's public key
     DO->>DO: SHA256(encrypted_env) → hash
@@ -1726,4 +1913,4 @@ migrate -path ./migrations -database "$DATABASE_URL" down 1
 
 ---
 
-> *End of HPCR Contract Builder LLD v0.2*
+> *End ofIBM Confidential Computing Contract Generator LLD v0.2*
