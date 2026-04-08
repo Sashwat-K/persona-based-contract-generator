@@ -64,3 +64,9 @@ SELECT id, name, email, public_key_fingerprint, public_key_registered_at, public
 FROM users
 WHERE is_active = true
   AND public_key_expires_at < NOW();
+
+-- name: UpdateUser :one
+UPDATE users
+SET name = $2, email = $3
+WHERE id = $1
+RETURNING id, name, email, is_active, created_at, must_change_password, password_changed_at;

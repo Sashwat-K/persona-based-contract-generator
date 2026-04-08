@@ -124,6 +124,42 @@ func (s *UserService) CreateUser(ctx context.Context, input CreateUserInput, ass
 	}, nil
 }
 
+// UpdateUserProfile updates a user's name and email.
+func (s *UserService) UpdateUserProfile(ctx context.Context, userID uuid.UUID, name, email string) (*UserWithRoles, error) {
+	if name == "" || email == "" {
+		return nil, fmt.Errorf("name and email cannot be empty")
+	}
+
+	user, err := s.queries.UpdateUser(ctx, repository.UpdateUserParams{
+		ID:    userID,
+		Name:  name,
+		Email: email,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to update user profile: %w", err)
+	}
+
+	// Fetch existing roles to return a full UserWithRoles object
+	roles, err := s.queries.GetRolesByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load roles: %w", err)
+	}
+
+	roleStrings := make([]string, len(roles))
+	for i, r := range roles {
+		roleStrings[i] = r.Role
+	}
+
+	return &UserWithRoles{
+		ID:        user.ID,
+		Name:      user.Name,
+		Email:     user.Email,
+		Roles:     roleStrings,
+		IsActive:  user.IsActive,
+		CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}, nil
+}
+
 // UpdateRoles replaces all roles for a user.
 func (s *UserService) UpdateRoles(ctx context.Context, userID uuid.UUID, roles []string, assignedBy uuid.UUID) (*UserWithRoles, error) {
 	// Validate roles

@@ -329,3 +329,41 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 	_, err := q.db.Exec(ctx, updatePassword, arg.ID, arg.PasswordHash)
 	return err
 }
+
+const updateUser = `-- name: UpdateUser :one
+UPDATE users
+SET name = $2, email = $3
+WHERE id = $1
+RETURNING id, name, email, is_active, created_at, must_change_password, password_changed_at
+`
+
+type UpdateUserParams struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+}
+
+type UpdateUserRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	Name               string             `json:"name"`
+	Email              string             `json:"email"`
+	IsActive           bool               `json:"is_active"`
+	CreatedAt          time.Time          `json:"created_at"`
+	MustChangePassword bool               `json:"must_change_password"`
+	PasswordChangedAt  pgtype.Timestamptz `json:"password_changed_at"`
+}
+
+func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (UpdateUserRow, error) {
+	row := q.db.QueryRow(ctx, updateUser, arg.ID, arg.Name, arg.Email)
+	var i UpdateUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.MustChangePassword,
+		&i.PasswordChangedAt,
+	)
+	return i, err
+}

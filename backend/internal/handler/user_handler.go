@@ -96,6 +96,48 @@ type updateRolesRequest struct {
 	Roles []string `json:"roles"`
 }
 
+// updateProfileRequest is the JSON request for PATCH /users/{id}.
+type updateProfileRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// UpdateUserProfile handles PATCH /users/{id}.
+func (h *UserHandler) UpdateUserProfile(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, model.ErrInvalidRequest("Invalid user ID."))
+		return
+	}
+
+	var req updateProfileRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, model.ErrInvalidRequest(err.Error()))
+		return
+	}
+
+	if req.Name == "" || req.Email == "" {
+		writeError(w, model.ErrInvalidRequest("Name and email are required."))
+		return
+	}
+
+	user, err := h.userService.UpdateUserProfile(r.Context(), userID, req.Name, req.Email)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
+			writeError(w, model.ErrDuplicateEmail(req.Email))
+			return
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			writeError(w, model.ErrUserNotFound(userID.String()))
+			return
+		}
+		writeError(w, model.ErrInternal("Failed to update user profile."))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, user)
+}
+
 // UpdateRoles handles PATCH /users/{id}/roles.
 func (h *UserHandler) UpdateRoles(w http.ResponseWriter, r *http.Request) {
 	userID, err := uuid.Parse(chi.URLParam(r, "id"))

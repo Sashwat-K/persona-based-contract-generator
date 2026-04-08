@@ -54,6 +54,7 @@ type Querier interface {
 	UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusParams) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdateTokenLastUsed(ctx context.Context, id uuid.UUID) error
+	UpdateUser(ctx context.Context, arg UpdateUserParams) (UpdateUserRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

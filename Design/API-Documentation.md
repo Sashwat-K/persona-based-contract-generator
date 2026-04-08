@@ -314,6 +314,24 @@ List all users.
 
 ---
 
+#### PATCH /users/{id}
+
+Update user profile details (name and email).
+
+**Auth:** Required | **Role:** ADMIN
+
+**Request:**
+```json
+{
+  "name": "Jane Doe Updated",
+  "email": "jane_updated@example.com"
+}
+```
+
+**Response (200):** Updated user object
+
+---
+
 #### PATCH /users/{id}/roles
 
 Update user roles.

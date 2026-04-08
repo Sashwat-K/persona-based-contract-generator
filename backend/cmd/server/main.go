@@ -169,6 +169,7 @@ func buildRouter(
 		r.Route("/users", func(r chi.Router) {
 			r.With(middleware.RequireRole("ADMIN")).Get("/", userHandler.ListUsers)
 			r.With(middleware.RequireRole("ADMIN")).Post("/", userHandler.CreateUser)
+			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}", userHandler.UpdateUserProfile)
 			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}/roles", userHandler.UpdateRoles)
 
 			// Public key management (owner or ADMIN)
