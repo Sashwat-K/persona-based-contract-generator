@@ -7,6 +7,8 @@ const keyStorage = require('./crypto/keyStorage');
 const contractCli = require('./crypto/contractCli');
 
 const createWindow = () => {
+  const isDev = process.env.NODE_ENV === 'development';
+  
   const win = new BrowserWindow({
     width: 1280,
     height: 900,
@@ -16,7 +18,9 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // Disable web security in development to bypass CORS
+      webSecurity: !isDev
     },
     title: 'IBM Confidential Computing Contract Generator',
     icon: path.join(__dirname, '../assets/icon.png'),
@@ -24,8 +28,6 @@ const createWindow = () => {
     titleBarStyle: 'hidden',  // Hide title bar on macOS
     autoHideMenuBar: true  // Hide the menu bar
   });
-
-  const isDev = process.env.NODE_ENV === 'development';
 
   if (isDev) {
     win.loadURL('http://localhost:5173');

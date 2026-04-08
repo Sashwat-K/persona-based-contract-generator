@@ -7,44 +7,62 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createBuildSection = `-- name: CreateBuildSection :one
-INSERT INTO build_sections (build_id, persona_role, submitted_by, encrypted_payload, encrypted_symmetric_key, section_hash, signature)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, build_id, persona_role, submitted_by, encrypted_payload, encrypted_symmetric_key, section_hash, signature, submitted_at
+INSERT INTO build_sections (build_id, persona_role, role_id, submitted_by, encrypted_payload, wrapped_symmetric_key, section_hash, signature)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, build_id, persona_role, role_id, submitted_by, encrypted_payload, wrapped_symmetric_key, section_hash, signature, submitted_at
 `
 
 type CreateBuildSectionParams struct {
-	BuildID               uuid.UUID `json:"build_id"`
-	PersonaRole           string    `json:"persona_role"`
-	SubmittedBy           uuid.UUID `json:"submitted_by"`
-	EncryptedPayload      string    `json:"encrypted_payload"`
-	EncryptedSymmetricKey *string   `json:"encrypted_symmetric_key"`
-	SectionHash           string    `json:"section_hash"`
-	Signature             string    `json:"signature"`
+	BuildID             uuid.UUID   `json:"build_id"`
+	PersonaRole         string      `json:"persona_role"`
+	RoleID              pgtype.UUID `json:"role_id"`
+	SubmittedBy         uuid.UUID   `json:"submitted_by"`
+	EncryptedPayload    string      `json:"encrypted_payload"`
+	WrappedSymmetricKey *string     `json:"wrapped_symmetric_key"`
+	SectionHash         string      `json:"section_hash"`
+	Signature           string      `json:"signature"`
 }
 
-func (q *Queries) CreateBuildSection(ctx context.Context, arg CreateBuildSectionParams) (BuildSection, error) {
+type CreateBuildSectionRow struct {
+	ID                  uuid.UUID   `json:"id"`
+	BuildID             uuid.UUID   `json:"build_id"`
+	PersonaRole         string      `json:"persona_role"`
+	RoleID              pgtype.UUID `json:"role_id"`
+	SubmittedBy         uuid.UUID   `json:"submitted_by"`
+	EncryptedPayload    string      `json:"encrypted_payload"`
+	WrappedSymmetricKey *string     `json:"wrapped_symmetric_key"`
+	SectionHash         string      `json:"section_hash"`
+	Signature           string      `json:"signature"`
+	SubmittedAt         time.Time   `json:"submitted_at"`
+}
+
+func (q *Queries) CreateBuildSection(ctx context.Context, arg CreateBuildSectionParams) (CreateBuildSectionRow, error) {
 	row := q.db.QueryRow(ctx, createBuildSection,
 		arg.BuildID,
 		arg.PersonaRole,
+		arg.RoleID,
 		arg.SubmittedBy,
 		arg.EncryptedPayload,
-		arg.EncryptedSymmetricKey,
+		arg.WrappedSymmetricKey,
 		arg.SectionHash,
 		arg.Signature,
 	)
-	var i BuildSection
+	var i CreateBuildSectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.BuildID,
 		&i.PersonaRole,
+		&i.RoleID,
 		&i.SubmittedBy,
 		&i.EncryptedPayload,
-		&i.EncryptedSymmetricKey,
+		&i.WrappedSymmetricKey,
 		&i.SectionHash,
 		&i.Signature,
 		&i.SubmittedAt,
@@ -53,7 +71,7 @@ func (q *Queries) CreateBuildSection(ctx context.Context, arg CreateBuildSection
 }
 
 const getBuildSectionByRole = `-- name: GetBuildSectionByRole :one
-SELECT id, build_id, persona_role, submitted_by, encrypted_payload, encrypted_symmetric_key, section_hash, signature, submitted_at
+SELECT id, build_id, persona_role, role_id, submitted_by, encrypted_payload, wrapped_symmetric_key, section_hash, signature, submitted_at
 FROM build_sections
 WHERE build_id = $1 AND persona_role = $2
 `
@@ -63,16 +81,30 @@ type GetBuildSectionByRoleParams struct {
 	PersonaRole string    `json:"persona_role"`
 }
 
-func (q *Queries) GetBuildSectionByRole(ctx context.Context, arg GetBuildSectionByRoleParams) (BuildSection, error) {
+type GetBuildSectionByRoleRow struct {
+	ID                  uuid.UUID   `json:"id"`
+	BuildID             uuid.UUID   `json:"build_id"`
+	PersonaRole         string      `json:"persona_role"`
+	RoleID              pgtype.UUID `json:"role_id"`
+	SubmittedBy         uuid.UUID   `json:"submitted_by"`
+	EncryptedPayload    string      `json:"encrypted_payload"`
+	WrappedSymmetricKey *string     `json:"wrapped_symmetric_key"`
+	SectionHash         string      `json:"section_hash"`
+	Signature           string      `json:"signature"`
+	SubmittedAt         time.Time   `json:"submitted_at"`
+}
+
+func (q *Queries) GetBuildSectionByRole(ctx context.Context, arg GetBuildSectionByRoleParams) (GetBuildSectionByRoleRow, error) {
 	row := q.db.QueryRow(ctx, getBuildSectionByRole, arg.BuildID, arg.PersonaRole)
-	var i BuildSection
+	var i GetBuildSectionByRoleRow
 	err := row.Scan(
 		&i.ID,
 		&i.BuildID,
 		&i.PersonaRole,
+		&i.RoleID,
 		&i.SubmittedBy,
 		&i.EncryptedPayload,
-		&i.EncryptedSymmetricKey,
+		&i.WrappedSymmetricKey,
 		&i.SectionHash,
 		&i.Signature,
 		&i.SubmittedAt,
@@ -80,29 +112,88 @@ func (q *Queries) GetBuildSectionByRole(ctx context.Context, arg GetBuildSection
 	return i, err
 }
 
+const getBuildSectionByRoleID = `-- name: GetBuildSectionByRoleID :one
+SELECT bs.id, bs.build_id, bs.persona_role, bs.submitted_by, bs.encrypted_payload, bs.wrapped_symmetric_key, bs.section_hash, bs.signature, bs.submitted_at, bs.role_id, r.name as role_name
+FROM build_sections bs
+LEFT JOIN roles r ON bs.role_id = r.id
+WHERE bs.build_id = $1 AND bs.role_id = $2
+`
+
+type GetBuildSectionByRoleIDParams struct {
+	BuildID uuid.UUID   `json:"build_id"`
+	RoleID  pgtype.UUID `json:"role_id"`
+}
+
+type GetBuildSectionByRoleIDRow struct {
+	ID                  uuid.UUID   `json:"id"`
+	BuildID             uuid.UUID   `json:"build_id"`
+	PersonaRole         string      `json:"persona_role"`
+	SubmittedBy         uuid.UUID   `json:"submitted_by"`
+	EncryptedPayload    string      `json:"encrypted_payload"`
+	WrappedSymmetricKey *string     `json:"wrapped_symmetric_key"`
+	SectionHash         string      `json:"section_hash"`
+	Signature           string      `json:"signature"`
+	SubmittedAt         time.Time   `json:"submitted_at"`
+	RoleID              pgtype.UUID `json:"role_id"`
+	RoleName            *string     `json:"role_name"`
+}
+
+func (q *Queries) GetBuildSectionByRoleID(ctx context.Context, arg GetBuildSectionByRoleIDParams) (GetBuildSectionByRoleIDRow, error) {
+	row := q.db.QueryRow(ctx, getBuildSectionByRoleID, arg.BuildID, arg.RoleID)
+	var i GetBuildSectionByRoleIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.BuildID,
+		&i.PersonaRole,
+		&i.SubmittedBy,
+		&i.EncryptedPayload,
+		&i.WrappedSymmetricKey,
+		&i.SectionHash,
+		&i.Signature,
+		&i.SubmittedAt,
+		&i.RoleID,
+		&i.RoleName,
+	)
+	return i, err
+}
+
 const getBuildSectionsByBuildID = `-- name: GetBuildSectionsByBuildID :many
-SELECT id, build_id, persona_role, submitted_by, encrypted_payload, encrypted_symmetric_key, section_hash, signature, submitted_at
+SELECT id, build_id, persona_role, role_id, submitted_by, encrypted_payload, wrapped_symmetric_key, section_hash, signature, submitted_at
 FROM build_sections
 WHERE build_id = $1
 ORDER BY submitted_at ASC
 `
 
-func (q *Queries) GetBuildSectionsByBuildID(ctx context.Context, buildID uuid.UUID) ([]BuildSection, error) {
+type GetBuildSectionsByBuildIDRow struct {
+	ID                  uuid.UUID   `json:"id"`
+	BuildID             uuid.UUID   `json:"build_id"`
+	PersonaRole         string      `json:"persona_role"`
+	RoleID              pgtype.UUID `json:"role_id"`
+	SubmittedBy         uuid.UUID   `json:"submitted_by"`
+	EncryptedPayload    string      `json:"encrypted_payload"`
+	WrappedSymmetricKey *string     `json:"wrapped_symmetric_key"`
+	SectionHash         string      `json:"section_hash"`
+	Signature           string      `json:"signature"`
+	SubmittedAt         time.Time   `json:"submitted_at"`
+}
+
+func (q *Queries) GetBuildSectionsByBuildID(ctx context.Context, buildID uuid.UUID) ([]GetBuildSectionsByBuildIDRow, error) {
 	rows, err := q.db.Query(ctx, getBuildSectionsByBuildID, buildID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []BuildSection{}
+	items := []GetBuildSectionsByBuildIDRow{}
 	for rows.Next() {
-		var i BuildSection
+		var i GetBuildSectionsByBuildIDRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.BuildID,
 			&i.PersonaRole,
+			&i.RoleID,
 			&i.SubmittedBy,
 			&i.EncryptedPayload,
-			&i.EncryptedSymmetricKey,
+			&i.WrappedSymmetricKey,
 			&i.SectionHash,
 			&i.Signature,
 			&i.SubmittedAt,

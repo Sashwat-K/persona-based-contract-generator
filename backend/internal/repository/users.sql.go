@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (name, email, password_hash)
 VALUES ($1, $2, $3)
-RETURNING id, name, email, is_active, created_at
+RETURNING id, name, email, is_active, created_at, must_change_password, password_changed_at
 `
 
 type CreateUserParams struct {
@@ -25,11 +26,13 @@ type CreateUserParams struct {
 }
 
 type CreateUserRow struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                 uuid.UUID          `json:"id"`
+	Name               string             `json:"name"`
+	Email              string             `json:"email"`
+	IsActive           bool               `json:"is_active"`
+	CreatedAt          time.Time          `json:"created_at"`
+	MustChangePassword bool               `json:"must_change_password"`
+	PasswordChangedAt  pgtype.Timestamptz `json:"password_changed_at"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
@@ -41,6 +44,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 		&i.Email,
 		&i.IsActive,
 		&i.CreatedAt,
+		&i.MustChangePassword,
+		&i.PasswordChangedAt,
 	)
 	return i, err
 }
@@ -54,8 +59,21 @@ func (q *Queries) DeactivateUser(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const forcePasswordChange = `-- name: ForcePasswordChange :exec
+UPDATE users
+SET must_change_password = true
+WHERE id = $1
+`
+
+func (q *Queries) ForcePasswordChange(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, forcePasswordChange, id)
+	return err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at
+SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at,
+       u.public_key, u.public_key_fingerprint, u.public_key_registered_at, u.public_key_expires_at,
+       u.must_change_password, u.password_changed_at
 FROM users u
 WHERE u.email = $1
 `
@@ -70,12 +88,20 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.PasswordHash,
 		&i.IsActive,
 		&i.CreatedAt,
+		&i.PublicKey,
+		&i.PublicKeyFingerprint,
+		&i.PublicKeyRegisteredAt,
+		&i.PublicKeyExpiresAt,
+		&i.MustChangePassword,
+		&i.PasswordChangedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at
+SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at,
+       u.public_key, u.public_key_fingerprint, u.public_key_registered_at, u.public_key_expires_at,
+       u.must_change_password, u.password_changed_at
 FROM users u
 WHERE u.id = $1
 `
@@ -90,22 +116,151 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.PasswordHash,
 		&i.IsActive,
 		&i.CreatedAt,
+		&i.PublicKey,
+		&i.PublicKeyFingerprint,
+		&i.PublicKeyRegisteredAt,
+		&i.PublicKeyExpiresAt,
+		&i.MustChangePassword,
+		&i.PasswordChangedAt,
 	)
 	return i, err
 }
 
+const getUserByPublicKeyFingerprint = `-- name: GetUserByPublicKeyFingerprint :one
+SELECT u.id, u.name, u.email, u.public_key, u.public_key_fingerprint,
+       u.public_key_registered_at, u.public_key_expires_at
+FROM users u
+WHERE u.public_key_fingerprint = $1
+`
+
+type GetUserByPublicKeyFingerprintRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	Name                  string             `json:"name"`
+	Email                 string             `json:"email"`
+	PublicKey             *string            `json:"public_key"`
+	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
+	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
+	PublicKeyExpiresAt    pgtype.Timestamptz `json:"public_key_expires_at"`
+}
+
+func (q *Queries) GetUserByPublicKeyFingerprint(ctx context.Context, publicKeyFingerprint *string) (GetUserByPublicKeyFingerprintRow, error) {
+	row := q.db.QueryRow(ctx, getUserByPublicKeyFingerprint, publicKeyFingerprint)
+	var i GetUserByPublicKeyFingerprintRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.PublicKey,
+		&i.PublicKeyFingerprint,
+		&i.PublicKeyRegisteredAt,
+		&i.PublicKeyExpiresAt,
+	)
+	return i, err
+}
+
+const getUsersWithExpiredPasswords = `-- name: GetUsersWithExpiredPasswords :many
+SELECT id, name, email, password_changed_at, must_change_password, created_at
+FROM users
+WHERE is_active = true
+  AND password_changed_at < NOW() - INTERVAL '90 days'
+  AND must_change_password = false
+`
+
+type GetUsersWithExpiredPasswordsRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	Name               string             `json:"name"`
+	Email              string             `json:"email"`
+	PasswordChangedAt  pgtype.Timestamptz `json:"password_changed_at"`
+	MustChangePassword bool               `json:"must_change_password"`
+	CreatedAt          time.Time          `json:"created_at"`
+}
+
+func (q *Queries) GetUsersWithExpiredPasswords(ctx context.Context) ([]GetUsersWithExpiredPasswordsRow, error) {
+	rows, err := q.db.Query(ctx, getUsersWithExpiredPasswords)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUsersWithExpiredPasswordsRow{}
+	for rows.Next() {
+		var i GetUsersWithExpiredPasswordsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.PasswordChangedAt,
+			&i.MustChangePassword,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUsersWithExpiredPublicKeys = `-- name: GetUsersWithExpiredPublicKeys :many
+SELECT id, name, email, public_key_fingerprint, public_key_registered_at, public_key_expires_at
+FROM users
+WHERE is_active = true
+  AND public_key_expires_at < NOW()
+`
+
+type GetUsersWithExpiredPublicKeysRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	Name                  string             `json:"name"`
+	Email                 string             `json:"email"`
+	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
+	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
+	PublicKeyExpiresAt    pgtype.Timestamptz `json:"public_key_expires_at"`
+}
+
+func (q *Queries) GetUsersWithExpiredPublicKeys(ctx context.Context) ([]GetUsersWithExpiredPublicKeysRow, error) {
+	rows, err := q.db.Query(ctx, getUsersWithExpiredPublicKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUsersWithExpiredPublicKeysRow{}
+	for rows.Next() {
+		var i GetUsersWithExpiredPublicKeysRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.PublicKeyFingerprint,
+			&i.PublicKeyRegisteredAt,
+			&i.PublicKeyExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsers = `-- name: ListUsers :many
-SELECT u.id, u.name, u.email, u.is_active, u.created_at
+SELECT u.id, u.name, u.email, u.is_active, u.created_at,
+       u.public_key_fingerprint, u.public_key_expires_at, u.must_change_password
 FROM users u
 ORDER BY u.created_at DESC
 `
 
 type ListUsersRow struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                   uuid.UUID          `json:"id"`
+	Name                 string             `json:"name"`
+	Email                string             `json:"email"`
+	IsActive             bool               `json:"is_active"`
+	CreatedAt            time.Time          `json:"created_at"`
+	PublicKeyFingerprint *string            `json:"public_key_fingerprint"`
+	PublicKeyExpiresAt   pgtype.Timestamptz `json:"public_key_expires_at"`
+	MustChangePassword   bool               `json:"must_change_password"`
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -123,6 +278,9 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.Email,
 			&i.IsActive,
 			&i.CreatedAt,
+			&i.PublicKeyFingerprint,
+			&i.PublicKeyExpiresAt,
+			&i.MustChangePassword,
 		); err != nil {
 			return nil, err
 		}
@@ -132,4 +290,42 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const registerPublicKey = `-- name: RegisterPublicKey :exec
+UPDATE users
+SET public_key = $2,
+    public_key_fingerprint = $3,
+    public_key_registered_at = NOW(),
+    public_key_expires_at = NOW() + INTERVAL '90 days'
+WHERE id = $1
+`
+
+type RegisterPublicKeyParams struct {
+	ID                   uuid.UUID `json:"id"`
+	PublicKey            *string   `json:"public_key"`
+	PublicKeyFingerprint *string   `json:"public_key_fingerprint"`
+}
+
+func (q *Queries) RegisterPublicKey(ctx context.Context, arg RegisterPublicKeyParams) error {
+	_, err := q.db.Exec(ctx, registerPublicKey, arg.ID, arg.PublicKey, arg.PublicKeyFingerprint)
+	return err
+}
+
+const updatePassword = `-- name: UpdatePassword :exec
+UPDATE users
+SET password_hash = $2,
+    must_change_password = false,
+    password_changed_at = NOW()
+WHERE id = $1
+`
+
+type UpdatePasswordParams struct {
+	ID           uuid.UUID `json:"id"`
+	PasswordHash string    `json:"password_hash"`
+}
+
+func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
+	_, err := q.db.Exec(ctx, updatePassword, arg.ID, arg.PasswordHash)
+	return err
 }

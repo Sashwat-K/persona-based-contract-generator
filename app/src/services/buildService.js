@@ -1,5 +1,10 @@
 import apiClient from './apiClient';
 import { useBuildStore } from '../store/buildStore';
+import signatureMiddleware from './signatureMiddleware';
+import assignmentService from './assignmentService';
+import sectionService from './sectionService';
+import exportService from './exportService';
+import verificationService from './verificationService';
 
 class BuildService {
   /**
@@ -66,13 +71,34 @@ class BuildService {
   }
 
   /**
-   * Get build assignments
-   * @param {string} buildId 
+   * Get build assignments (delegates to assignmentService)
+   * @param {string} buildId
    * @returns {Promise<Array>}
    */
   async getAssignments(buildId) {
-    const response = await apiClient.get(`/builds/${buildId}/assignments`);
-    return response.data.assignments || [];
+    return await assignmentService.getBuildAssignments(buildId);
+  }
+
+  /**
+   * Create build assignment
+   * @param {string} buildId - Build ID
+   * @param {string} userId - User ID
+   * @param {string} personaRole - Persona role
+   * @returns {Promise<Object>}
+   */
+  async createAssignment(buildId, userId, personaRole) {
+    return await assignmentService.createAssignment(buildId, userId, personaRole);
+  }
+
+  /**
+   * Delete build assignment
+   * @param {string} buildId - Build ID
+   * @param {string} userId - User ID
+   * @param {string} personaRole - Persona role
+   * @returns {Promise<void>}
+   */
+  async deleteAssignment(buildId, userId, personaRole) {
+    return await assignmentService.deleteAssignment(buildId, userId, personaRole);
   }
 
   /**
@@ -136,13 +162,24 @@ class BuildService {
   }
 
   /**
-   * Get build sections
-   * @param {string} buildId 
+   * Get build sections (delegates to sectionService)
+   * @param {string} buildId
    * @returns {Promise<Array>}
    */
   async getSections(buildId) {
-    const response = await apiClient.get(`/builds/${buildId}/sections`);
-    return response.data.sections || [];
+    return await sectionService.getSections(buildId);
+  }
+
+  /**
+   * Submit section (delegates to sectionService)
+   * @param {string} buildId - Build ID
+   * @param {string} personaRole - Persona role
+   * @param {string} plaintext - Section content
+   * @param {string} certContent - HPCR certificate
+   * @returns {Promise<Object>}
+   */
+  async submitSection(buildId, personaRole, plaintext, certContent) {
+    return await sectionService.submitSection(buildId, personaRole, plaintext, certContent);
   }
 
   /**
@@ -156,46 +193,159 @@ class BuildService {
   }
 
   /**
-   * Verify audit chain for a build
-   * @param {string} buildId 
+   * Verify audit chain (delegates to verificationService)
+   * @param {string} buildId
    * @returns {Promise<Object>}
    */
   async verifyAuditChain(buildId) {
-    const response = await apiClient.get(`/builds/${buildId}/verify`);
-    return response.data;
+    return await verificationService.verifyAuditChain(buildId);
   }
 
   /**
-   * Export build data
-   * @param {string} buildId 
+   * Verify contract integrity (delegates to verificationService)
+   * @param {string} buildId
+   * @returns {Promise<Object>}
+   */
+  async verifyContractIntegrity(buildId) {
+    return await verificationService.verifyContractIntegrity(buildId);
+  }
+
+  /**
+   * Perform complete verification
+   * @param {string} buildId
+   * @returns {Promise<Object>}
+   */
+  async performCompleteVerification(buildId) {
+    return await verificationService.performCompleteVerification(buildId);
+  }
+
+  /**
+   * Export build data (delegates to exportService)
+   * @param {string} buildId
    * @returns {Promise<Object>}
    */
   async exportBuild(buildId) {
-    const response = await apiClient.get(`/builds/${buildId}/export`);
-    return response.data;
+    return await exportService.exportContract(buildId);
   }
 
   /**
-   * Download finalized contract (Env Operator)
-   * @param {string} buildId 
+   * Download finalized contract (delegates to exportService)
+   * @param {string} buildId
    * @returns {Promise<{contract_yaml, contract_hash}>}
    */
   async downloadContract(buildId) {
-    const response = await apiClient.get(`/builds/${buildId}/userdata`);
+    return await exportService.getUserData(buildId);
+  }
+
+  /**
+   * Acknowledge contract download (delegates to exportService)
+   * @param {string} buildId
+   * @param {string} contractHash - Hash of contract
+   * @returns {Promise<Object>}
+   */
+  async acknowledgeDownload(buildId, contractHash) {
+    return await exportService.acknowledgeDownload(buildId, contractHash);
+  }
+
+  /**
+   * Export and save contract locally
+   * @param {string} buildId - Build ID
+   * @param {string} filename - Optional filename
+   * @returns {Promise<Object>}
+   */
+  async exportAndSave(buildId, filename = null) {
+    return await exportService.exportAndSave(buildId, filename);
+  }
+
+  /**
+   * Transition build status with signature
+   * @param {string} buildId - Build ID
+   * @param {string} newStatus - New status
+   * @returns {Promise<Object>}
+   */
+  async transitionStatus(buildId, newStatus) {
+    const { hash, signature } = await signatureMiddleware.signBuildAction(
+      buildId,
+      'status_transition',
+      { newStatus }
+    );
+    
+    const response = await apiClient.patch(`/builds/${buildId}/status`, {
+      status: newStatus,
+      signature: signature
+    });
+    
+    useBuildStore.getState().updateBuildStatus(buildId, newStatus);
+    
     return response.data;
   }
 
   /**
-   * Acknowledge contract download (Env Operator)
-   * @param {string} buildId 
-   * @param {string} signature - Signature of contract hash
+   * Get build audit trail with actor key fingerprints
+   * @param {string} buildId - Build ID
+   * @returns {Promise<Array>}
+   */
+  async getAuditTrail(buildId) {
+    const response = await apiClient.get(`/builds/${buildId}/audit-trail`);
+    return response.data.events || [];
+  }
+
+  /**
+   * Get build statistics
+   * @param {string} buildId - Build ID
    * @returns {Promise<Object>}
    */
-  async acknowledgeDownload(buildId, signature) {
-    const response = await apiClient.post(`/builds/${buildId}/acknowledge`, {
-      signature
-    });
-    return response.data;
+  async getBuildStatistics(buildId) {
+    const [build, assignments, sections, auditEvents] = await Promise.all([
+      this.getBuild(buildId),
+      this.getAssignments(buildId),
+      this.getSections(buildId),
+      this.getAuditEvents(buildId)
+    ]);
+    
+    return {
+      buildId,
+      name: build.name,
+      status: build.status,
+      createdAt: build.created_at,
+      assignmentCount: assignments.length,
+      sectionCount: sections.length,
+      auditEventCount: auditEvents.length,
+      isComplete: sections.length === 3, // workload, environment, attestation
+      assignments: {
+        workload_owner: assignments.filter(a => a.persona_role === 'workload_owner').length,
+        data_owner: assignments.filter(a => a.persona_role === 'data_owner').length,
+        auditor: assignments.filter(a => a.persona_role === 'auditor').length
+      },
+      sections: {
+        workload_owner: sections.some(s => s.persona_role === 'workload_owner'),
+        data_owner: sections.some(s => s.persona_role === 'data_owner'),
+        auditor: sections.some(s => s.persona_role === 'auditor')
+      }
+    };
+  }
+
+  /**
+   * Check if build is ready for finalization
+   * @param {string} buildId - Build ID
+   * @returns {Promise<{ready: boolean, missing: Array<string>}>}
+   */
+  async checkFinalizationReadiness(buildId) {
+    const sections = await this.getSections(buildId);
+    const missing = [];
+    
+    const hasWorkload = sections.some(s => s.persona_role === 'workload_owner');
+    const hasEnvironment = sections.some(s => s.persona_role === 'data_owner');
+    const hasAttestation = sections.some(s => s.persona_role === 'auditor');
+    
+    if (!hasWorkload) missing.push('workload_owner section');
+    if (!hasEnvironment) missing.push('data_owner section');
+    if (!hasAttestation) missing.push('auditor section');
+    
+    return {
+      ready: missing.length === 0,
+      missing
+    };
   }
 }
 

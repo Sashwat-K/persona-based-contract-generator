@@ -171,8 +171,9 @@ type ApiToken struct {
 }
 
 type AuditEvent struct {
-	ID                uuid.UUID       `json:"id"`
-	BuildID           uuid.UUID       `json:"build_id"`
+	ID uuid.UUID `json:"id"`
+	// Build ID (nullable for system-level events like user creation)
+	BuildID           pgtype.UUID     `json:"build_id"`
 	SequenceNo        int32           `json:"sequence_no"`
 	EventType         string          `json:"event_type"`
 	ActorUserID       uuid.UUID       `json:"actor_user_id"`
@@ -184,6 +185,8 @@ type AuditEvent struct {
 	EventHash         string          `json:"event_hash"`
 	Signature         *string         `json:"signature"`
 	CreatedAt         time.Time       `json:"created_at"`
+	// SHA-256 fingerprint of the actor public key used for signature verification
+	ActorKeyFingerprint *string `json:"actor_key_fingerprint"`
 }
 
 type Build struct {
@@ -196,18 +199,47 @@ type Build struct {
 	ContractHash *string            `json:"contract_hash"`
 	ContractYaml *string            `json:"contract_yaml"`
 	IsImmutable  bool               `json:"is_immutable"`
+	// HPCR encryption certificate (PEM format) provided by Solution Provider
+	EncryptionCertificate *string `json:"encryption_certificate"`
+}
+
+// Explicit user-to-role assignments for each build
+type BuildAssignment struct {
+	ID uuid.UUID `json:"id"`
+	// The build this assignment belongs to
+	BuildID uuid.UUID `json:"build_id"`
+	// The persona role being assigned
+	RoleID uuid.UUID `json:"role_id"`
+	// The user assigned to perform this role
+	UserID uuid.UUID `json:"user_id"`
+	// The admin who created this assignment
+	AssignedBy uuid.UUID `json:"assigned_by"`
+	AssignedAt time.Time `json:"assigned_at"`
 }
 
 type BuildSection struct {
-	ID                    uuid.UUID `json:"id"`
-	BuildID               uuid.UUID `json:"build_id"`
-	PersonaRole           string    `json:"persona_role"`
-	SubmittedBy           uuid.UUID `json:"submitted_by"`
-	EncryptedPayload      string    `json:"encrypted_payload"`
-	EncryptedSymmetricKey *string   `json:"encrypted_symmetric_key"`
-	SectionHash           string    `json:"section_hash"`
-	Signature             string    `json:"signature"`
-	SubmittedAt           time.Time `json:"submitted_at"`
+	ID               uuid.UUID `json:"id"`
+	BuildID          uuid.UUID `json:"build_id"`
+	PersonaRole      string    `json:"persona_role"`
+	SubmittedBy      uuid.UUID `json:"submitted_by"`
+	EncryptedPayload string    `json:"encrypted_payload"`
+	// AES-256 symmetric key wrapped with Auditor public key (RSA-OAEP) - only for DATA_OWNER sections
+	WrappedSymmetricKey *string   `json:"wrapped_symmetric_key"`
+	SectionHash         string    `json:"section_hash"`
+	Signature           string    `json:"signature"`
+	SubmittedAt         time.Time `json:"submitted_at"`
+	// Reference to the persona role that submitted this section
+	RoleID pgtype.UUID `json:"role_id"`
+}
+
+// Reference table for persona roles in the system
+type Role struct {
+	ID uuid.UUID `json:"id"`
+	// Unique role identifier (matches persona_role ENUM values)
+	Name        string    `json:"name"`
+	Description *string   `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type User struct {
@@ -217,6 +249,17 @@ type User struct {
 	PasswordHash string    `json:"password_hash"`
 	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
+	// RSA-4096 public key in PEM format for signature verification
+	PublicKey *string `json:"public_key"`
+	// SHA-256 fingerprint of the public key
+	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
+	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
+	// Public key expiry timestamp (default 90 days from registration)
+	PublicKeyExpiresAt pgtype.Timestamptz `json:"public_key_expires_at"`
+	// Forces password change on next login
+	MustChangePassword bool `json:"must_change_password"`
+	// Timestamp of last password change
+	PasswordChangedAt pgtype.Timestamptz `json:"password_changed_at"`
 }
 
 type UserRole struct {

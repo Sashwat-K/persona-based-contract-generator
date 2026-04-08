@@ -1,12 +1,94 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { DonutChart, SimpleBarChart } from '@carbon/charts-react';
-import { Grid, Column, Tile } from '@carbon/react';
+import {
+  Grid,
+  Column,
+  Tile,
+  Tabs,
+  TabList,
+  Tab,
+  TabPanels,
+  TabPanel,
+  Button
+} from '@carbon/react';
 import { WarningAlt, Locked, Unlocked } from '@carbon/icons-react';
-import { initialBuilds, mockUsers } from '../store/mockData';
+import userService from '../services/userService';
+import buildService from '../services/buildService';
+import rotationService from '../services/rotationService';
+import CredentialRotation from '../components/CredentialRotation';
+import { FullPageLoader } from '../components/LoadingSpinner';
 
+/**
+ * AdminAnalytics View
+ * Integrated admin dashboard with analytics and credential rotation monitoring
+ * Features: Build/user statistics, security alerts, credential rotation management
+ */
 const AdminAnalytics = () => {
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  
+  // State for analytics data
+  const [users, setUsers] = useState([]);
+  const [builds, setBuilds] = useState([]);
+  const [rotationStatus, setRotationStatus] = useState(null);
+
+  // Load analytics data
+  useEffect(() => {
+    const loadAnalytics = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Load users, builds, and rotation status in parallel
+        const [usersData, buildsData, rotationData] = await Promise.all([
+          userService.listUsers(),
+          buildService.getBuilds(),
+          rotationService.getRotationStatus().catch(() => null) // Optional, may fail if no data
+        ]);
+
+        setUsers(usersData);
+        setBuilds(buildsData);
+        setRotationStatus(rotationData);
+
+      } catch (err) {
+        console.error('Failed to load analytics:', err);
+        setError(err.message || 'Failed to load analytics data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAnalytics();
+  }, []);
+
+  // Show loading state
+  if (loading) {
+    return <FullPageLoader description="Loading analytics..." />;
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '2rem' }}>
+        <Tile>
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <WarningAlt size={48} style={{ color: 'var(--cds-support-error)', marginBottom: '1rem' }} />
+            <h3 style={{ marginBottom: '0.5rem' }}>Failed to Load Analytics</h3>
+            <p style={{ color: 'var(--cds-text-secondary)', marginBottom: '1.5rem' }}>
+              {error}
+            </p>
+            <Button onClick={() => window.location.reload()}>
+              Retry
+            </Button>
+          </div>
+        </Tile>
+      </div>
+    );
+  }
+
   // Process data for Donut Chart (Build Status)
-  const buildStatusCount = initialBuilds.reduce((acc, build) => {
+  const buildStatusCount = builds.reduce((acc, build) => {
     const statusName = build.status.replace(/_/g, ' ');
     acc[statusName] = (acc[statusName] || 0) + 1;
     return acc;
@@ -44,7 +126,7 @@ const AdminAnalytics = () => {
   };
 
   // Process data for Bar Chart (Users by Role)
-  const userRoleCount = mockUsers.reduce((acc, user) => {
+  const userRoleCount = users.reduce((acc, user) => {
     const roleName = user.role.replace(/_/g, ' ');
     acc[roleName] = (acc[roleName] || 0) + 1;
     return acc;
@@ -62,8 +144,8 @@ const AdminAnalytics = () => {
         mapsTo: 'value',
         ticks: {
           min: 0,
-          max: Math.max(...barData.map(d => d.value)) + 1,
-          values: Array.from({ length: Math.max(...barData.map(d => d.value)) + 2 }, (_, i) => i)
+          max: Math.max(...barData.map(d => d.value), 0) + 1,
+          values: Array.from({ length: Math.max(...barData.map(d => d.value), 0) + 2 }, (_, i) => i)
         }
       },
       bottom: {
@@ -86,99 +168,132 @@ const AdminAnalytics = () => {
   };
 
   // Calculate metrics
-  const expiredKeys = mockUsers.filter(u => u.keyStatus === 'Expired').length;
-  const expiredPasswords = mockUsers.filter(u => u.passwordExpired === true).length;
-  const activeBuilds = initialBuilds.filter(b => b.status !== 'FINALIZED' && b.status !== 'CANCELLED').length;
+  const expiredKeys = users.filter(u => {
+    if (!u.public_key_expires_at) return false;
+    return new Date(u.public_key_expires_at) < new Date();
+  }).length;
+
+  const expiredPasswords = users.filter(u => {
+    if (!u.password_expires_at) return false;
+    return new Date(u.password_expires_at) < new Date();
+  }).length;
+
+  const activeBuilds = builds.filter(b => b.status !== 'FINALIZED' && b.status !== 'CANCELLED').length;
 
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '1.5rem' }}>Admin Diagnostics & Analytics</h1>
+    <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '2rem' }}>
+      <h1 style={{ marginBottom: '2rem' }}>Admin Diagnostics & Analytics</h1>
       
-      {/* Key Metrics Row */}
-      <Grid narrow style={{ marginBottom: '2rem' }}>
-        <Column lg={4}>
-          <Tile style={{ minHeight: '120px' }}>
-             <h3>Total Users</h3>
-             <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{mockUsers.length}</h1>
-          </Tile>
-        </Column>
-        <Column lg={4}>
-          <Tile style={{ minHeight: '120px' }}>
-             <h3>Active Builds</h3>
-             <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{activeBuilds}</h1>
-          </Tile>
-        </Column>
-        <Column lg={4}>
-          <Tile style={{ minHeight: '120px' }}>
-             <h3>Finalized Contracts</h3>
-             <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{buildStatusCount['FINALIZED'] || 0}</h1>
-          </Tile>
-        </Column>
-        <Column lg={4}>
-          <Tile style={{ minHeight: '120px' }}>
-             <h3>Total Builds</h3>
-             <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{initialBuilds.length}</h1>
-          </Tile>
-        </Column>
-      </Grid>
+      <Tabs selectedIndex={selectedTab} onChange={(e) => setSelectedTab(e.selectedIndex)}>
+        <TabList aria-label="Admin analytics tabs" contained>
+          <Tab>Overview & Statistics</Tab>
+          <Tab>Credential Rotation</Tab>
+        </TabList>
+        
+        <TabPanels>
+          {/* Overview & Statistics Tab */}
+          <TabPanel>
+            <div style={{ padding: '2rem 0' }}>
+              {/* Key Metrics Row */}
+              <Grid narrow style={{ marginBottom: '2rem' }}>
+                <Column lg={4}>
+                  <Tile style={{ minHeight: '120px' }}>
+                     <h3>Total Users</h3>
+                     <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{users.length}</h1>
+                  </Tile>
+                </Column>
+                <Column lg={4}>
+                  <Tile style={{ minHeight: '120px' }}>
+                     <h3>Active Builds</h3>
+                     <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{activeBuilds}</h1>
+                  </Tile>
+                </Column>
+                <Column lg={4}>
+                  <Tile style={{ minHeight: '120px' }}>
+                     <h3>Finalized Contracts</h3>
+                     <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{buildStatusCount['FINALIZED'] || 0}</h1>
+                  </Tile>
+                </Column>
+                <Column lg={4}>
+                  <Tile style={{ minHeight: '120px' }}>
+                     <h3>Total Builds</h3>
+                     <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{builds.length}</h1>
+                  </Tile>
+                </Column>
+              </Grid>
 
-      {/* Security Alerts Row */}
-      <Grid narrow style={{ marginBottom: '2rem' }}>
-        <Column lg={8}>
-          <Tile style={{
-            minHeight: '120px',
-            backgroundColor: expiredKeys > 0 ? '#da1e28' : '#24a148',
-            color: '#fff'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              {expiredKeys > 0 ? <WarningAlt size={32} /> : <Locked size={32} />}
-              <div>
-                <h3 style={{ color: '#fff' }}>Expired Public Keys</h3>
-                <h1 style={{ fontSize: '3rem', marginTop: '0.5rem', color: '#fff' }}>{expiredKeys}</h1>
-                {expiredKeys > 0 && (
-                  <p style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
-                    Action required: Users must renew their keys
-                  </p>
-                )}
-              </div>
-            </div>
-          </Tile>
-        </Column>
-        <Column lg={8}>
-          <Tile style={{
-            minHeight: '120px',
-            backgroundColor: expiredPasswords > 0 ? '#da1e28' : '#24a148',
-            color: '#fff'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              {expiredPasswords > 0 ? <Unlocked size={32} /> : <Locked size={32} />}
-              <div>
-                <h3 style={{ color: '#fff' }}>Expired Passwords</h3>
-                <h1 style={{ fontSize: '3rem', marginTop: '0.5rem', color: '#fff' }}>{expiredPasswords}</h1>
-                {expiredPasswords > 0 && (
-                  <p style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
-                    Action required: Users must change their passwords
-                  </p>
-                )}
-              </div>
-            </div>
-          </Tile>
-        </Column>
-      </Grid>
+              {/* Security Alerts Row */}
+              <Grid narrow style={{ marginBottom: '2rem' }}>
+                <Column lg={8}>
+                  <Tile style={{
+                    minHeight: '120px',
+                    backgroundColor: expiredKeys > 0 ? '#da1e28' : '#24a148',
+                    color: '#fff'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      {expiredKeys > 0 ? <WarningAlt size={32} /> : <Locked size={32} />}
+                      <div>
+                        <h3 style={{ color: '#fff' }}>Expired Public Keys</h3>
+                        <h1 style={{ fontSize: '3rem', marginTop: '0.5rem', color: '#fff' }}>{expiredKeys}</h1>
+                        {expiredKeys > 0 && (
+                          <p style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+                            Action required: Users must renew their keys
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </Tile>
+                </Column>
+                <Column lg={8}>
+                  <Tile style={{
+                    minHeight: '120px',
+                    backgroundColor: expiredPasswords > 0 ? '#da1e28' : '#24a148',
+                    color: '#fff'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      {expiredPasswords > 0 ? <Unlocked size={32} /> : <Locked size={32} />}
+                      <div>
+                        <h3 style={{ color: '#fff' }}>Expired Passwords</h3>
+                        <h1 style={{ fontSize: '3rem', marginTop: '0.5rem', color: '#fff' }}>{expiredPasswords}</h1>
+                        {expiredPasswords > 0 && (
+                          <p style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+                            Action required: Users must change their passwords
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </Tile>
+                </Column>
+              </Grid>
 
-      {/* Charts Row */}
-      <Grid narrow>
-        <Column lg={8}>
-          <Tile>
-             {typeof window !== 'undefined' && <DonutChart data={donutData} options={donutOptions} />}
-          </Tile>
-        </Column>
-        <Column lg={8}>
-          <Tile>
-            {typeof window !== 'undefined' && <SimpleBarChart data={barData} options={barOptions} />}
-          </Tile>
-        </Column>
-      </Grid>
+              {/* Charts Row */}
+              <Grid narrow>
+                <Column lg={8}>
+                  <Tile>
+                     {typeof window !== 'undefined' && <DonutChart data={donutData} options={donutOptions} />}
+                  </Tile>
+                </Column>
+                <Column lg={8}>
+                  <Tile>
+                    {typeof window !== 'undefined' && <SimpleBarChart data={barData} options={barOptions} />}
+                  </Tile>
+                </Column>
+              </Grid>
+            </div>
+          </TabPanel>
+          
+          {/* Credential Rotation Tab */}
+          <TabPanel>
+            <div style={{ padding: '2rem 0' }}>
+              <Grid narrow>
+                <Column lg={16}>
+                  <CredentialRotation />
+                </Column>
+              </Grid>
+            </div>
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
     </div>
   );
 };

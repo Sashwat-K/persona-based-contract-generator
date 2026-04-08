@@ -31,7 +31,7 @@ func main() {
 
 	// Configure structured logging
 	setupLogging(cfg.LogLevel, cfg.LogFormat)
-	slog.Info("starting HPCR Contract Builder", "host", cfg.ServerHost, "port", cfg.ServerPort)
+	slog.Info("startingIBM Confidential Computing Contract Generator", "host", cfg.ServerHost, "port", cfg.ServerPort)
 
 	// Connect to PostgreSQL
 	ctx := context.Background()
@@ -52,23 +52,35 @@ func main() {
 	// Initialize repository
 	queries := repository.New(pool)
 
-	// Initialize services
+	// Initialize services (order matters due to dependencies)
 	auditService := service.NewAuditService(queries)
-	sectionService := service.NewSectionService(queries)
+	assignmentService := service.NewAssignmentService(queries, auditService)
+	sectionService := service.NewSectionService(queries, assignmentService)
 	buildService := service.NewBuildService(queries, auditService)
 	authService := service.NewAuthService(queries, cfg.BcryptCost)
 	userService := service.NewUserService(queries, cfg.BcryptCost)
+	verificationService := service.NewVerificationService(queries)
+	exportService := service.NewExportService(queries, auditService, assignmentService)
+	rotationService := service.NewRotationService(queries)
 
 	// Initialize handlers
 	auditHandler := handler.NewAuditHandler(auditService)
+	assignmentHandler := handler.NewAssignmentHandler(assignmentService)
 	sectionHandler := handler.NewSectionHandler(sectionService)
 	buildHandler := handler.NewBuildHandler(buildService)
 	authHandler := handler.NewAuthHandler(authService)
 	userHandler := handler.NewUserHandler(userService)
+	exportHandler := handler.NewExportHandler(exportService, verificationService, userService)
+	rotationHandler := handler.NewRotationHandler(rotationService)
 	swaggerHandler := handler.NewSwaggerHandler()
 
 	// Build router
-	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler, swaggerHandler)
+	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler, assignmentHandler, exportHandler, rotationHandler, swaggerHandler)
+
+	// Start credential rotation monitor (checks every 24 hours)
+	monitorCtx, cancelMonitor := context.WithCancel(ctx)
+	defer cancelMonitor()
+	go rotationService.StartRotationMonitor(monitorCtx, 24*time.Hour)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -120,6 +132,9 @@ func buildRouter(
 	buildHandler *handler.BuildHandler,
 	sectionHandler *handler.SectionHandler,
 	auditHandler *handler.AuditHandler,
+	assignmentHandler *handler.AssignmentHandler,
+	exportHandler *handler.ExportHandler,
+	rotationHandler *handler.RotationHandler,
 	swaggerHandler *handler.SwaggerHandler,
 ) *chi.Mux {
 	r := chi.NewRouter()
@@ -127,6 +142,8 @@ func buildRouter(
 	// Global middleware
 	r.Use(middleware.Recoverer())
 	r.Use(middleware.Logging())
+	r.Use(middleware.CORS()) // Add CORS middleware
+	r.Use(middleware.RateLimit())
 
 	// Health check (unauthenticated)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -138,8 +155,8 @@ func buildRouter(
 	r.Get("/swagger", swaggerHandler.UI)
 	r.Get("/swagger/", swaggerHandler.UI)
 
-	// Auth routes (unauthenticated)
-	r.Post("/auth/login", authHandler.Login)
+	// Auth routes (unauthenticated, with stricter rate limiting)
+	r.With(middleware.AuthRateLimit()).Post("/auth/login", authHandler.Login)
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
@@ -154,10 +171,20 @@ func buildRouter(
 			r.With(middleware.RequireRole("ADMIN")).Post("/", userHandler.CreateUser)
 			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}/roles", userHandler.UpdateRoles)
 
+			// Public key management (owner or ADMIN)
+			r.With(middleware.RequireOwnerOrAdmin("id")).Put("/{id}/public-key", userHandler.RegisterPublicKey)
+			r.With(middleware.RequireOwnerOrAdmin("id")).Get("/{id}/public-key", userHandler.GetPublicKey)
+
+			// Password management (owner or ADMIN)
+			r.With(middleware.RequireOwnerOrAdmin("id")).Patch("/{id}/password", userHandler.ChangePassword)
+
 			// Token management (ADMIN or owner)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Get("/{id}/tokens", userHandler.ListTokens)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Post("/{id}/tokens", userHandler.CreateToken)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Delete("/{id}/tokens/{token_id}", userHandler.RevokeToken)
+
+			// User assignments (any authenticated user can view their own)
+			r.Get("/{id}/assignments", assignmentHandler.GetUserAssignments)
 		})
 
 		// Builds management
@@ -173,11 +200,30 @@ func buildRouter(
 
 				// Sections
 				r.Get("/sections", sectionHandler.GetSections)
-				r.Post("/sections", sectionHandler.SubmitSection) // Role validation done internally
+				r.Post("/sections", sectionHandler.SubmitSection) // Assignment validation done internally
 
 				// Audit Trail
 				r.Get("/audit-trail", auditHandler.GetAuditTrail)
+
+				// Build Assignments (ADMIN only for create/delete, any authenticated for read)
+				r.Get("/assignments", assignmentHandler.GetBuildAssignments)
+				r.With(middleware.RequireRole("ADMIN")).Post("/assignments", assignmentHandler.CreateAssignment)
+				r.With(middleware.RequireRole("ADMIN")).Delete("/assignments", assignmentHandler.DeleteBuildAssignments)
+
+				// Export & Verification
+				r.Get("/export", exportHandler.ExportContract)                     // AUDITOR or ENV_OPERATOR
+				r.Post("/acknowledge-download", exportHandler.AcknowledgeDownload) // ENV_OPERATOR
+				r.Get("/userdata", exportHandler.GetUserData)                      // ENV_OPERATOR
+				r.Get("/verify", exportHandler.VerifyAuditChain)                   // Any authenticated
+				r.Get("/verify-contract", exportHandler.VerifyContractIntegrity)   // Any authenticated
 			})
+		})
+
+		// Credential Rotation Management (ADMIN only)
+		r.Route("/rotation", func(r chi.Router) {
+			r.With(middleware.RequireRole("ADMIN")).Get("/expired", rotationHandler.GetExpiredCredentials)
+			r.With(middleware.RequireRole("ADMIN")).Post("/force-password-change/{user_id}", rotationHandler.ForcePasswordChange)
+			r.With(middleware.RequireRole("ADMIN")).Post("/revoke-key/{user_id}", rotationHandler.RevokeExpiredPublicKey)
 		})
 	})
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
@@ -26,14 +27,15 @@ func NewAuditService(queries repository.Querier) *AuditService {
 
 // LogEventInput contains data for a new audit event.
 type LogEventInput struct {
-	BuildID        uuid.UUID
-	EventType      model.AuditEventType
-	ActorUserID    uuid.UUID
-	ActorPublicKey *string
-	IpAddress      string
-	DeviceMetadata []byte
-	EventData      any     // Will be marshaled to JSON
-	Signature      *string // Signature of the EventHash by ActorPublicKey (optional for some events)
+	BuildID             uuid.UUID
+	EventType           model.AuditEventType
+	ActorUserID         uuid.UUID
+	ActorPublicKey      *string
+	ActorKeyFingerprint *string // SHA256 fingerprint of the actor's public key
+	IpAddress           string
+	DeviceMetadata      []byte
+	EventData           any     // Will be marshaled to JSON
+	Signature           *string // Signature of the EventHash by ActorPublicKey (optional for some events)
 }
 
 // LogEvent securely appends a new event to the build's audit hash chain.
@@ -48,7 +50,13 @@ func (s *AuditService) LogEvent(ctx context.Context, input LogEventInput) (*repo
 	var seqNo int32 = 1
 	var prevHash string
 
-	latest, err := s.queries.GetLatestAuditEvent(ctx, input.BuildID)
+	// Convert uuid.UUID to pgtype.UUID
+	buildIDPg := pgtype.UUID{
+		Bytes: input.BuildID,
+		Valid: true,
+	}
+
+	latest, err := s.queries.GetLatestAuditEvent(ctx, buildIDPg)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows in result set") {
 			// First event in the chain: prevHash is the genesis hash
@@ -83,30 +91,77 @@ func (s *AuditService) LogEvent(ctx context.Context, input LogEventInput) (*repo
 
 	// Insert into DB
 	row, err := s.queries.CreateAuditEvent(ctx, repository.CreateAuditEventParams{
-		BuildID:           input.BuildID,
-		SequenceNo:        seqNo,
-		EventType:         string(input.EventType),
-		ActorUserID:       input.ActorUserID,
-		ActorPublicKey:    input.ActorPublicKey,
-		IpAddress:         ip,
-		DeviceMetadata:    devMeta,
-		EventData:         json.RawMessage(eventDataJSON),
-		PreviousEventHash: prevHash,
-		EventHash:         eventHash,
-		Signature:         input.Signature,
+		BuildID:             buildIDPg,
+		SequenceNo:          seqNo,
+		EventType:           string(input.EventType),
+		ActorUserID:         input.ActorUserID,
+		ActorPublicKey:      input.ActorPublicKey,
+		ActorKeyFingerprint: input.ActorKeyFingerprint,
+		IpAddress:           ip,
+		DeviceMetadata:      devMeta,
+		EventData:           json.RawMessage(eventDataJSON),
+		PreviousEventHash:   prevHash,
+		EventHash:           eventHash,
+		Signature:           input.Signature,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create audit event: %w", err)
 	}
 
-	return &row, nil
+	// Convert Row to AuditEvent
+	result := &repository.AuditEvent{
+		ID:                  row.ID,
+		BuildID:             row.BuildID,
+		SequenceNo:          row.SequenceNo,
+		EventType:           row.EventType,
+		ActorUserID:         row.ActorUserID,
+		ActorPublicKey:      row.ActorPublicKey,
+		ActorKeyFingerprint: row.ActorKeyFingerprint,
+		IpAddress:           row.IpAddress,
+		DeviceMetadata:      row.DeviceMetadata,
+		EventData:           row.EventData,
+		PreviousEventHash:   row.PreviousEventHash,
+		EventHash:           row.EventHash,
+		Signature:           row.Signature,
+		CreatedAt:           row.CreatedAt,
+	}
+
+	return result, nil
 }
 
 // GetAuditTrail returns the full chronological audit trail for a build.
 func (s *AuditService) GetAuditTrail(ctx context.Context, buildID uuid.UUID) ([]repository.AuditEvent, error) {
-	events, err := s.queries.GetAuditEventsByBuildID(ctx, buildID)
+	// Convert uuid.UUID to pgtype.UUID
+	buildIDPg := pgtype.UUID{
+		Bytes: buildID,
+		Valid: true,
+	}
+
+	rows, err := s.queries.GetAuditEventsByBuildID(ctx, buildIDPg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get audit events: %w", err)
 	}
+
+	// Convert Row types to AuditEvent types
+	events := make([]repository.AuditEvent, len(rows))
+	for i, row := range rows {
+		events[i] = repository.AuditEvent{
+			ID:                  row.ID,
+			BuildID:             row.BuildID,
+			SequenceNo:          row.SequenceNo,
+			EventType:           row.EventType,
+			ActorUserID:         row.ActorUserID,
+			ActorPublicKey:      row.ActorPublicKey,
+			ActorKeyFingerprint: row.ActorKeyFingerprint,
+			IpAddress:           row.IpAddress,
+			DeviceMetadata:      row.DeviceMetadata,
+			EventData:           row.EventData,
+			PreviousEventHash:   row.PreviousEventHash,
+			EventHash:           row.EventHash,
+			Signature:           row.Signature,
+			CreatedAt:           row.CreatedAt,
+		}
+	}
+
 	return events, nil
 }

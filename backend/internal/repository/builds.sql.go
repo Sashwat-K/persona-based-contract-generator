@@ -36,9 +36,21 @@ type CreateBuildParams struct {
 	CreatedBy uuid.UUID `json:"created_by"`
 }
 
-func (q *Queries) CreateBuild(ctx context.Context, arg CreateBuildParams) (Build, error) {
+type CreateBuildRow struct {
+	ID           uuid.UUID          `json:"id"`
+	Name         string             `json:"name"`
+	Status       string             `json:"status"`
+	CreatedBy    uuid.UUID          `json:"created_by"`
+	CreatedAt    time.Time          `json:"created_at"`
+	FinalizedAt  pgtype.Timestamptz `json:"finalized_at"`
+	ContractHash *string            `json:"contract_hash"`
+	ContractYaml *string            `json:"contract_yaml"`
+	IsImmutable  bool               `json:"is_immutable"`
+}
+
+func (q *Queries) CreateBuild(ctx context.Context, arg CreateBuildParams) (CreateBuildRow, error) {
 	row := q.db.QueryRow(ctx, createBuild, arg.Name, arg.CreatedBy)
-	var i Build
+	var i CreateBuildRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -80,9 +92,21 @@ FROM builds
 WHERE id = $1
 `
 
-func (q *Queries) GetBuildByID(ctx context.Context, id uuid.UUID) (Build, error) {
+type GetBuildByIDRow struct {
+	ID           uuid.UUID          `json:"id"`
+	Name         string             `json:"name"`
+	Status       string             `json:"status"`
+	CreatedBy    uuid.UUID          `json:"created_by"`
+	CreatedAt    time.Time          `json:"created_at"`
+	FinalizedAt  pgtype.Timestamptz `json:"finalized_at"`
+	ContractHash *string            `json:"contract_hash"`
+	ContractYaml *string            `json:"contract_yaml"`
+	IsImmutable  bool               `json:"is_immutable"`
+}
+
+func (q *Queries) GetBuildByID(ctx context.Context, id uuid.UUID) (GetBuildByIDRow, error) {
 	row := q.db.QueryRow(ctx, getBuildByID, id)
-	var i Build
+	var i GetBuildByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,

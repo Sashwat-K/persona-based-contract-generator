@@ -9,7 +9,10 @@ import AccountSettings from './views/AccountSettings';
 import SystemLogs from './views/SystemLogs';
 import Login from './views/Login';
 import NotFound from './views/NotFound';
-import { initialBuilds, PERSONAS } from './store/mockData';
+import ErrorBoundary from './components/ErrorBoundary';
+import { ToastProvider, useToast } from './components/ToastManager';
+import { PERSONAS } from './store/mockData';
+import buildService from './services/buildService';
 import { ProgressBar, Theme, Modal } from '@carbon/react';
 import '@carbon/charts/styles.css';
 
@@ -24,7 +27,8 @@ function App() {
 
   const [activePersona, setActivePersona] = useState(PERSONAS.ADMIN);
   const [activeNav, setActiveNav] = useState('HOME'); // Default to home for all users
-  const [builds, setBuilds] = useState(initialBuilds);
+  const [builds, setBuilds] = useState([]);
+  const [buildsLoading, setBuildsLoading] = useState(false);
   const [selectedBuildId, setSelectedBuildId] = useState(null);
 
   useEffect(() => {
@@ -77,6 +81,29 @@ function App() {
       sessionStorage.clear();
     };
   }, []);
+
+  // Load builds when authenticated
+  useEffect(() => {
+    const loadBuilds = async () => {
+      if (!isAuthenticated) {
+        setBuilds([]);
+        return;
+      }
+
+      try {
+        setBuildsLoading(true);
+        const response = await buildService.getBuilds();
+        setBuilds(response.data || []);
+      } catch (error) {
+        console.error('Failed to load builds:', error);
+        setBuilds([]);
+      } finally {
+        setBuildsLoading(false);
+      }
+    };
+
+    loadBuilds();
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isBooting) return;
@@ -147,7 +174,7 @@ function App() {
     setUserEmail('');
     setActivePersona(PERSONAS.ADMIN);
     setActiveNav('HOME');
-    setBuilds(initialBuilds);
+    setBuilds([]);
     setSelectedBuildId(null);
   };
 
@@ -222,26 +249,30 @@ function App() {
   };
 
   return (
-    <AppShell
-       activeNav={activeNav}
-       setActiveNav={setActiveNav}
-       onLogout={handleLogout}
-       userRole={userRole}
-       userEmail={userEmail}
-    >
-      <Modal
-        open={showWelcomeModal}
-        modalHeading={getWelcomeMessage()}
-        primaryButtonText="Get Started"
-        onRequestSubmit={() => setShowWelcomeModal(false)}
-        onRequestClose={() => setShowWelcomeModal(false)}
-      >
-        <p style={{ marginBottom: '1rem' }}>
-          You have successfully authenticated into the IBM Confidential Computing Contract Builder. Your cryptographic identity has been verified and active workflows are ready for review.
-        </p>
-      </Modal>
-      {renderActiveView()}
-    </AppShell>
+    <ErrorBoundary>
+      <ToastProvider>
+        <AppShell
+           activeNav={activeNav}
+           setActiveNav={setActiveNav}
+           onLogout={handleLogout}
+           userRole={userRole}
+           userEmail={userEmail}
+        >
+          <Modal
+            open={showWelcomeModal}
+            modalHeading={getWelcomeMessage()}
+            primaryButtonText="Get Started"
+            onRequestSubmit={() => setShowWelcomeModal(false)}
+            onRequestClose={() => setShowWelcomeModal(false)}
+          >
+            <p style={{ marginBottom: '1rem' }}>
+              You have successfully authenticated into the IBM Confidential Computing Contract Builder. Your cryptographic identity has been verified and active workflows are ready for review.
+            </p>
+          </Modal>
+          {renderActiveView()}
+        </AppShell>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }
 

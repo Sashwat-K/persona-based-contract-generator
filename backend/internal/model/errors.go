@@ -48,6 +48,10 @@ func ErrForbidden(msg string) *AppError {
 	return &AppError{Code: "FORBIDDEN", Message: msg, HTTPStatus: http.StatusForbidden}
 }
 
+func ErrNotFound(msg string) *AppError {
+	return &AppError{Code: "NOT_FOUND", Message: msg, HTTPStatus: http.StatusNotFound}
+}
+
 func ErrBuildNotFound(id string) *AppError {
 	return &AppError{
 		Code:       "BUILD_NOT_FOUND",

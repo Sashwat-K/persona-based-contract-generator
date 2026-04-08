@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Grid,
   Column,
@@ -7,34 +7,67 @@ import {
   Button,
   ProgressBar
 } from '@carbon/react';
-import { 
-  Checkmark, 
-  Warning, 
+import {
+  Checkmark,
+  Warning,
   WarningAlt,
   Locked,
   Unlocked,
   Time
 } from '@carbon/icons-react';
-import { mockUsers, initialBuilds } from '../store/mockData';
+import buildService from '../services/buildService';
+import { FullPageLoader } from '../components/LoadingSpinner';
+import { useAuthStore } from '../store/authStore';
 
 const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
-  // Get current user data
-  const currentUser = mockUsers.find(u => u.email === userEmail) || {
-    name: 'User',
-    email: userEmail,
+  const authUser = useAuthStore((state) => state.user);
+  const publicKeyExpiry = useAuthStore((state) => state.publicKeyExpiry);
+  const isKeyExpired = useAuthStore((state) => state.isKeyExpired);
+  const isPasswordExpired = useAuthStore((state) => state.isPasswordExpired);
+  
+  const [myBuilds, setMyBuilds] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Prepare current user data from authStore
+  const currentUser = {
+    name: authUser?.full_name || authUser?.name || userEmail.split('@')[0],
+    email: authUser?.email || userEmail,
     role: userRole,
-    keyStatus: 'Unknown',
-    keyExpiresAt: 'N/A',
-    passwordExpired: false
+    keyStatus: isKeyExpired() ? 'Expired' : (publicKeyExpiry ? 'Active' : 'Unknown'),
+    keyExpiresAt: publicKeyExpiry
+      ? new Date(publicKeyExpiry).toLocaleDateString()
+      : 'N/A',
+    passwordExpired: isPasswordExpired()
   };
 
-  // Get builds assigned to current user
-  const myBuilds = initialBuilds.filter(build => {
-    const assignments = Object.values(build.assignments || {});
-    return assignments.some(assignment => 
-      assignment.toLowerCase().includes(currentUser.name.toLowerCase().split(' ')[0])
-    );
-  });
+  // Load builds on mount
+  useEffect(() => {
+    const loadBuilds = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Load builds assigned to current user
+        const builds = await buildService.getBuilds();
+        setMyBuilds(builds);
+
+      } catch (err) {
+        console.error('Failed to load builds:', err);
+        setError(err.message || 'Failed to load builds');
+        setMyBuilds([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadBuilds();
+  }, []);
+
+  // Show loading state only for builds
+  if (loading) {
+    return <FullPageLoader description="Loading builds..." />;
+  }
 
   // Calculate pending actions
   const getPendingActions = () => {

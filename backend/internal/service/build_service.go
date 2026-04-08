@@ -27,12 +27,26 @@ func NewBuildService(queries repository.Querier, auditService *AuditService) *Bu
 // CreateBuild initializes a new build and logs the genesis audit event.
 func (s *BuildService) CreateBuild(ctx context.Context, name string, createdBy uuid.UUID, ip string) (*repository.Build, error) {
 	// 1. Create the build
-	build, err := s.queries.CreateBuild(ctx, repository.CreateBuildParams{
+	row, err := s.queries.CreateBuild(ctx, repository.CreateBuildParams{
 		Name:      name,
 		CreatedBy: createdBy,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create build: %w", err)
+	}
+
+	// Convert Row to Build
+	build := &repository.Build{
+		ID:                    row.ID,
+		Name:                  row.Name,
+		Status:                row.Status,
+		CreatedBy:             row.CreatedBy,
+		CreatedAt:             row.CreatedAt,
+		FinalizedAt:           row.FinalizedAt,
+		ContractHash:          row.ContractHash,
+		ContractYaml:          row.ContractYaml,
+		IsImmutable:           row.IsImmutable,
+		EncryptionCertificate: nil, // Not returned by CreateBuild query
 	}
 
 	// 2. Log creation event via AuditService
@@ -48,19 +62,34 @@ func (s *BuildService) CreateBuild(ctx context.Context, name string, createdBy u
 	})
 	if err != nil {
 		// Log the error but don't fail the build creation entirely
-		return &build, fmt.Errorf("build created but failed to log audit event: %w", err)
+		return build, fmt.Errorf("build created but failed to log audit event: %w", err)
 	}
 
-	return &build, nil
+	return build, nil
 }
 
 // GetBuild returns a build by its ID.
 func (s *BuildService) GetBuild(ctx context.Context, id uuid.UUID) (*repository.Build, error) {
-	build, err := s.queries.GetBuildByID(ctx, id)
+	row, err := s.queries.GetBuildByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get build: %w", err)
 	}
-	return &build, nil
+
+	// Convert Row to Build
+	build := &repository.Build{
+		ID:                    row.ID,
+		Name:                  row.Name,
+		Status:                row.Status,
+		CreatedBy:             row.CreatedBy,
+		CreatedAt:             row.CreatedAt,
+		FinalizedAt:           row.FinalizedAt,
+		ContractHash:          row.ContractHash,
+		ContractYaml:          row.ContractYaml,
+		IsImmutable:           row.IsImmutable,
+		EncryptionCertificate: nil, // Not returned by GetBuildByID query
+	}
+
+	return build, nil
 }
 
 // ListBuilds returns a paginated list of builds, optionally filtered by status.
@@ -107,12 +136,12 @@ func mapStatusToEvent(status model.BuildStatus) model.AuditEventType {
 // TransitionStatus securely advances the build state.
 func (s *BuildService) TransitionStatus(ctx context.Context, buildID uuid.UUID, newStatus model.BuildStatus, actorID uuid.UUID, ip string, userRoles []string) error {
 	// 1. Get current build
-	build, err := s.queries.GetBuildByID(ctx, buildID)
+	row, err := s.queries.GetBuildByID(ctx, buildID)
 	if err != nil {
 		return fmt.Errorf("build not found: %w", err)
 	}
 
-	currentStatus := model.BuildStatus(build.Status)
+	currentStatus := model.BuildStatus(row.Status)
 
 	// 2. Validate transition sequence
 	if !currentStatus.CanTransitionTo(newStatus) {
@@ -166,12 +195,12 @@ func (s *BuildService) TransitionStatus(ctx context.Context, buildID uuid.UUID, 
 
 // FinalizeBuild completes the contract build definitively.
 func (s *BuildService) FinalizeBuild(ctx context.Context, buildID uuid.UUID, contractHash string, contractYaml string, actorID uuid.UUID, ip string, signature string, pubKey string) error {
-	build, err := s.queries.GetBuildByID(ctx, buildID)
+	row, err := s.queries.GetBuildByID(ctx, buildID)
 	if err != nil {
 		return fmt.Errorf("build not found: %w", err)
 	}
 
-	currentStatus := model.BuildStatus(build.Status)
+	currentStatus := model.BuildStatus(row.Status)
 	if !currentStatus.CanTransitionTo(model.StatusFinalized) {
 		return model.ErrInvalidStateTransition(currentStatus.String(), model.StatusFinalized.String())
 	}

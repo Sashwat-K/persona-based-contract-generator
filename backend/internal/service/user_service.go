@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
 )
@@ -234,4 +235,69 @@ func (s *UserService) RevokeToken(ctx context.Context, userID uuid.UUID, tokenID
 		ID:     tokenID,
 		UserID: userID,
 	})
+}
+
+// RegisterPublicKey registers a user's RSA-4096 public key.
+func (s *UserService) RegisterPublicKey(ctx context.Context, userID uuid.UUID, publicKeyPEM string) (string, error) {
+	// Validate the public key format and size (RSA-4096)
+	if err := crypto.ValidatePublicKey(publicKeyPEM); err != nil {
+		return "", fmt.Errorf("invalid public key: %w", err)
+	}
+
+	// Compute fingerprint
+	fingerprint, err := crypto.ComputePublicKeyFingerprint(publicKeyPEM)
+	if err != nil {
+		return "", fmt.Errorf("failed to compute fingerprint: %w", err)
+	}
+
+	// Register the public key in the database
+	err = s.queries.RegisterPublicKey(ctx, repository.RegisterPublicKeyParams{
+		ID:                   userID,
+		PublicKey:            &publicKeyPEM,
+		PublicKeyFingerprint: &fingerprint,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to register public key: %w", err)
+	}
+
+	return fingerprint, nil
+}
+
+// GetPublicKey retrieves a user's public key by user ID.
+func (s *UserService) GetPublicKey(ctx context.Context, userID uuid.UUID) (string, string, error) {
+	user, err := s.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		return "", "", fmt.Errorf("user not found: %w", err)
+	}
+
+	if user.PublicKey == nil {
+		return "", "", fmt.Errorf("user has not registered a public key")
+	}
+
+	fingerprint := ""
+	if user.PublicKeyFingerprint != nil {
+		fingerprint = *user.PublicKeyFingerprint
+	}
+
+	return *user.PublicKey, fingerprint, nil
+}
+
+// ChangePassword changes a user's password and clears the must_change_password flag.
+func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, newPassword string) error {
+	// Hash the new password
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.bcryptCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Update password in database
+	err = s.queries.UpdatePassword(ctx, repository.UpdatePasswordParams{
+		ID:           userID,
+		PasswordHash: string(hash),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	return nil
 }

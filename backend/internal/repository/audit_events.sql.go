@@ -9,15 +9,17 @@ import (
 	"context"
 	"encoding/json"
 	"net/netip"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countAuditEventsByBuildID = `-- name: CountAuditEventsByBuildID :one
 SELECT count(*) FROM audit_events WHERE build_id = $1
 `
 
-func (q *Queries) CountAuditEventsByBuildID(ctx context.Context, buildID uuid.UUID) (int64, error) {
+func (q *Queries) CountAuditEventsByBuildID(ctx context.Context, buildID pgtype.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countAuditEventsByBuildID, buildID)
 	var count int64
 	err := row.Scan(&count)
@@ -25,32 +27,51 @@ func (q *Queries) CountAuditEventsByBuildID(ctx context.Context, buildID uuid.UU
 }
 
 const createAuditEvent = `-- name: CreateAuditEvent :one
-INSERT INTO audit_events (build_id, sequence_no, event_type, actor_user_id, actor_public_key, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, build_id, sequence_no, event_type, actor_user_id, actor_public_key, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature, created_at
+INSERT INTO audit_events (build_id, sequence_no, event_type, actor_user_id, actor_public_key, actor_key_fingerprint, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, build_id, sequence_no, event_type, actor_user_id, actor_public_key, actor_key_fingerprint, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature, created_at
 `
 
 type CreateAuditEventParams struct {
-	BuildID           uuid.UUID       `json:"build_id"`
-	SequenceNo        int32           `json:"sequence_no"`
-	EventType         string          `json:"event_type"`
-	ActorUserID       uuid.UUID       `json:"actor_user_id"`
-	ActorPublicKey    *string         `json:"actor_public_key"`
-	IpAddress         *netip.Addr     `json:"ip_address"`
-	DeviceMetadata    []byte          `json:"device_metadata"`
-	EventData         json.RawMessage `json:"event_data"`
-	PreviousEventHash string          `json:"previous_event_hash"`
-	EventHash         string          `json:"event_hash"`
-	Signature         *string         `json:"signature"`
+	BuildID             pgtype.UUID     `json:"build_id"`
+	SequenceNo          int32           `json:"sequence_no"`
+	EventType           string          `json:"event_type"`
+	ActorUserID         uuid.UUID       `json:"actor_user_id"`
+	ActorPublicKey      *string         `json:"actor_public_key"`
+	ActorKeyFingerprint *string         `json:"actor_key_fingerprint"`
+	IpAddress           *netip.Addr     `json:"ip_address"`
+	DeviceMetadata      []byte          `json:"device_metadata"`
+	EventData           json.RawMessage `json:"event_data"`
+	PreviousEventHash   string          `json:"previous_event_hash"`
+	EventHash           string          `json:"event_hash"`
+	Signature           *string         `json:"signature"`
 }
 
-func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventParams) (AuditEvent, error) {
+type CreateAuditEventRow struct {
+	ID                  uuid.UUID       `json:"id"`
+	BuildID             pgtype.UUID     `json:"build_id"`
+	SequenceNo          int32           `json:"sequence_no"`
+	EventType           string          `json:"event_type"`
+	ActorUserID         uuid.UUID       `json:"actor_user_id"`
+	ActorPublicKey      *string         `json:"actor_public_key"`
+	ActorKeyFingerprint *string         `json:"actor_key_fingerprint"`
+	IpAddress           *netip.Addr     `json:"ip_address"`
+	DeviceMetadata      []byte          `json:"device_metadata"`
+	EventData           json.RawMessage `json:"event_data"`
+	PreviousEventHash   string          `json:"previous_event_hash"`
+	EventHash           string          `json:"event_hash"`
+	Signature           *string         `json:"signature"`
+	CreatedAt           time.Time       `json:"created_at"`
+}
+
+func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventParams) (CreateAuditEventRow, error) {
 	row := q.db.QueryRow(ctx, createAuditEvent,
 		arg.BuildID,
 		arg.SequenceNo,
 		arg.EventType,
 		arg.ActorUserID,
 		arg.ActorPublicKey,
+		arg.ActorKeyFingerprint,
 		arg.IpAddress,
 		arg.DeviceMetadata,
 		arg.EventData,
@@ -58,7 +79,7 @@ func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventPara
 		arg.EventHash,
 		arg.Signature,
 	)
-	var i AuditEvent
+	var i CreateAuditEventRow
 	err := row.Scan(
 		&i.ID,
 		&i.BuildID,
@@ -66,6 +87,7 @@ func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventPara
 		&i.EventType,
 		&i.ActorUserID,
 		&i.ActorPublicKey,
+		&i.ActorKeyFingerprint,
 		&i.IpAddress,
 		&i.DeviceMetadata,
 		&i.EventData,
@@ -78,21 +100,38 @@ func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventPara
 }
 
 const getAuditEventsByBuildID = `-- name: GetAuditEventsByBuildID :many
-SELECT id, build_id, sequence_no, event_type, actor_user_id, actor_public_key, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature, created_at
+SELECT id, build_id, sequence_no, event_type, actor_user_id, actor_public_key, actor_key_fingerprint, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature, created_at
 FROM audit_events
 WHERE build_id = $1
 ORDER BY sequence_no ASC
 `
 
-func (q *Queries) GetAuditEventsByBuildID(ctx context.Context, buildID uuid.UUID) ([]AuditEvent, error) {
+type GetAuditEventsByBuildIDRow struct {
+	ID                  uuid.UUID       `json:"id"`
+	BuildID             pgtype.UUID     `json:"build_id"`
+	SequenceNo          int32           `json:"sequence_no"`
+	EventType           string          `json:"event_type"`
+	ActorUserID         uuid.UUID       `json:"actor_user_id"`
+	ActorPublicKey      *string         `json:"actor_public_key"`
+	ActorKeyFingerprint *string         `json:"actor_key_fingerprint"`
+	IpAddress           *netip.Addr     `json:"ip_address"`
+	DeviceMetadata      []byte          `json:"device_metadata"`
+	EventData           json.RawMessage `json:"event_data"`
+	PreviousEventHash   string          `json:"previous_event_hash"`
+	EventHash           string          `json:"event_hash"`
+	Signature           *string         `json:"signature"`
+	CreatedAt           time.Time       `json:"created_at"`
+}
+
+func (q *Queries) GetAuditEventsByBuildID(ctx context.Context, buildID pgtype.UUID) ([]GetAuditEventsByBuildIDRow, error) {
 	rows, err := q.db.Query(ctx, getAuditEventsByBuildID, buildID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AuditEvent{}
+	items := []GetAuditEventsByBuildIDRow{}
 	for rows.Next() {
-		var i AuditEvent
+		var i GetAuditEventsByBuildIDRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.BuildID,
@@ -100,6 +139,7 @@ func (q *Queries) GetAuditEventsByBuildID(ctx context.Context, buildID uuid.UUID
 			&i.EventType,
 			&i.ActorUserID,
 			&i.ActorPublicKey,
+			&i.ActorKeyFingerprint,
 			&i.IpAddress,
 			&i.DeviceMetadata,
 			&i.EventData,
@@ -119,16 +159,33 @@ func (q *Queries) GetAuditEventsByBuildID(ctx context.Context, buildID uuid.UUID
 }
 
 const getLatestAuditEvent = `-- name: GetLatestAuditEvent :one
-SELECT id, build_id, sequence_no, event_type, actor_user_id, actor_public_key, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature, created_at
+SELECT id, build_id, sequence_no, event_type, actor_user_id, actor_public_key, actor_key_fingerprint, ip_address, device_metadata, event_data, previous_event_hash, event_hash, signature, created_at
 FROM audit_events
 WHERE build_id = $1
 ORDER BY sequence_no DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLatestAuditEvent(ctx context.Context, buildID uuid.UUID) (AuditEvent, error) {
+type GetLatestAuditEventRow struct {
+	ID                  uuid.UUID       `json:"id"`
+	BuildID             pgtype.UUID     `json:"build_id"`
+	SequenceNo          int32           `json:"sequence_no"`
+	EventType           string          `json:"event_type"`
+	ActorUserID         uuid.UUID       `json:"actor_user_id"`
+	ActorPublicKey      *string         `json:"actor_public_key"`
+	ActorKeyFingerprint *string         `json:"actor_key_fingerprint"`
+	IpAddress           *netip.Addr     `json:"ip_address"`
+	DeviceMetadata      []byte          `json:"device_metadata"`
+	EventData           json.RawMessage `json:"event_data"`
+	PreviousEventHash   string          `json:"previous_event_hash"`
+	EventHash           string          `json:"event_hash"`
+	Signature           *string         `json:"signature"`
+	CreatedAt           time.Time       `json:"created_at"`
+}
+
+func (q *Queries) GetLatestAuditEvent(ctx context.Context, buildID pgtype.UUID) (GetLatestAuditEventRow, error) {
 	row := q.db.QueryRow(ctx, getLatestAuditEvent, buildID)
-	var i AuditEvent
+	var i GetLatestAuditEventRow
 	err := row.Scan(
 		&i.ID,
 		&i.BuildID,
@@ -136,6 +193,7 @@ func (q *Queries) GetLatestAuditEvent(ctx context.Context, buildID uuid.UUID) (A
 		&i.EventType,
 		&i.ActorUserID,
 		&i.ActorPublicKey,
+		&i.ActorKeyFingerprint,
 		&i.IpAddress,
 		&i.DeviceMetadata,
 		&i.EventData,

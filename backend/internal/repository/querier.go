@@ -8,34 +8,51 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
 	AssignRole(ctx context.Context, arg AssignRoleParams) (UserRole, error)
-	CountAuditEventsByBuildID(ctx context.Context, buildID uuid.UUID) (int64, error)
+	CheckUserAssignedToBuild(ctx context.Context, arg CheckUserAssignedToBuildParams) (bool, error)
+	CountAuditEventsByBuildID(ctx context.Context, buildID pgtype.UUID) (int64, error)
 	CountBuilds(ctx context.Context, status NullBuildStatus) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (CreateAPITokenRow, error)
-	CreateAuditEvent(ctx context.Context, arg CreateAuditEventParams) (AuditEvent, error)
-	CreateBuild(ctx context.Context, arg CreateBuildParams) (Build, error)
-	CreateBuildSection(ctx context.Context, arg CreateBuildSectionParams) (BuildSection, error)
+	CreateAuditEvent(ctx context.Context, arg CreateAuditEventParams) (CreateAuditEventRow, error)
+	CreateBuild(ctx context.Context, arg CreateBuildParams) (CreateBuildRow, error)
+	CreateBuildAssignment(ctx context.Context, arg CreateBuildAssignmentParams) (BuildAssignment, error)
+	CreateBuildSection(ctx context.Context, arg CreateBuildSectionParams) (CreateBuildSectionRow, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	DeactivateUser(ctx context.Context, id uuid.UUID) error
+	DeleteBuildAssignmentsByBuildID(ctx context.Context, buildID uuid.UUID) error
 	DeleteRolesByUserID(ctx context.Context, userID uuid.UUID) error
 	FinalizeBuild(ctx context.Context, arg FinalizeBuildParams) error
+	ForcePasswordChange(ctx context.Context, id uuid.UUID) error
 	GetAPITokenByHash(ctx context.Context, tokenHash string) (ApiToken, error)
-	GetAuditEventsByBuildID(ctx context.Context, buildID uuid.UUID) ([]AuditEvent, error)
-	GetBuildByID(ctx context.Context, id uuid.UUID) (Build, error)
-	GetBuildSectionByRole(ctx context.Context, arg GetBuildSectionByRoleParams) (BuildSection, error)
-	GetBuildSectionsByBuildID(ctx context.Context, buildID uuid.UUID) ([]BuildSection, error)
-	GetLatestAuditEvent(ctx context.Context, buildID uuid.UUID) (AuditEvent, error)
+	GetAuditEventsByBuildID(ctx context.Context, buildID pgtype.UUID) ([]GetAuditEventsByBuildIDRow, error)
+	GetBuildAssignmentByBuildAndRole(ctx context.Context, arg GetBuildAssignmentByBuildAndRoleParams) (GetBuildAssignmentByBuildAndRoleRow, error)
+	GetBuildAssignmentsByBuildID(ctx context.Context, buildID uuid.UUID) ([]GetBuildAssignmentsByBuildIDRow, error)
+	GetBuildAssignmentsByUserID(ctx context.Context, userID uuid.UUID) ([]GetBuildAssignmentsByUserIDRow, error)
+	GetBuildByID(ctx context.Context, id uuid.UUID) (GetBuildByIDRow, error)
+	GetBuildSectionByRole(ctx context.Context, arg GetBuildSectionByRoleParams) (GetBuildSectionByRoleRow, error)
+	GetBuildSectionByRoleID(ctx context.Context, arg GetBuildSectionByRoleIDParams) (GetBuildSectionByRoleIDRow, error)
+	GetBuildSectionsByBuildID(ctx context.Context, buildID uuid.UUID) ([]GetBuildSectionsByBuildIDRow, error)
+	GetLatestAuditEvent(ctx context.Context, buildID pgtype.UUID) (GetLatestAuditEventRow, error)
+	GetRoleByID(ctx context.Context, id uuid.UUID) (Role, error)
+	GetRoleByName(ctx context.Context, name string) (Role, error)
 	GetRolesByUserID(ctx context.Context, userID uuid.UUID) ([]UserRole, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserByPublicKeyFingerprint(ctx context.Context, publicKeyFingerprint *string) (GetUserByPublicKeyFingerprintRow, error)
+	GetUsersWithExpiredPasswords(ctx context.Context) ([]GetUsersWithExpiredPasswordsRow, error)
+	GetUsersWithExpiredPublicKeys(ctx context.Context) ([]GetUsersWithExpiredPublicKeysRow, error)
 	ListAPITokensByUserID(ctx context.Context, userID uuid.UUID) ([]ListAPITokensByUserIDRow, error)
 	ListBuilds(ctx context.Context, arg ListBuildsParams) ([]ListBuildsRow, error)
+	ListRoles(ctx context.Context) ([]Role, error)
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
+	RegisterPublicKey(ctx context.Context, arg RegisterPublicKeyParams) error
 	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) error
 	UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusParams) error
+	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdateTokenLastUsed(ctx context.Context, id uuid.UUID) error
 }
 

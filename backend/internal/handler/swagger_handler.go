@@ -29,7 +29,7 @@ const swaggerUIHTML = `<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>HPCR Contract Builder API Docs</title>
+  <title>IBM Confidential Computing Contract Generator API Docs</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
   <style>
     body { margin: 0; background: #fafafa; }
@@ -53,7 +53,7 @@ const swaggerUIHTML = `<!doctype html>
 const openAPISpecJSON = `{
   "openapi": "3.0.3",
   "info": {
-    "title": "HPCR Contract Builder API",
+    "title": "IBM Confidential Computing Contract Generator API",
     "version": "0.1.0",
     "description": "API for persona-based contract build orchestration."
   },

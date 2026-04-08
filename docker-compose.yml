@@ -78,6 +78,6 @@ services:
 
 networks:
   app_net:
-    internal: true
+    # Removed internal: true to allow external access via reverse proxy
   db_net:
-    internal: true
+    internal: true  # Keep database network internal for security

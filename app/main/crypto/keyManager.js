@@ -39,12 +39,23 @@ class KeyManager {
 
   /**
    * Compute SHA-256 fingerprint of a public key.
+   * Must match backend implementation: hash the DER-encoded bytes, not the PEM string.
    */
   computeFingerprint(publicKeyPem) {
-    return crypto
-      .createHash('sha256')
-      .update(publicKeyPem)
-      .digest('hex')
+    // Extract the base64 content from PEM (remove headers and newlines)
+    const pemContent = publicKeyPem
+      .replace(/-----BEGIN PUBLIC KEY-----/, '')
+      .replace(/-----END PUBLIC KEY-----/, '')
+      .replace(/\s/g, '');
+    
+    // Decode base64 to get DER bytes
+    const derBytes = Buffer.from(pemContent, 'base64');
+    
+    // Compute SHA-256 hash of DER bytes
+    const hash = crypto.createHash('sha256').update(derBytes).digest('hex');
+    
+    // Format as XX:XX:XX:... (uppercase with colons)
+    return hash
       .toUpperCase()
       .match(/.{1,2}/g)
       .join(':');

@@ -262,20 +262,20 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userEmail, chil
             {/* Home - visible to all users except VIEWER */}
             {userRole !== 'VIEWER' && (
               <SideNavMenuItem
-                renderIcon={Home}
                 isActive={activeNav === 'HOME'}
                 onClick={() => setActiveNav('HOME')}
               >
+                <Home size={16} style={{ marginRight: '0.5rem' }} />
                 Home
               </SideNavMenuItem>
             )}
             
             {/* Build Management - visible to all users */}
             <SideNavMenuItem
-              renderIcon={Catalog}
               isActive={activeNav === 'BUILDS'}
               onClick={() => setActiveNav('BUILDS')}
             >
+              <Catalog size={16} style={{ marginRight: '0.5rem' }} />
               Build Management
             </SideNavMenuItem>
             
@@ -284,28 +284,28 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userEmail, chil
               <SideNavMenu title="Admin Operations" defaultExpanded>
                 {canViewAnalytics && (
                   <SideNavMenuItem
-                    renderIcon={ChartLine}
                     isActive={activeNav === 'ANALYTICS'}
                     onClick={() => setActiveNav('ANALYTICS')}
                   >
+                    <ChartLine size={16} style={{ marginRight: '0.5rem' }} />
                     Diagnostics & Analytics
                   </SideNavMenuItem>
                 )}
                 {canViewUsers && (
                   <SideNavMenuItem
-                    renderIcon={UserMultiple}
                     isActive={activeNav === 'USERS'}
                     onClick={() => setActiveNav('USERS')}
                   >
+                    <UserMultiple size={16} style={{ marginRight: '0.5rem' }} />
                     User Management
                   </SideNavMenuItem>
                 )}
                 {canViewLogs && (
                   <SideNavMenuItem
-                    renderIcon={DocumentTasks}
                     isActive={activeNav === 'LOGS'}
                     onClick={() => setActiveNav('LOGS')}
                   >
+                    <DocumentTasks size={16} style={{ marginRight: '0.5rem' }} />
                     System Logs
                   </SideNavMenuItem>
                 )}

@@ -6,11 +6,51 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 )
 
+// ComputePublicKeyFingerprint computes the SHA-256 fingerprint of a PEM-encoded public key.
+func ComputePublicKeyFingerprint(publicKeyPEM string) (string, error) {
+	// Decode PEM public key
+	block, _ := pem.Decode([]byte(publicKeyPEM))
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block")
+	}
+
+	// Compute SHA-256 hash of the DER-encoded public key
+	hash := sha256.Sum256(block.Bytes)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+// ValidatePublicKey validates that a PEM-encoded string is a valid RSA-4096 public key.
+func ValidatePublicKey(publicKeyPEM string) error {
+	block, _ := pem.Decode([]byte(publicKeyPEM))
+	if block == nil {
+		return fmt.Errorf("failed to decode PEM block")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse public key: %w", err)
+	}
+
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("public key is not RSA")
+	}
+
+	// Verify key size is 4096 bits
+	if rsaPub.N.BitLen() != 4096 {
+		return fmt.Errorf("public key must be RSA-4096, got %d bits", rsaPub.N.BitLen())
+	}
+
+	return nil
+}
+
 // VerifySignature verifies an RSA-PSS signature against a hash using a PEM-encoded public key.
+// The hash should be a hex-encoded SHA-256 hash of the data.
 func VerifySignature(publicKeyPEM string, hashHex string, signatureBase64 string) error {
 	// Decode PEM public key
 	block, _ := pem.Decode([]byte(publicKeyPEM))
@@ -34,11 +74,23 @@ func VerifySignature(publicKeyPEM string, hashHex string, signatureBase64 string
 		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	// Hash the data
-	hashed := sha256.Sum256([]byte(hashHex))
+	// Decode the hash from hex
+	hashBytes, err := hex.DecodeString(hashHex)
+	if err != nil {
+		return fmt.Errorf("failed to decode hash: %w", err)
+	}
 
-	// Verify using RSA-PSS
-	err = rsa.VerifyPSS(rsaPub, crypto.SHA256, hashed[:], sig, nil)
+	if len(hashBytes) != 32 {
+		return fmt.Errorf("invalid hash length: expected 32 bytes, got %d", len(hashBytes))
+	}
+
+	// Verify using RSA-PSS with SHA-256
+	opts := &rsa.PSSOptions{
+		SaltLength: rsa.PSSSaltLengthEqualsHash,
+		Hash:       crypto.SHA256,
+	}
+
+	err = rsa.VerifyPSS(rsaPub, crypto.SHA256, hashBytes, sig, opts)
 	if err != nil {
 		return fmt.Errorf("signature verification failed: %w", err)
 	}

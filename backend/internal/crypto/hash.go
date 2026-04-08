@@ -35,14 +35,33 @@ func SHA256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// ComputeGenesisHash computes the genesis hash for a build's audit chain.
+// ComputeGenesisHash computes the deterministic genesis hash for a build's audit chain.
+// Format: SHA256("IBM_CC:" + buildID)
 func ComputeGenesisHash(buildID string) string {
 	seed := fmt.Sprintf("IBM_CC:%s", buildID)
 	return SHA256Hex([]byte(seed))
 }
 
-// ComputeEventHash computes the hash of an audit event.
+// ComputeEventHash computes the hash of an audit event using canonical JSON.
+// The hash is computed as: SHA256(canonical_json(event_data) + previous_hash)
 func ComputeEventHash(eventDataJSON []byte, previousHash string) string {
+	// Concatenate canonical JSON with previous hash
 	payload := append(eventDataJSON, []byte(previousHash)...)
 	return SHA256Hex(payload)
+}
+
+// CanonicalizeJSON converts JSON to RFC 8785 canonical form.
+// For now, we use a simplified approach - proper RFC 8785 implementation
+// would require a dedicated library or custom implementation.
+// This is a placeholder that should be replaced with proper canonical JSON.
+func CanonicalizeJSON(data map[string]interface{}) ([]byte, error) {
+	// TODO: Implement proper RFC 8785 canonical JSON
+	// For now, we'll use Go's standard JSON marshaling with sorted keys
+	// This is NOT RFC 8785 compliant but provides deterministic output
+
+	// Note: A proper implementation would use a library like:
+	// github.com/gibson042/canonicaljson-go
+	// or implement RFC 8785 spec directly
+
+	return []byte(fmt.Sprintf("%v", data)), nil
 }

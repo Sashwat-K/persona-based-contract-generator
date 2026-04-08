@@ -205,3 +205,111 @@ func (h *UserHandler) RevokeToken(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// registerPublicKeyRequest is the JSON request for PUT /users/{id}/public-key.
+type registerPublicKeyRequest struct {
+	PublicKey string `json:"public_key"`
+}
+
+// RegisterPublicKey handles PUT /users/{id}/public-key.
+func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, model.ErrInvalidRequest("Invalid user ID."))
+		return
+	}
+
+	var req registerPublicKeyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, model.ErrInvalidRequest(err.Error()))
+		return
+	}
+
+	if req.PublicKey == "" {
+		writeError(w, model.ErrInvalidRequest("Public key is required."))
+		return
+	}
+
+	fingerprint, err := h.userService.RegisterPublicKey(r.Context(), userID, req.PublicKey)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid public key") {
+			writeError(w, model.ErrInvalidRequest(err.Error()))
+			return
+		}
+		writeError(w, model.ErrInternal("Failed to register public key."))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"fingerprint": fingerprint,
+		"message":     "Public key registered successfully",
+	})
+}
+
+// GetPublicKey handles GET /users/{id}/public-key.
+func (h *UserHandler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, model.ErrInvalidRequest("Invalid user ID."))
+		return
+	}
+
+	publicKey, fingerprint, err := h.userService.GetPublicKey(r.Context(), userID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, model.ErrUserNotFound(userID.String()))
+			return
+		}
+		if strings.Contains(err.Error(), "not registered") {
+			writeError(w, model.ErrInvalidRequest("User has not registered a public key"))
+			return
+		}
+		writeError(w, model.ErrInternal("Failed to retrieve public key."))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"public_key":  publicKey,
+		"fingerprint": fingerprint,
+	})
+}
+
+// changePasswordRequest is the JSON request for PATCH /users/{id}/password.
+type changePasswordRequest struct {
+	NewPassword string `json:"new_password"`
+}
+
+// ChangePassword handles PATCH /users/{id}/password.
+func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, model.ErrInvalidRequest("Invalid user ID."))
+		return
+	}
+
+	var req changePasswordRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, model.ErrInvalidRequest(err.Error()))
+		return
+	}
+
+	if req.NewPassword == "" {
+		writeError(w, model.ErrInvalidRequest("New password is required."))
+		return
+	}
+
+	// Validate password strength (minimum 8 characters)
+	if len(req.NewPassword) < 8 {
+		writeError(w, model.ErrInvalidRequest("Password must be at least 8 characters long."))
+		return
+	}
+
+	if err := h.userService.ChangePassword(r.Context(), userID, req.NewPassword); err != nil {
+		writeError(w, model.ErrInternal("Failed to change password."))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Password changed successfully",
+	})
+}

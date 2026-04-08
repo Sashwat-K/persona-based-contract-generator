@@ -5,15 +5,15 @@ export const useConfigStore = create(
   persist(
     (set, get) => ({
       // State
-      serverUrl: 'https://localhost:8443',
+      serverUrl: 'http://localhost:8080',
       isServerConfigured: false,
       lastConnectionTest: null,
       connectionStatus: 'unknown', // 'unknown' | 'connected' | 'failed'
       
       // Actions
-      setServerUrl: (url) => set({ 
+      setServerUrl: (url) => set({
         serverUrl: url,
-        isServerConfigured: true 
+        isServerConfigured: true
       }),
       
       setConnectionStatus: (status, timestamp = new Date().toISOString()) => set({
@@ -22,7 +22,7 @@ export const useConfigStore = create(
       }),
       
       resetServerConfig: () => set({
-        serverUrl: 'https://localhost:8443',
+        serverUrl: 'http://localhost:8080',
         isServerConfigured: false,
         lastConnectionTest: null,
         connectionStatus: 'unknown'

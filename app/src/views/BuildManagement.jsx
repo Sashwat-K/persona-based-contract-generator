@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DataTable,
   Table,
@@ -16,10 +16,12 @@ import {
   Tag,
   Stack
 } from '@carbon/react';
-import { Add } from '@carbon/icons-react';
+import { Add, WarningAlt } from '@carbon/icons-react';
 import { BUILD_STATUS_CONFIG, ROLES, ROLE_NAMES } from '../utils/constants';
 import { formatDate } from '../utils/formatters';
-import { mockUsers } from '../store/mockData';
+import userService from '../services/userService';
+import buildService from '../services/buildService';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -30,6 +32,29 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
     [ROLES.AUDITOR]: '',
     [ROLES.ENV_OPERATOR]: ''
   });
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  // Load users when modal opens
+  useEffect(() => {
+    if (createModalOpen && users.length === 0) {
+      loadUsers();
+    }
+  }, [createModalOpen]);
+
+  const loadUsers = async () => {
+    try {
+      setLoadingUsers(true);
+      const usersData = await userService.getUsers();
+      setUsers(usersData);
+    } catch (err) {
+      console.error('Failed to load users:', err);
+      // Keep empty array, modal will show error
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
 
   const headers = [
     { key: 'name', header: 'Build Name' },
@@ -54,25 +79,43 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
 
   // Get users by role for assignment dropdowns
   const getUsersByRole = (role) => {
-    return mockUsers.filter(u => u.role === role);
+    return users.filter(u => u.role === role);
   };
 
-  const handleCreateBuild = () => {
-    // TODO: Integrate with buildService.createBuild()
-    console.log('Creating build:', {
-      name: buildName,
-      assignments
-    });
-    
-    // Reset form
-    setBuildName('');
-    setAssignments({
-      [ROLES.SOLUTION_PROVIDER]: '',
-      [ROLES.DATA_OWNER]: '',
-      [ROLES.AUDITOR]: '',
-      [ROLES.ENV_OPERATOR]: ''
-    });
-    setCreateModalOpen(false);
+  const handleCreateBuild = async () => {
+    try {
+      setCreating(true);
+      
+      // Create build with assignments
+      await buildService.createBuild({
+        name: buildName,
+        assignments: {
+          solution_provider_id: assignments[ROLES.SOLUTION_PROVIDER],
+          data_owner_id: assignments[ROLES.DATA_OWNER],
+          auditor_id: assignments[ROLES.AUDITOR],
+          env_operator_id: assignments[ROLES.ENV_OPERATOR]
+        }
+      });
+      
+      // Reset form
+      setBuildName('');
+      setAssignments({
+        [ROLES.SOLUTION_PROVIDER]: '',
+        [ROLES.DATA_OWNER]: '',
+        [ROLES.AUDITOR]: '',
+        [ROLES.ENV_OPERATOR]: ''
+      });
+      setCreateModalOpen(false);
+      
+      // Reload builds (parent component should handle this via callback)
+      window.location.reload(); // Temporary - should use callback
+      
+    } catch (err) {
+      console.error('Failed to create build:', err);
+      alert(`Failed to create build: ${err.message}`);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const isFormValid = () => {
@@ -156,11 +199,11 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
         open={createModalOpen}
         modalHeading="Create New Build"
         modalLabel="Build Management"
-        primaryButtonText="Create Build"
+        primaryButtonText={creating ? "Creating..." : "Create Build"}
         secondaryButtonText="Cancel"
         onRequestSubmit={handleCreateBuild}
         onRequestClose={() => setCreateModalOpen(false)}
-        primaryButtonDisabled={!isFormValid()}
+        primaryButtonDisabled={!isFormValid() || creating || loadingUsers}
         size="lg"
       >
         <Stack gap={6}>
@@ -179,7 +222,24 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
               Each role must be assigned to a specific user for this build.
             </p>
 
-            <Stack gap={5}>
+            {loadingUsers ? (
+              <div style={{ padding: '2rem', textAlign: 'center' }}>
+                <LoadingSpinner size="sm" message="Loading users..." />
+              </div>
+            ) : users.length === 0 ? (
+              <div style={{
+                padding: '1rem',
+                backgroundColor: 'var(--cds-layer-01)',
+                borderLeft: '4px solid var(--cds-support-error)',
+                marginBottom: '1rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <WarningAlt size={20} style={{ color: 'var(--cds-support-error)' }} />
+                  <span>Failed to load users. Please try again.</span>
+                </div>
+              </div>
+            ) : (
+              <Stack gap={5}>
               <Select
                 id="solution-provider"
                 labelText="Solution Provider"
@@ -239,7 +299,8 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
                   <SelectItem key={user.id} value={user.id} text={user.name} />
                 ))}
               </Select>
-            </Stack>
+              </Stack>
+            )}
           </div>
         </Stack>
       </Modal>

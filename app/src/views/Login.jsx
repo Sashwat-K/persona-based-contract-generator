@@ -5,13 +5,16 @@ import {
   PasswordInput,
   Button,
   Theme,
-  ProgressBar,
   InlineNotification,
   Tile,
-  Checkbox
+  Checkbox,
+  Loading,
+  Tag
 } from '@carbon/react';
-import { LogoGithub, Document, WarningAlt, Settings, Minimize, Maximize, Close } from '@carbon/icons-react';
-import { useConfigStore } from '../store/configStore';
+import { LogoGithub, Document, WarningAlt, Settings, CheckmarkFilled, ErrorFilled, Renew } from '@carbon/icons-react';
+import { useAuthStore } from '../store/authStore';
+import authService from '../services/authService';
+import apiClient from '../services/apiClient';
 import HyperProtectIcon from '../components/HyperProtectIcon';
 
 const Login = ({ onLogin }) => {
@@ -20,26 +23,16 @@ const Login = ({ onLogin }) => {
   const [rememberEmail, setRememberEmail] = useState(false);
   
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [loginProgress, setLoginProgress] = useState(0);
   const [showServerConfig, setShowServerConfig] = useState(false);
-  const [tempServerUrl, setTempServerUrl] = useState('');
+  const [tempServerUrl, setTempServerUrl] = useState('http://localhost:8080');
   const [error, setError] = useState('');
   
-  const { serverUrl, setServerUrl } = useConfigStore();
+  // Server status
+  const [serverStatus, setServerStatus] = useState('checking'); // 'checking', 'online', 'offline'
+  const [isCheckingServer, setIsCheckingServer] = useState(false);
+  const [serverVersion, setServerVersion] = useState(null);
   
-  // Valid test credentials
-  const validCredentials = [
-    { email: 'admin@hpcr.local', password: 'Admin@123456', role: 'ADMIN' },
-    { email: 'solution.provider@hpcr.local', password: 'SolProv@123456', role: 'SOLUTION_PROVIDER' },
-    { email: 'data.owner@hpcr.local', password: 'DataOwn@123456', role: 'DATA_OWNER' },
-    { email: 'auditor@hpcr.local', password: 'Auditor@123456', role: 'AUDITOR' },
-    { email: 'env.operator@hpcr.local', password: 'EnvOper@123456', role: 'ENV_OPERATOR' },
-    { email: 'viewer@hpcr.local', password: 'Viewer@123456', role: 'VIEWER' },
-    { email: 'sp2@hpcr.local', password: 'SolProv2@123456', role: 'SOLUTION_PROVIDER' },
-    { email: 'do2@hpcr.local', password: 'DataOwn2@123456', role: 'DATA_OWNER' },
-    { email: 'auditor2@hpcr.local', password: 'Auditor2@123456', role: 'AUDITOR' },
-    { email: 'eo2@hpcr.local', password: 'EnvOper2@123456', role: 'ENV_OPERATOR' }
-  ];
+  const { setAuth } = useAuthStore();
   
   // Load remembered email on mount
   useEffect(() => {
@@ -51,64 +44,139 @@ const Login = ({ onLogin }) => {
   }, []);
   
   useEffect(() => {
-    setTempServerUrl(serverUrl);
-  }, [serverUrl]);
-
-  useEffect(() => {
-    if (!isLoggingIn) return;
+    // Get server URL from localStorage or use default
+    const savedUrl = localStorage.getItem('server_url') || 'http://localhost:8080';
+    setTempServerUrl(savedUrl);
     
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += Math.floor(Math.random() * 20) + 10;
-      if (progress > 100) progress = 100;
+    // Check server status on mount
+    checkServerStatus(savedUrl);
+  }, []);
+  
+  const checkServerStatus = async (url) => {
+    setIsCheckingServer(true);
+    setServerStatus('checking');
+    
+    try {
+      // Try to reach the health endpoint with proper CORS handling
+      const response = await fetch(`${url}/health`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        mode: 'cors',
+        credentials: 'omit',
+        signal: AbortSignal.timeout(5000) // 5 second timeout
+      });
       
-      setLoginProgress(progress);
-
-      if (progress === 100) {
-        clearInterval(interval);
-        setTimeout(() => {
-          localStorage.setItem('auth_token', 'dummy-token-abc-123');
-          onLogin(true); // pass true to indicate it's a fresh manual login
-        }, 500);
+      if (response.ok) {
+        const data = await response.json();
+        setServerStatus('online');
+        setServerVersion(data.version || 'Unknown');
+        console.log('Server health check successful:', data);
+      } else {
+        console.warn('Server returned non-OK status:', response.status);
+        setServerStatus('offline');
+        setServerVersion(null);
       }
-    }, 200);
+    } catch (err) {
+      console.error('Server health check failed:', err);
+      console.error('Error details:', {
+        name: err.name,
+        message: err.message,
+        url: `${url}/health`
+      });
+      setServerStatus('offline');
+      setServerVersion(null);
+    } finally {
+      setIsCheckingServer(false);
+    }
+  };
 
-    return () => clearInterval(interval);
-  }, [isLoggingIn, onLogin]);
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setIsLoggingIn(true);
     
-    // Validate credentials
-    const validUser = validCredentials.find(
-      cred => cred.email === username && cred.password === password
-    );
+    try {
+      // Call real backend API
+      const response = await authService.login(username, password);
+      
+      // Store auth in Zustand store
+      setAuth(response.user, response.token);
+      
+      // Handle remember email
+      if (rememberEmail) {
+        localStorage.setItem('remembered_email', username);
+      } else {
+        localStorage.removeItem('remembered_email');
+      }
+      
+      // Notify parent component
+      onLogin(true);
+      
+    } catch (err) {
+      console.error('Login error:', err);
+      setError(err.message || 'Login failed. Please check your credentials and try again.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleServerUrlChange = async () => {
+    const newUrl = tempServerUrl.trim();
     
-    if (!validUser) {
-      setError('Invalid email or password. Please check DUMMY_CREDENTIALS.md for valid test credentials.');
+    if (!newUrl) {
+      setError('Server URL cannot be empty');
       return;
     }
     
-    // Handle remember email
-    if (rememberEmail) {
-      localStorage.setItem('remembered_email', username);
-    } else {
-      localStorage.removeItem('remembered_email');
+    // Validate URL format
+    try {
+      const urlObj = new URL(newUrl);
+      if (!['http:', 'https:'].includes(urlObj.protocol)) {
+        setError('Server URL must use HTTP or HTTPS protocol');
+        return;
+      }
+    } catch (err) {
+      setError('Invalid URL format. Please enter a valid URL (e.g., http://localhost:8080)');
+      return;
     }
     
-    // Store user role for later use
-    localStorage.setItem('user_role', validUser.role);
-    localStorage.setItem('user_email', validUser.email);
+    // Check if server is reachable before applying
+    setIsCheckingServer(true);
+    setError('');
     
-    setIsLoggingIn(true);
-    setLoginProgress(0);
-  };
-
-  const handleServerUrlChange = () => {
-    if (tempServerUrl.trim()) {
-      setServerUrl(tempServerUrl.trim());
-      setShowServerConfig(false);
+    try {
+      const response = await fetch(`${newUrl}/health`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        mode: 'cors',
+        credentials: 'omit',
+        signal: AbortSignal.timeout(5000)
+      });
+      
+      if (response.ok) {
+        // Server is reachable, apply the change
+        localStorage.setItem('server_url', newUrl);
+        apiClient.defaults.baseURL = newUrl;
+        setServerStatus('online');
+        setShowServerConfig(false);
+        
+        const data = await response.json();
+        setServerVersion(data.version || 'Unknown');
+      } else {
+        setError(`Server returned status ${response.status}. Please check the URL.`);
+        setServerStatus('offline');
+      }
+    } catch (err) {
+      setError(`Cannot reach server at ${newUrl}. Please verify the URL and ensure the server is running.`);
+      setServerStatus('offline');
+    } finally {
+      setIsCheckingServer(false);
     }
   };
 
@@ -295,12 +363,15 @@ const Login = ({ onLogin }) => {
             {/* Login Card */}
             <Tile style={{ padding: '2rem', marginBottom: '1rem' }}>
               {isLoggingIn ? (
-                <div style={{ margin: '2rem 0' }}>
-                  <ProgressBar label="Authenticating session..." value={loginProgress} max={100} />
+                <div style={{ margin: '2rem 0', textAlign: 'center' }}>
+                  <Loading description="Authenticating..." withOverlay={false} />
+                  <p style={{ marginTop: '1rem', color: 'var(--cds-text-secondary)' }}>
+                    Connecting to backend server...
+                  </p>
                 </div>
               ) : (
                 <Form onSubmit={handleSubmit}>
-                  {error && (
+                  {error && !showServerConfig && (
                     <div style={{ marginBottom: '1rem' }}>
                       <InlineNotification
                         kind="error"
@@ -359,45 +430,126 @@ const Login = ({ onLogin }) => {
 
             {/* Server Configuration Card */}
             <Tile style={{ padding: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showServerConfig ? '1rem' : '0' }}>
-                <div>
-                  <div style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', marginBottom: '0.25rem' }}>
-                    Server Configuration
+              <div style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                marginBottom: showServerConfig ? '1rem' : '0'
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    marginBottom: '0.75rem',
+                    flexWrap: 'wrap'
+                  }}>
+                    <span style={{
+                      fontSize: '0.875rem',
+                      color: 'var(--cds-text-secondary)',
+                      fontWeight: 500
+                    }}>
+                      Server Configuration
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      {isCheckingServer ? (
+                        <Tag type="gray" size="sm">Checking...</Tag>
+                      ) : serverStatus === 'online' ? (
+                        <Tag type="green" size="sm" renderIcon={CheckmarkFilled}>Online</Tag>
+                      ) : serverStatus === 'offline' ? (
+                        <Tag type="red" size="sm" renderIcon={ErrorFilled}>Offline</Tag>
+                      ) : null}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '0.875rem', color: 'var(--cds-text-primary)' }}>
-                    {serverUrl}
+                  <div style={{
+                    fontSize: '0.875rem',
+                    color: 'var(--cds-text-primary)',
+                    marginBottom: '0.25rem',
+                    wordBreak: 'break-all'
+                  }}>
+                    {tempServerUrl}
                   </div>
+                  {serverVersion && (
+                    <div style={{
+                      fontSize: '0.75rem',
+                      color: 'var(--cds-text-secondary)',
+                      marginTop: '0.25rem'
+                    }}>
+                      Version: {serverVersion}
+                    </div>
+                  )}
                 </div>
-                <Button
-                  kind="ghost"
-                  size="sm"
-                  renderIcon={Settings}
-                  onClick={() => setShowServerConfig(!showServerConfig)}
-                >
-                  {showServerConfig ? 'Cancel' : 'Change'}
-                </Button>
+                <div style={{
+                  display: 'flex',
+                  gap: '0.5rem',
+                  marginLeft: '1rem',
+                  flexShrink: 0
+                }}>
+                  <Button
+                    kind="ghost"
+                    size="sm"
+                    renderIcon={Renew}
+                    onClick={() => checkServerStatus(tempServerUrl)}
+                    disabled={isCheckingServer}
+                    iconDescription="Refresh status"
+                    hasIconOnly
+                  />
+                  <Button
+                    kind="ghost"
+                    size="sm"
+                    renderIcon={Settings}
+                    onClick={() => setShowServerConfig(!showServerConfig)}
+                  >
+                    {showServerConfig ? 'Cancel' : 'Change'}
+                  </Button>
+                </div>
               </div>
 
               {/* Server URL Change Form */}
               {showServerConfig && (
                 <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--cds-border-subtle)' }}>
+                  {error && (
+                    <div style={{ marginBottom: '1rem' }}>
+                      <InlineNotification
+                        kind="error"
+                        title="Configuration Error"
+                        subtitle={error}
+                        hideCloseButton={false}
+                        onCloseButtonClick={() => setError('')}
+                        lowContrast
+                      />
+                    </div>
+                  )}
                   <div style={{ marginBottom: '1rem' }}>
                     <TextInput
                       id="server-url"
                       labelText="Server URL"
-                      placeholder="https://api.example.com"
+                      placeholder="http://localhost:8080"
                       value={tempServerUrl}
                       onChange={(e) => setTempServerUrl(e.target.value)}
-                      helperText="Enter the backend API server URL (must use HTTPS)"
+                      helperText="Enter the backend API server URL"
                     />
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={handleServerUrlChange}
-                    disabled={!tempServerUrl.trim() || tempServerUrl === serverUrl}
-                  >
-                    Save Changes
-                  </Button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <Button
+                      size="sm"
+                      onClick={handleServerUrlChange}
+                      disabled={!tempServerUrl.trim() || isCheckingServer}
+                    >
+                      {isCheckingServer ? 'Checking...' : 'Test & Save'}
+                    </Button>
+                    <Button
+                      kind="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setShowServerConfig(false);
+                        setTempServerUrl(localStorage.getItem('server_url') || 'http://localhost:8080');
+                        setError('');
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
               )}
             </Tile>

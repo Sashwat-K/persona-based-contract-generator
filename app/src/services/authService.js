@@ -80,7 +80,12 @@ class AuthService {
    * @returns {Promise<{public_key, fingerprint, expires_at}>}
    */
   async getMyPublicKey() {
-    const response = await apiClient.get('/users/me/public-key');
+    // Get current user ID from auth store
+    const { user } = useAuthStore.getState();
+    if (!user?.id) {
+      throw new Error('User not authenticated');
+    }
+    const response = await apiClient.get(`/users/${user.id}/public-key`);
     return response.data;
   }
 
@@ -109,6 +114,80 @@ class AuthService {
   async getCurrentUser() {
     const response = await apiClient.get('/users/me');
     return response.data;
+  }
+
+  /**
+   * Check public key expiry status
+   * @returns {Promise<Object>} - {isExpired, daysUntilExpiry, expiresAt, fingerprint}
+   */
+  async checkKeyExpiry() {
+    const user = useAuthStore.getState().user;
+    if (!user || !user.public_key_expires_at) {
+      return {
+        isExpired: true,
+        daysUntilExpiry: 0,
+        expiresAt: null,
+        fingerprint: null
+      };
+    }
+    
+    const expiresAt = new Date(user.public_key_expires_at);
+    const now = new Date();
+    const daysUntilExpiry = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+    
+    return {
+      isExpired: daysUntilExpiry <= 0,
+      daysUntilExpiry,
+      expiresAt: user.public_key_expires_at,
+      fingerprint: user.public_key_fingerprint
+    };
+  }
+
+  /**
+   * Get public key for a specific user (admin only)
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>}
+   */
+  async getPublicKey(userId) {
+    const response = await apiClient.get(`/users/${userId}/public-key`);
+    return response.data;
+  }
+
+  /**
+   * Register public key for a specific user (admin only)
+   * @param {string} userId - User ID
+   * @param {string} publicKey - PEM formatted public key
+   * @returns {Promise<Object>}
+   */
+  async registerPublicKeyForUser(userId, publicKey) {
+    const response = await apiClient.put(`/users/${userId}/public-key`, {
+      public_key: publicKey
+    });
+    return response.data;
+  }
+
+  /**
+   * Force password change for a user (admin only)
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>}
+   */
+  async forcePasswordChange(userId) {
+    const response = await apiClient.post(`/rotation/force-password-change/${userId}`);
+    return response.data;
+  }
+
+  /**
+   * Refresh authentication token
+   * @returns {Promise<string>} - New token
+   */
+  async refreshToken() {
+    const response = await apiClient.post('/auth/refresh');
+    const { token } = response.data;
+    
+    const user = useAuthStore.getState().user;
+    useAuthStore.getState().setAuth(user, token);
+    
+    return token;
   }
 }
 

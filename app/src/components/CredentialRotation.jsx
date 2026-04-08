@@ -1,0 +1,660 @@
+import React, { useState, useEffect } from 'react';
+import {
+  DataTable,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableHeader,
+  TableBody,
+  TableCell,
+  TableToolbar,
+  TableToolbarContent,
+  TableToolbarSearch,
+  TableSelectAll,
+  TableSelectRow,
+  Button,
+  InlineNotification,
+  Modal,
+  ProgressIndicator,
+  ProgressStep,
+  Tag,
+  Tile,
+  Loading,
+  Tabs,
+  TabList,
+  Tab,
+  TabPanels,
+  TabPanel
+} from '@carbon/react';
+import {
+  WarningAlt,
+  Renew,
+  TrashCan,
+  CheckmarkFilled,
+  ErrorFilled,
+  Time
+} from '@carbon/icons-react';
+import { useRotationStore } from '../store/rotationStore';
+import { useAuthStore } from '../store/authStore';
+import rotationService from '../services/rotationService';
+
+/**
+ * CredentialRotation Component
+ * Admin dashboard for monitoring and managing credential expiration
+ * Features: Expired credentials view, bulk operations, current user status
+ */
+const CredentialRotation = () => {
+  const {
+    expiredPasswords,
+    expiredKeys,
+    expiringPasswords,
+    expiringKeys,
+    loading,
+    error,
+    fetchRotationStatus
+  } = useRotationStore();
+  
+  const { user } = useAuthStore();
+  
+  // UI state
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedRows, setSelectedRows] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Modal state
+  const [showForceChangeModal, setShowForceChangeModal] = useState(false);
+  const [showRevokeModal, setShowRevokeModal] = useState(false);
+  const [operationInProgress, setOperationInProgress] = useState(false);
+  const [operationResult, setOperationResult] = useState(null);
+  
+  // Current user status
+  const [userStatus, setUserStatus] = useState(null);
+  
+  useEffect(() => {
+    loadData();
+  }, []);
+  
+  const loadData = async () => {
+    await fetchRotationStatus();
+    await loadUserStatus();
+  };
+  
+  const loadUserStatus = async () => {
+    try {
+      const status = await rotationService.getCurrentUserStatus();
+      setUserStatus(status);
+    } catch (err) {
+      console.error('Failed to load user status:', err);
+    }
+  };
+  
+  const handleForcePasswordChange = async () => {
+    setOperationInProgress(true);
+    setOperationResult(null);
+    
+    try {
+      const userIds = selectedRows.map(row => row.id);
+      const result = await rotationService.bulkForcePasswordChange(userIds);
+      
+      setOperationResult({
+        success: true,
+        message: `Successfully forced password change for ${result.affected} user(s)`
+      });
+      
+      // Refresh data
+      await loadData();
+      setSelectedRows([]);
+      setShowForceChangeModal(false);
+    } catch (err) {
+      setOperationResult({
+        success: false,
+        message: `Failed to force password change: ${err.message}`
+      });
+    } finally {
+      setOperationInProgress(false);
+    }
+  };
+  
+  const handleRevokeKeys = async () => {
+    setOperationInProgress(true);
+    setOperationResult(null);
+    
+    try {
+      const userIds = selectedRows.map(row => row.id);
+      const result = await rotationService.bulkRevokeKeys(userIds);
+      
+      setOperationResult({
+        success: true,
+        message: `Successfully revoked keys for ${result.affected} user(s)`
+      });
+      
+      // Refresh data
+      await loadData();
+      setSelectedRows([]);
+      setShowRevokeModal(false);
+    } catch (err) {
+      setOperationResult({
+        success: false,
+        message: `Failed to revoke keys: ${err.message}`
+      });
+    } finally {
+      setOperationInProgress(false);
+    }
+  };
+  
+  const getStatusTag = (daysUntilExpiry) => {
+    if (daysUntilExpiry < 0) {
+      return <Tag type="red" renderIcon={ErrorFilled}>Expired</Tag>;
+    } else if (daysUntilExpiry <= 7) {
+      return <Tag type="red" renderIcon={WarningAlt}>Critical</Tag>;
+    } else if (daysUntilExpiry <= 30) {
+      return <Tag type="yellow" renderIcon={Time}>Warning</Tag>;
+    } else {
+      return <Tag type="green" renderIcon={CheckmarkFilled}>Good</Tag>;
+    }
+  };
+  
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString();
+  };
+  
+  const getDaysUntilExpiry = (expiryDate) => {
+    const now = new Date();
+    const expiry = new Date(expiryDate);
+    const diffTime = expiry - now;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+  
+  const filterRows = (rows) => {
+    if (!searchTerm) return rows;
+    
+    return rows.filter(row =>
+      row.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      row.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      row.full_name?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  };
+  
+  const renderPasswordTable = (data, title) => {
+    const headers = [
+      { key: 'username', header: 'Username' },
+      { key: 'full_name', header: 'Full Name' },
+      { key: 'email', header: 'Email' },
+      { key: 'password_expires_at', header: 'Expires At' },
+      { key: 'days_until_expiry', header: 'Days Until Expiry' },
+      { key: 'status', header: 'Status' }
+    ];
+    
+    const rows = filterRows(data).map(item => ({
+      id: item.user_id,
+      username: item.username,
+      full_name: item.full_name,
+      email: item.email,
+      password_expires_at: formatDate(item.password_expires_at),
+      days_until_expiry: item.days_until_expiry,
+      status: getStatusTag(item.days_until_expiry)
+    }));
+    
+    return (
+      <DataTable rows={rows} headers={headers}>
+        {({
+          rows,
+          headers,
+          getHeaderProps,
+          getRowProps,
+          getSelectionProps,
+          getTableProps,
+          getTableContainerProps,
+          selectRow
+        }) => (
+          <TableContainer title={title} {...getTableContainerProps()}>
+            <TableToolbar>
+              <TableToolbarContent>
+                <TableToolbarSearch
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search users..."
+                />
+                <Button
+                  kind="danger"
+                  renderIcon={Renew}
+                  onClick={() => setShowForceChangeModal(true)}
+                  disabled={selectedRows.length === 0}
+                >
+                  Force Password Change ({selectedRows.length})
+                </Button>
+              </TableToolbarContent>
+            </TableToolbar>
+            <Table {...getTableProps()}>
+              <TableHead>
+                <TableRow>
+                  <TableSelectAll {...getSelectionProps()} />
+                  {headers.map((header) => (
+                    <TableHeader {...getHeaderProps({ header })}>
+                      {header.header}
+                    </TableHeader>
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.map((row) => (
+                  <TableRow {...getRowProps({ row })}>
+                    <TableSelectRow
+                      {...getSelectionProps({ row })}
+                      onChange={(checked) => {
+                        if (checked) {
+                          setSelectedRows([...selectedRows, row]);
+                        } else {
+                          setSelectedRows(selectedRows.filter(r => r.id !== row.id));
+                        }
+                      }}
+                    />
+                    {row.cells.map((cell) => (
+                      <TableCell key={cell.id}>{cell.value}</TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </DataTable>
+    );
+  };
+  
+  const renderKeyTable = (data, title) => {
+    const headers = [
+      { key: 'username', header: 'Username' },
+      { key: 'full_name', header: 'Full Name' },
+      { key: 'email', header: 'Email' },
+      { key: 'key_fingerprint', header: 'Key Fingerprint' },
+      { key: 'key_expires_at', header: 'Expires At' },
+      { key: 'days_until_expiry', header: 'Days Until Expiry' },
+      { key: 'status', header: 'Status' }
+    ];
+    
+    const rows = filterRows(data).map(item => ({
+      id: item.user_id,
+      username: item.username,
+      full_name: item.full_name,
+      email: item.email,
+      key_fingerprint: item.key_fingerprint?.substring(0, 16) + '...',
+      key_expires_at: formatDate(item.key_expires_at),
+      days_until_expiry: item.days_until_expiry,
+      status: getStatusTag(item.days_until_expiry)
+    }));
+    
+    return (
+      <DataTable rows={rows} headers={headers}>
+        {({
+          rows,
+          headers,
+          getHeaderProps,
+          getRowProps,
+          getSelectionProps,
+          getTableProps,
+          getTableContainerProps
+        }) => (
+          <TableContainer title={title} {...getTableContainerProps()}>
+            <TableToolbar>
+              <TableToolbarContent>
+                <TableToolbarSearch
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search users..."
+                />
+                <Button
+                  kind="danger"
+                  renderIcon={TrashCan}
+                  onClick={() => setShowRevokeModal(true)}
+                  disabled={selectedRows.length === 0}
+                >
+                  Revoke Keys ({selectedRows.length})
+                </Button>
+              </TableToolbarContent>
+            </TableToolbar>
+            <Table {...getTableProps()}>
+              <TableHead>
+                <TableRow>
+                  <TableSelectAll {...getSelectionProps()} />
+                  {headers.map((header) => (
+                    <TableHeader {...getHeaderProps({ header })}>
+                      {header.header}
+                    </TableHeader>
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.map((row) => (
+                  <TableRow {...getRowProps({ row })}>
+                    <TableSelectRow
+                      {...getSelectionProps({ row })}
+                      onChange={(checked) => {
+                        if (checked) {
+                          setSelectedRows([...selectedRows, row]);
+                        } else {
+                          setSelectedRows(selectedRows.filter(r => r.id !== row.id));
+                        }
+                      }}
+                    />
+                    {row.cells.map((cell) => (
+                      <TableCell key={cell.id}>{cell.value}</TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </DataTable>
+    );
+  };
+  
+  const renderUserStatus = () => {
+    if (!userStatus) return null;
+    
+    const passwordDays = getDaysUntilExpiry(userStatus.password_expires_at);
+    const keyDays = userStatus.key_expires_at ? getDaysUntilExpiry(userStatus.key_expires_at) : null;
+    
+    return (
+      <Tile className="user-status">
+        <h5>Your Credential Status</h5>
+        
+        <div className="status-grid">
+          <div className="status-item">
+            <div className="status-header">
+              <span className="status-label">Password</span>
+              {getStatusTag(passwordDays)}
+            </div>
+            <div className="status-details">
+              <span>Expires: {formatDate(userStatus.password_expires_at)}</span>
+              <span className="days-count">
+                {passwordDays < 0 ? 'Expired' : `${passwordDays} days remaining`}
+              </span>
+            </div>
+            {passwordDays <= 30 && (
+              <InlineNotification
+                kind={passwordDays < 0 ? 'error' : 'warning'}
+                title={passwordDays < 0 ? 'Password Expired' : 'Password Expiring Soon'}
+                subtitle="Please change your password in Account Settings"
+                lowContrast
+                hideCloseButton
+              />
+            )}
+          </div>
+          
+          {userStatus.key_fingerprint && (
+            <div className="status-item">
+              <div className="status-header">
+                <span className="status-label">Public Key</span>
+                {getStatusTag(keyDays)}
+              </div>
+              <div className="status-details">
+                <span>Expires: {formatDate(userStatus.key_expires_at)}</span>
+                <span className="days-count">
+                  {keyDays < 0 ? 'Expired' : `${keyDays} days remaining`}
+                </span>
+                <span className="fingerprint">
+                  Fingerprint: {userStatus.key_fingerprint.substring(0, 16)}...
+                </span>
+              </div>
+              {keyDays <= 30 && (
+                <InlineNotification
+                  kind={keyDays < 0 ? 'error' : 'warning'}
+                  title={keyDays < 0 ? 'Key Expired' : 'Key Expiring Soon'}
+                  subtitle="Please rotate your public key in Account Settings"
+                  lowContrast
+                  hideCloseButton
+                />
+              )}
+            </div>
+          )}
+        </div>
+      </Tile>
+    );
+  };
+  
+  const renderSummaryStats = () => {
+    const totalExpired = expiredPasswords.length + expiredKeys.length;
+    const totalExpiring = expiringPasswords.length + expiringKeys.length;
+    
+    return (
+      <div className="summary-stats">
+        <Tile className="stat-tile critical">
+          <div className="stat-value">{totalExpired}</div>
+          <div className="stat-label">Expired Credentials</div>
+        </Tile>
+        <Tile className="stat-tile warning">
+          <div className="stat-value">{totalExpiring}</div>
+          <div className="stat-label">Expiring Soon (30 days)</div>
+        </Tile>
+        <Tile className="stat-tile">
+          <div className="stat-value">{expiredPasswords.length}</div>
+          <div className="stat-label">Expired Passwords</div>
+        </Tile>
+        <Tile className="stat-tile">
+          <div className="stat-value">{expiredKeys.length}</div>
+          <div className="stat-label">Expired Keys</div>
+        </Tile>
+      </div>
+    );
+  };
+  
+  return (
+    <div className="credential-rotation">
+      {error && (
+        <InlineNotification
+          kind="error"
+          title="Error"
+          subtitle={error}
+          lowContrast
+        />
+      )}
+      
+      {operationResult && (
+        <InlineNotification
+          kind={operationResult.success ? 'success' : 'error'}
+          title={operationResult.success ? 'Success' : 'Error'}
+          subtitle={operationResult.message}
+          onCloseButtonClick={() => setOperationResult(null)}
+          lowContrast
+        />
+      )}
+      
+      <div className="rotation-header">
+        <h3>Credential Rotation Management</h3>
+        <Button
+          kind="tertiary"
+          renderIcon={Renew}
+          onClick={loadData}
+          disabled={loading}
+        >
+          Refresh
+        </Button>
+      </div>
+      
+      {renderUserStatus()}
+      {renderSummaryStats()}
+      
+      {loading ? (
+        <Loading description="Loading credential data..." withOverlay={false} />
+      ) : (
+        <Tabs selectedIndex={selectedTab} onChange={({ selectedIndex }) => {
+          setSelectedTab(selectedIndex);
+          setSelectedRows([]);
+          setSearchTerm('');
+        }}>
+          <TabList aria-label="Credential rotation tabs">
+            <Tab>Expired Passwords ({expiredPasswords.length})</Tab>
+            <Tab>Expiring Passwords ({expiringPasswords.length})</Tab>
+            <Tab>Expired Keys ({expiredKeys.length})</Tab>
+            <Tab>Expiring Keys ({expiringKeys.length})</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel>
+              {renderPasswordTable(expiredPasswords, 'Expired Passwords')}
+            </TabPanel>
+            <TabPanel>
+              {renderPasswordTable(expiringPasswords, 'Expiring Passwords (Next 30 Days)')}
+            </TabPanel>
+            <TabPanel>
+              {renderKeyTable(expiredKeys, 'Expired Public Keys')}
+            </TabPanel>
+            <TabPanel>
+              {renderKeyTable(expiringKeys, 'Expiring Public Keys (Next 30 Days)')}
+            </TabPanel>
+          </TabPanels>
+        </Tabs>
+      )}
+      
+      {/* Force Password Change Modal */}
+      <Modal
+        open={showForceChangeModal}
+        onRequestClose={() => !operationInProgress && setShowForceChangeModal(false)}
+        modalHeading="Force Password Change"
+        primaryButtonText="Force Change"
+        secondaryButtonText="Cancel"
+        onRequestSubmit={handleForcePasswordChange}
+        onSecondarySubmit={() => setShowForceChangeModal(false)}
+        danger
+        primaryButtonDisabled={operationInProgress}
+      >
+        <p>
+          Are you sure you want to force password change for {selectedRows.length} user(s)?
+          This will immediately expire their passwords and require them to change it on next login.
+        </p>
+        {operationInProgress && (
+          <ProgressIndicator>
+            <ProgressStep label="Processing..." />
+          </ProgressIndicator>
+        )}
+      </Modal>
+      
+      {/* Revoke Keys Modal */}
+      <Modal
+        open={showRevokeModal}
+        onRequestClose={() => !operationInProgress && setShowRevokeModal(false)}
+        modalHeading="Revoke Public Keys"
+        primaryButtonText="Revoke Keys"
+        secondaryButtonText="Cancel"
+        onRequestSubmit={handleRevokeKeys}
+        onSecondarySubmit={() => setShowRevokeModal(false)}
+        danger
+        primaryButtonDisabled={operationInProgress}
+      >
+        <p>
+          Are you sure you want to revoke public keys for {selectedRows.length} user(s)?
+          This will immediately invalidate their keys and prevent them from signing contracts
+          until they register a new key.
+        </p>
+        {operationInProgress && (
+          <ProgressIndicator>
+            <ProgressStep label="Processing..." />
+          </ProgressIndicator>
+        )}
+      </Modal>
+      
+      <style>{`
+        .credential-rotation {
+          padding: 1rem;
+        }
+        
+        .rotation-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1.5rem;
+        }
+        
+        .rotation-header h3 {
+          margin: 0;
+        }
+        
+        .user-status {
+          margin-bottom: 1.5rem;
+          padding: 1.5rem;
+        }
+        
+        .user-status h5 {
+          margin-bottom: 1rem;
+        }
+        
+        .status-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+          gap: 1.5rem;
+        }
+        
+        .status-item {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+        
+        .status-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        
+        .status-label {
+          font-weight: 600;
+          font-size: 1rem;
+        }
+        
+        .status-details {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+          font-size: 0.875rem;
+          color: var(--cds-text-secondary);
+        }
+        
+        .days-count {
+          font-weight: 600;
+          color: var(--cds-text-primary);
+        }
+        
+        .fingerprint {
+          font-family: monospace;
+          font-size: 0.75rem;
+        }
+        
+        .summary-stats {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 1rem;
+          margin-bottom: 1.5rem;
+        }
+        
+        .stat-tile {
+          padding: 1.5rem;
+          text-align: center;
+        }
+        
+        .stat-tile.critical {
+          border-left: 4px solid var(--cds-support-error);
+        }
+        
+        .stat-tile.warning {
+          border-left: 4px solid var(--cds-support-warning);
+        }
+        
+        .stat-value {
+          font-size: 2.5rem;
+          font-weight: 600;
+          margin-bottom: 0.5rem;
+        }
+        
+        .stat-label {
+          font-size: 0.875rem;
+          color: var(--cds-text-secondary);
+        }
+      `}</style>
+    </div>
+  );
+};
+
+export default CredentialRotation;
+
+// Made with Bob
