@@ -195,5 +195,3 @@ func (s *RotationService) RevokeExpiredPublicKey(ctx context.Context, userID str
 	}
 	return nil
 }
-
-// Made with Bob

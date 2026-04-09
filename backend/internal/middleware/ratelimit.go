@@ -118,5 +118,3 @@ func AuthRateLimit() func(http.Handler) http.Handler {
 	authLimiter := NewRateLimiter(rate.Every(12*time.Second), 3, 10*time.Minute)
 	return authLimiter.Limit()
 }
-
-// Made with Bob

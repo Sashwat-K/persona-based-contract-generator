@@ -207,5 +207,3 @@ func (h *AssignmentHandler) DeleteBuildAssignments(w http.ResponseWriter, r *htt
 
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// Made with Bob

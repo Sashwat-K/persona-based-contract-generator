@@ -208,5 +208,3 @@ func (s *ExportService) GetUserData(ctx context.Context, buildID, userID uuid.UU
 		BuildID:      buildID.String(),
 	}, nil
 }
-
-// Made with Bob

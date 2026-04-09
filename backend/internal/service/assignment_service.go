@@ -210,5 +210,3 @@ func (s *AssignmentService) ValidateAssignmentForSubmission(ctx context.Context,
 
 	return nil
 }
-
-// Made with Bob

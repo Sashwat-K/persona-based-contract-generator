@@ -71,5 +71,3 @@ func (h *RotationHandler) RevokeExpiredPublicKey(w http.ResponseWriter, r *http.
 		"message": "Public key revoked successfully",
 	})
 }
-
-// Made with Bob

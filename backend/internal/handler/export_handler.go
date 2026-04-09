@@ -269,5 +269,3 @@ func (h *ExportHandler) VerifyContractIntegrity(w http.ResponseWriter, r *http.R
 
 	writeJSON(w, http.StatusOK, result)
 }
-
-// Made with Bob
