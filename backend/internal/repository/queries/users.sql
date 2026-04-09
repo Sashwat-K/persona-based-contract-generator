@@ -70,3 +70,21 @@ UPDATE users
 SET name = $2, email = $3
 WHERE id = $1
 RETURNING id, name, email, is_active, created_at, must_change_password, password_changed_at;
+
+-- name: RevokePublicKey :exec
+UPDATE users
+SET public_key = NULL,
+    public_key_fingerprint = NULL,
+    public_key_registered_at = NULL,
+    public_key_expires_at = NULL
+WHERE id = $1;
+
+-- name: ReactivateUser :exec
+UPDATE users SET is_active = true WHERE id = $1;
+
+-- name: AdminResetPassword :exec
+UPDATE users
+SET password_hash = $2,
+    must_change_password = true,
+    password_changed_at = NOW()
+WHERE id = $1;

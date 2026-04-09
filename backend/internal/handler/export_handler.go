@@ -127,7 +127,7 @@ func (h *ExportHandler) AcknowledgeDownload(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Get user's public key
-	publicKey, _, err := h.userService.GetPublicKey(ctx, userID)
+	publicKey, _, _, _, err := h.userService.GetPublicKey(r.Context(), userID)
 	if err != nil {
 		writeError(w, model.ErrInvalidRequest("User must have a registered public key"))
 		return

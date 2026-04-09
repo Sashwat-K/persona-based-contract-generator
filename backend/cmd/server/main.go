@@ -62,20 +62,22 @@ func main() {
 	verificationService := service.NewVerificationService(queries)
 	exportService := service.NewExportService(queries, auditService, assignmentService)
 	rotationService := service.NewRotationService(queries)
+	systemLogService := service.NewSystemLogService(queries)
 
 	// Initialize handlers
 	auditHandler := handler.NewAuditHandler(auditService)
 	assignmentHandler := handler.NewAssignmentHandler(assignmentService)
 	sectionHandler := handler.NewSectionHandler(sectionService)
 	buildHandler := handler.NewBuildHandler(buildService)
-	authHandler := handler.NewAuthHandler(authService)
-	userHandler := handler.NewUserHandler(userService)
+	authHandler := handler.NewAuthHandler(authService, systemLogService)
+	userHandler := handler.NewUserHandler(userService, systemLogService)
 	exportHandler := handler.NewExportHandler(exportService, verificationService, userService)
 	rotationHandler := handler.NewRotationHandler(rotationService)
 	swaggerHandler := handler.NewSwaggerHandler()
+	systemLogHandler := handler.NewSystemLogHandler(systemLogService)
 
 	// Build router
-	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler, assignmentHandler, exportHandler, rotationHandler, swaggerHandler)
+	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler, assignmentHandler, exportHandler, rotationHandler, swaggerHandler, systemLogHandler)
 
 	// Start credential rotation monitor (checks every 24 hours)
 	monitorCtx, cancelMonitor := context.WithCancel(ctx)
@@ -136,6 +138,7 @@ func buildRouter(
 	exportHandler *handler.ExportHandler,
 	rotationHandler *handler.RotationHandler,
 	swaggerHandler *handler.SwaggerHandler,
+	systemLogHandler *handler.SystemLogHandler,
 ) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -171,6 +174,7 @@ func buildRouter(
 			r.With(middleware.RequireRole("ADMIN")).Post("/", userHandler.CreateUser)
 			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}", userHandler.UpdateUserProfile)
 			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}/roles", userHandler.UpdateRoles)
+			r.With(middleware.RequireRole("ADMIN")).Delete("/{id}", userHandler.DeactivateUser)
 
 			// Public key management (owner or ADMIN)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Put("/{id}/public-key", userHandler.RegisterPublicKey)
@@ -179,6 +183,12 @@ func buildRouter(
 			// Password management (owner or ADMIN)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Patch("/{id}/password", userHandler.ChangePassword)
 
+			// Reactivation (ADMIN only)
+			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}/reactivate", userHandler.ReactivateUser)
+
+			// Admin password reset (ADMIN only)
+			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}/reset-password", userHandler.AdminResetPassword)
+
 			// Token management (ADMIN or owner)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Get("/{id}/tokens", userHandler.ListTokens)
 			r.With(middleware.RequireOwnerOrAdmin("id")).Post("/{id}/tokens", userHandler.CreateToken)
@@ -186,6 +196,12 @@ func buildRouter(
 
 			// User assignments (any authenticated user can view their own)
 			r.Get("/{id}/assignments", assignmentHandler.GetUserAssignments)
+		})
+
+		// System Logs (admin & auditor)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireRole("ADMIN", "AUDITOR"))
+			r.Get("/system-logs", systemLogHandler.ListSystemLogs)
 		})
 
 		// Builds management

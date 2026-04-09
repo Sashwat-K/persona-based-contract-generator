@@ -7,6 +7,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"time"
+
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
@@ -28,12 +30,15 @@ func NewUserService(queries repository.Querier, bcryptCost int) *UserService {
 
 // UserWithRoles represents a user with their assigned roles.
 type UserWithRoles struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	Roles     []string  `json:"roles"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt string    `json:"created_at"`
+	ID                     uuid.UUID `json:"id"`
+	Name                   string    `json:"name"`
+	Email                  string    `json:"email"`
+	Roles                  []string  `json:"roles"`
+	IsActive               bool      `json:"is_active"`
+	CreatedAt              string    `json:"created_at"`
+	MustChangePassword     bool      `json:"must_change_password"`
+	PublicKeyFingerprint   *string   `json:"public_key_fingerprint"`
+	PublicKeyExpiresAt     *string   `json:"public_key_expires_at"`
 }
 
 // ListUsers returns all users with their roles. ADMIN only.
@@ -55,13 +60,27 @@ func (s *UserService) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 			roleStrings[i] = r.Role
 		}
 
+		var fingerprint *string
+		if u.PublicKeyFingerprint != nil {
+			fingerprint = u.PublicKeyFingerprint
+		}
+
+		var expiresAt *string
+		if u.PublicKeyExpiresAt.Valid {
+			tStr := u.PublicKeyExpiresAt.Time.Format(time.RFC3339)
+			expiresAt = &tStr
+		}
+
 		result = append(result, UserWithRoles{
-			ID:        u.ID,
-			Name:      u.Name,
-			Email:     u.Email,
-			Roles:     roleStrings,
-			IsActive:  u.IsActive,
-			CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:                   u.ID,
+			Name:                 u.Name,
+			Email:                u.Email,
+			Roles:                roleStrings,
+			IsActive:             u.IsActive,
+			CreatedAt:            u.CreatedAt.Format(time.RFC3339),
+			MustChangePassword:   u.MustChangePassword,
+			PublicKeyFingerprint: fingerprint,
+			PublicKeyExpiresAt:   expiresAt,
 		})
 	}
 
@@ -158,6 +177,15 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, userID uuid.UUID, n
 		IsActive:  user.IsActive,
 		CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}, nil
+}
+
+// DeactivateUser disables a user making them unable to log in
+func (s *UserService) DeactivateUser(ctx context.Context, userID uuid.UUID) error {
+	err := s.queries.DeactivateUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to deactivate user: %w", err)
+	}
+	return nil
 }
 
 // UpdateRoles replaces all roles for a user.
@@ -300,14 +328,14 @@ func (s *UserService) RegisterPublicKey(ctx context.Context, userID uuid.UUID, p
 }
 
 // GetPublicKey retrieves a user's public key by user ID.
-func (s *UserService) GetPublicKey(ctx context.Context, userID uuid.UUID) (string, string, error) {
+func (s *UserService) GetPublicKey(ctx context.Context, userID uuid.UUID) (string, string, *time.Time, *time.Time, error) {
 	user, err := s.queries.GetUserByID(ctx, userID)
 	if err != nil {
-		return "", "", fmt.Errorf("user not found: %w", err)
+		return "", "", nil, nil, fmt.Errorf("user not found: %w", err)
 	}
 
 	if user.PublicKey == nil {
-		return "", "", fmt.Errorf("user has not registered a public key")
+		return "", "", nil, nil, fmt.Errorf("user has not registered a public key")
 	}
 
 	fingerprint := ""
@@ -315,7 +343,19 @@ func (s *UserService) GetPublicKey(ctx context.Context, userID uuid.UUID) (strin
 		fingerprint = *user.PublicKeyFingerprint
 	}
 
-	return *user.PublicKey, fingerprint, nil
+	var registeredAt *time.Time
+	if user.PublicKeyRegisteredAt.Valid {
+		t := user.PublicKeyRegisteredAt.Time
+		registeredAt = &t
+	}
+
+	var expiresAt *time.Time
+	if user.PublicKeyExpiresAt.Valid {
+		t := user.PublicKeyExpiresAt.Time
+		expiresAt = &t
+	}
+
+	return *user.PublicKey, fingerprint, registeredAt, expiresAt, nil
 }
 
 // ChangePassword changes a user's password and clears the must_change_password flag.
@@ -333,6 +373,46 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, newP
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	return nil
+}
+
+// ReactivateUser sets a deactivated user back to active.
+func (s *UserService) ReactivateUser(ctx context.Context, userID uuid.UUID) error {
+	// Verify user exists
+	_, err := s.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+
+	if err := s.queries.ReactivateUser(ctx, userID); err != nil {
+		return fmt.Errorf("failed to reactivate user: %w", err)
+	}
+	return nil
+}
+
+// AdminResetPassword allows an admin to set a new password for a user.
+// The user will be forced to change it on next login.
+func (s *UserService) AdminResetPassword(ctx context.Context, userID uuid.UUID, newPassword string) error {
+	// Verify user exists
+	_, err := s.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+
+	// Hash the new password
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.bcryptCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	err = s.queries.AdminResetPassword(ctx, repository.AdminResetPasswordParams{
+		ID:           userID,
+		PasswordHash: string(hash),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to reset password: %w", err)
 	}
 
 	return nil

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	"github.com/google/uuid"
 )
 
 // RotationService handles credential rotation and expiry checks.
@@ -169,16 +170,30 @@ func (s *RotationService) StartRotationMonitor(ctx context.Context, checkInterva
 
 // ForcePasswordChange marks a user's password as requiring change.
 func (s *RotationService) ForcePasswordChange(ctx context.Context, userID string) error {
-	// This would require a new query to update must_change_password flag
-	// For now, return a placeholder
-	return fmt.Errorf("not implemented: force password change")
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return fmt.Errorf("invalid user id: %w", err)
+	}
+
+	err = s.queries.ForcePasswordChange(ctx, userUUID)
+	if err != nil {
+		return fmt.Errorf("failed to force password change: %w", err)
+	}
+	return nil
 }
 
 // RevokeExpiredPublicKey revokes an expired public key.
 func (s *RotationService) RevokeExpiredPublicKey(ctx context.Context, userID string) error {
-	// This would require a new query to clear the public key
-	// For now, return a placeholder
-	return fmt.Errorf("not implemented: revoke expired public key")
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return fmt.Errorf("invalid user id: %w", err)
+	}
+
+	err = s.queries.RevokePublicKey(ctx, userUUID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke public key: %w", err)
+	}
+	return nil
 }
 
 // Made with Bob
