@@ -32,17 +32,17 @@ class KeyStorage {
     const machineKey = crypto.createHash('sha256')
       .update(app.getPath('userData'))
       .digest();
-    
+
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', machineKey, iv);
-    
+
     const encrypted = Buffer.concat([
       cipher.update(Buffer.from(data)),
       cipher.final()
     ]);
-    
+
     const authTag = cipher.getAuthTag();
-    
+
     return {
       encrypted: encrypted.toString('base64'),
       iv: iv.toString('base64'),
@@ -59,14 +59,14 @@ class KeyStorage {
     const machineKey = crypto.createHash('sha256')
       .update(app.getPath('userData'))
       .digest();
-    
+
     const iv = Buffer.from(encryptedData.iv, 'base64');
     const authTag = Buffer.from(encryptedData.authTag, 'base64');
     const encrypted = Buffer.from(encryptedData.encrypted, 'base64');
-    
+
     const decipher = crypto.createDecipheriv('aes-256-gcm', machineKey, iv);
     decipher.setAuthTag(authTag);
-    
+
     return Buffer.concat([
       decipher.update(encrypted),
       decipher.final()
@@ -80,10 +80,10 @@ class KeyStorage {
    */
   async storePrivateKey(userId, privateKeyPem) {
     await this.ensureStorageDir();
-    
+
     const encrypted = this.encryptData(privateKeyPem);
     const keyPath = path.join(this.storageDir, `${userId}-identity.key`);
-    
+
     await fs.writeFile(keyPath, JSON.stringify(encrypted), 'utf8');
   }
 
@@ -97,7 +97,7 @@ class KeyStorage {
       const keyPath = path.join(this.storageDir, `${userId}-identity.key`);
       const encryptedData = await fs.readFile(keyPath, 'utf8');
       const parsed = JSON.parse(encryptedData);
-      
+
       return this.decryptData(parsed);
     } catch (error) {
       if (error.code === 'ENOENT') {
@@ -140,4 +140,4 @@ class KeyStorage {
 
 module.exports = new KeyStorage();
 
-// Made with Bob
+

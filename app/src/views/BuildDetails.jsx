@@ -61,11 +61,11 @@ const BuildDetails = ({ buildId, onBack }) => {
       </Breadcrumb>
 
       {/* Header */}
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: '2rem' 
+        marginBottom: '2rem'
       }}>
         <div>
           <h1 style={{ marginBottom: '0.5rem' }}>{build.name}</h1>
@@ -89,7 +89,7 @@ const BuildDetails = ({ buildId, onBack }) => {
           <Tab>Export Contract</Tab>
           <Tab>Audit Trail</Tab>
         </TabList>
-        
+
         <TabPanels>
           {/* Build Assignments Tab */}
           {canManageAssignments && (
@@ -103,7 +103,7 @@ const BuildDetails = ({ buildId, onBack }) => {
               </div>
             </TabPanel>
           )}
-          
+
           {/* Contract Export Tab */}
           <TabPanel>
             <div style={{ padding: '2rem 0' }}>
@@ -114,7 +114,7 @@ const BuildDetails = ({ buildId, onBack }) => {
               </Grid>
             </div>
           </TabPanel>
-          
+
           {/* Audit Trail Tab */}
           <TabPanel>
             <div style={{ padding: '2rem 0' }}>
@@ -133,4 +133,4 @@ const BuildDetails = ({ buildId, onBack }) => {
 
 export default BuildDetails;
 
-// Made with Bob
+

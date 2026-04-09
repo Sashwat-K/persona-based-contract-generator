@@ -68,13 +68,13 @@ const ConfirmDialog = ({
  * Preset confirmation dialogs for common actions
  */
 
-export const DeleteConfirmDialog = ({ 
-  open, 
-  itemName, 
+export const DeleteConfirmDialog = ({
+  open,
+  itemName,
   itemType = 'item',
-  onConfirm, 
+  onConfirm,
   onCancel,
-  loading = false 
+  loading = false
 }) => (
   <ConfirmDialog
     open={open}
@@ -89,12 +89,12 @@ export const DeleteConfirmDialog = ({
   />
 );
 
-export const RevokeConfirmDialog = ({ 
-  open, 
-  itemName, 
-  onConfirm, 
+export const RevokeConfirmDialog = ({
+  open,
+  itemName,
+  onConfirm,
   onCancel,
-  loading = false 
+  loading = false
 }) => (
   <ConfirmDialog
     open={open}
@@ -109,11 +109,11 @@ export const RevokeConfirmDialog = ({
   />
 );
 
-export const RotateKeyConfirmDialog = ({ 
-  open, 
-  onConfirm, 
+export const RotateKeyConfirmDialog = ({
+  open,
+  onConfirm,
   onCancel,
-  loading = false 
+  loading = false
 }) => (
   <ConfirmDialog
     open={open}
@@ -144,12 +144,12 @@ export const RotateKeyConfirmDialog = ({
   </ConfirmDialog>
 );
 
-export const FinalizeContractConfirmDialog = ({ 
-  open, 
+export const FinalizeContractConfirmDialog = ({
+  open,
   buildName,
-  onConfirm, 
+  onConfirm,
   onCancel,
-  loading = false 
+  loading = false
 }) => (
   <ConfirmDialog
     open={open}
@@ -181,13 +181,13 @@ export const FinalizeContractConfirmDialog = ({
   </ConfirmDialog>
 );
 
-export const BulkActionConfirmDialog = ({ 
-  open, 
+export const BulkActionConfirmDialog = ({
+  open,
   action,
   count,
-  onConfirm, 
+  onConfirm,
   onCancel,
-  loading = false 
+  loading = false
 }) => (
   <ConfirmDialog
     open={open}
@@ -202,13 +202,13 @@ export const BulkActionConfirmDialog = ({
   />
 );
 
-export const RemoveAssignmentConfirmDialog = ({ 
-  open, 
+export const RemoveAssignmentConfirmDialog = ({
+  open,
   userName,
   buildName,
-  onConfirm, 
+  onConfirm,
   onCancel,
-  loading = false 
+  loading = false
 }) => (
   <ConfirmDialog
     open={open}
@@ -223,14 +223,14 @@ export const RemoveAssignmentConfirmDialog = ({
   />
 );
 
-export const ChangeRoleConfirmDialog = ({ 
-  open, 
+export const ChangeRoleConfirmDialog = ({
+  open,
   userName,
   oldRole,
   newRole,
-  onConfirm, 
+  onConfirm,
   onCancel,
-  loading = false 
+  loading = false
 }) => (
   <ConfirmDialog
     open={open}
@@ -258,4 +258,4 @@ export const ChangeRoleConfirmDialog = ({
 
 export default ConfirmDialog;
 
-// Made with Bob
+

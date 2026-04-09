@@ -24,10 +24,10 @@ export const FullPageLoader = ({ description = 'Loading...' }) => {
   );
 };
 
-export const InlineLoader = ({ 
-  description = 'Loading...', 
+export const InlineLoader = ({
+  description = 'Loading...',
   status = 'active',
-  successDelay = 1500 
+  successDelay = 1500
 }) => {
   return (
     <InlineLoading
@@ -71,8 +71,8 @@ export const TableSkeletonLoader = ({ rows = 5, columns = 4 }) => {
   return (
     <div style={{ width: '100%' }}>
       {/* Header */}
-      <div style={{ 
-        display: 'grid', 
+      <div style={{
+        display: 'grid',
         gridTemplateColumns: `repeat(${columns}, 1fr)`,
         gap: '1rem',
         marginBottom: '1rem',
@@ -90,13 +90,13 @@ export const TableSkeletonLoader = ({ rows = 5, columns = 4 }) => {
           />
         ))}
       </div>
-      
+
       {/* Rows */}
       {Array.from({ length: rows }).map((_, rowIndex) => (
         <div
           key={`row-${rowIndex}`}
-          style={{ 
-            display: 'grid', 
+          style={{
+            display: 'grid',
             gridTemplateColumns: `repeat(${columns}, 1fr)`,
             gap: '1rem',
             marginBottom: '0.5rem',
@@ -124,8 +124,8 @@ export const TableSkeletonLoader = ({ rows = 5, columns = 4 }) => {
 
 export const CardSkeletonLoader = ({ count = 3 }) => {
   return (
-    <div style={{ 
-      display: 'grid', 
+    <div style={{
+      display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
       gap: '1rem',
       width: '100%'
@@ -151,7 +151,7 @@ export const CardSkeletonLoader = ({ count = 3 }) => {
               animation: 'skeleton-loading 1.5s ease-in-out infinite'
             }}
           />
-          
+
           {/* Content lines */}
           {Array.from({ length: 3 }).map((_, lineIndex) => (
             <div
@@ -181,4 +181,4 @@ export default {
   CardSkeletonLoader
 };
 
-// Made with Bob
+

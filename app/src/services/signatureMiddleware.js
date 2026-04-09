@@ -16,19 +16,19 @@ class SignatureMiddleware {
   async signRequest(method, url, data) {
     const user = useAuthStore.getState().user;
     if (!user) return {};
-    
+
     // Only sign mutating requests
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase())) {
       return {};
     }
-    
+
     // Get private key
     const privateKey = await cryptoService.getPrivateKey(user.id);
     if (!privateKey) {
       console.warn('Private key not found, request will not be signed');
       return {};
     }
-    
+
     // Compute request hash
     const timestamp = Date.now();
     const payload = JSON.stringify({
@@ -37,12 +37,12 @@ class SignatureMiddleware {
       data: data || null,
       timestamp
     });
-    
+
     const hash = await cryptoService.hash(payload);
-    
+
     // Sign hash
     const signature = await cryptoService.sign(hash, privateKey);
-    
+
     // Return signature headers
     return {
       'X-Signature': signature,
@@ -51,7 +51,7 @@ class SignatureMiddleware {
       'X-Key-Fingerprint': user.public_key_fingerprint || ''
     };
   }
-  
+
   /**
    * Sign a build action (state transition, finalization, etc.)
    * @param {string} buildId - Build ID
@@ -62,25 +62,25 @@ class SignatureMiddleware {
   async signBuildAction(buildId, action, data) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     const privateKey = await cryptoService.getPrivateKey(user.id);
     if (!privateKey) {
       throw new Error('Private key not found. Please register your public key first.');
     }
-    
-    const payload = JSON.stringify({ 
-      buildId, 
-      action, 
-      data, 
-      timestamp: Date.now() 
+
+    const payload = JSON.stringify({
+      buildId,
+      action,
+      data,
+      timestamp: Date.now()
     });
-    
+
     const hash = await cryptoService.hash(payload);
     const signature = await cryptoService.sign(hash, privateKey);
-    
+
     return { hash, signature };
   }
-  
+
   /**
    * Sign data with current user's private key
    * @param {string} data - Data to sign
@@ -89,18 +89,18 @@ class SignatureMiddleware {
   async signData(data) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     const privateKey = await cryptoService.getPrivateKey(user.id);
     if (!privateKey) {
       throw new Error('Private key not found. Please register your public key first.');
     }
-    
+
     const hash = await cryptoService.hash(data);
     const signature = await cryptoService.sign(hash, privateKey);
-    
+
     return { hash, signature };
   }
-  
+
   /**
    * Verify a signature
    * @param {string} hash - Hash that was signed
@@ -111,7 +111,7 @@ class SignatureMiddleware {
   async verifySignature(hash, signature, publicKey) {
     return await cryptoService.verify(hash, signature, publicKey);
   }
-  
+
   /**
    * Check if user has a private key registered
    * @returns {Promise<boolean>}
@@ -119,11 +119,10 @@ class SignatureMiddleware {
   async hasPrivateKey() {
     const user = useAuthStore.getState().user;
     if (!user) return false;
-    
+
     return await cryptoService.hasPrivateKey(user.id);
   }
 }
 
 export default new SignatureMiddleware();
 
-// Made with Bob

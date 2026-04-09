@@ -55,7 +55,7 @@ const useFormValidation = (initialValues = {}, validationRules = {}) => {
    */
   const handleChange = useCallback((fieldName) => (event) => {
     const value = event.target ? event.target.value : event;
-    
+
     setValues(prev => ({
       ...prev,
       [fieldName]: value
@@ -235,4 +235,4 @@ const useFormValidation = (initialValues = {}, validationRules = {}) => {
 
 export default useFormValidation;
 
-// Made with Bob
+

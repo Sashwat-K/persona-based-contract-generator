@@ -14,10 +14,10 @@ class BuildService {
   async getBuilds() {
     const response = await apiClient.get('/builds');
     const builds = response.data.builds || [];
-    
+
     // Update store
     useBuildStore.getState().setBuilds(builds);
-    
+
     return builds;
   }
 
@@ -29,10 +29,10 @@ class BuildService {
   async getBuild(buildId) {
     const response = await apiClient.get(`/builds/${buildId}`);
     const build = response.data;
-    
+
     // Update store
     useBuildStore.getState().updateBuild(buildId, build);
-    
+
     return build;
   }
 
@@ -49,12 +49,12 @@ class BuildService {
       assignments,
       signature
     });
-    
+
     const build = response.data;
-    
+
     // Add to store
     useBuildStore.getState().addBuild(build);
-    
+
     return build;
   }
 
@@ -65,7 +65,7 @@ class BuildService {
    */
   async cancelBuild(buildId) {
     await apiClient.delete(`/builds/${buildId}`);
-    
+
     // Remove from store
     useBuildStore.getState().removeBuild(buildId);
   }
@@ -109,10 +109,10 @@ class BuildService {
    */
   async submitWorkload(buildId, data) {
     const response = await apiClient.post(`/builds/${buildId}/workload`, data);
-    
+
     // Update build status
     useBuildStore.getState().updateBuildStatus(buildId, 'WORKLOAD_SUBMITTED');
-    
+
     return response.data;
   }
 
@@ -124,10 +124,10 @@ class BuildService {
    */
   async submitEnvironment(buildId, data) {
     const response = await apiClient.post(`/builds/${buildId}/environment`, data);
-    
+
     // Update build status
     useBuildStore.getState().updateBuildStatus(buildId, 'ENVIRONMENT_STAGED');
-    
+
     return response.data;
   }
 
@@ -139,10 +139,10 @@ class BuildService {
    */
   async registerAttestationKeys(buildId, data) {
     const response = await apiClient.post(`/builds/${buildId}/attestation`, data);
-    
+
     // Update build status
     useBuildStore.getState().updateBuildStatus(buildId, 'AUDITOR_KEYS_REGISTERED');
-    
+
     return response.data;
   }
 
@@ -154,10 +154,10 @@ class BuildService {
    */
   async finalizeBuild(buildId, data) {
     const response = await apiClient.post(`/builds/${buildId}/finalize`, data);
-    
+
     // Update build status
     useBuildStore.getState().updateBuildStatus(buildId, 'FINALIZED');
-    
+
     return response.data;
   }
 
@@ -269,14 +269,14 @@ class BuildService {
       'status_transition',
       { newStatus }
     );
-    
+
     const response = await apiClient.patch(`/builds/${buildId}/status`, {
       status: newStatus,
       signature: signature
     });
-    
+
     useBuildStore.getState().updateBuildStatus(buildId, newStatus);
-    
+
     return response.data;
   }
 
@@ -302,7 +302,7 @@ class BuildService {
       this.getSections(buildId),
       this.getAuditEvents(buildId)
     ]);
-    
+
     return {
       buildId,
       name: build.name,
@@ -333,15 +333,15 @@ class BuildService {
   async checkFinalizationReadiness(buildId) {
     const sections = await this.getSections(buildId);
     const missing = [];
-    
+
     const hasWorkload = sections.some(s => s.persona_role === 'workload_owner');
     const hasEnvironment = sections.some(s => s.persona_role === 'data_owner');
     const hasAttestation = sections.some(s => s.persona_role === 'auditor');
-    
+
     if (!hasWorkload) missing.push('workload_owner section');
     if (!hasEnvironment) missing.push('data_owner section');
     if (!hasAttestation) missing.push('auditor section');
-    
+
     return {
       ready: missing.length === 0,
       missing
@@ -351,4 +351,4 @@ class BuildService {
 
 export default new BuildService();
 
-// Made with Bob
+

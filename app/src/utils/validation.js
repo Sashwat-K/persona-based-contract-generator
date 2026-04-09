@@ -13,7 +13,7 @@ export const validateEmail = (email) => {
   }
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  
+
   if (!emailRegex.test(email)) {
     return { valid: false, error: 'Invalid email format' };
   }
@@ -43,37 +43,37 @@ export const validatePassword = (password, options = {}) => {
   }
 
   if (password.length < minLength) {
-    return { 
-      valid: false, 
-      error: `Password must be at least ${minLength} characters` 
+    return {
+      valid: false,
+      error: `Password must be at least ${minLength} characters`
     };
   }
 
   if (requireUppercase && !/[A-Z]/.test(password)) {
-    return { 
-      valid: false, 
-      error: 'Password must contain at least one uppercase letter' 
+    return {
+      valid: false,
+      error: 'Password must contain at least one uppercase letter'
     };
   }
 
   if (requireLowercase && !/[a-z]/.test(password)) {
-    return { 
-      valid: false, 
-      error: 'Password must contain at least one lowercase letter' 
+    return {
+      valid: false,
+      error: 'Password must contain at least one lowercase letter'
     };
   }
 
   if (requireNumbers && !/\d/.test(password)) {
-    return { 
-      valid: false, 
-      error: 'Password must contain at least one number' 
+    return {
+      valid: false,
+      error: 'Password must contain at least one number'
     };
   }
 
   if (requireSpecialChars && !/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
-    return { 
-      valid: false, 
-      error: 'Password must contain at least one special character' 
+    return {
+      valid: false,
+      error: 'Password must contain at least one special character'
     };
   }
 
@@ -133,9 +133,9 @@ export const validatePassphrase = (passphrase, minLength = 8) => {
   }
 
   if (passphrase.length < minLength) {
-    return { 
-      valid: false, 
-      error: `Passphrase must be at least ${minLength} characters` 
+    return {
+      valid: false,
+      error: `Passphrase must be at least ${minLength} characters`
     };
   }
 
@@ -153,23 +153,23 @@ export const validateRSAPublicKey = (key) => {
 
   // Check PEM format
   const pemRegex = /^-----BEGIN (RSA )?PUBLIC KEY-----\n[\s\S]+\n-----END (RSA )?PUBLIC KEY-----$/;
-  
+
   if (!pemRegex.test(key.trim())) {
-    return { 
-      valid: false, 
-      error: 'Invalid PEM format. Key must start with "-----BEGIN PUBLIC KEY-----"' 
+    return {
+      valid: false,
+      error: 'Invalid PEM format. Key must start with "-----BEGIN PUBLIC KEY-----"'
     };
   }
 
   // Check key length (RSA-4096 should be ~800 characters)
   const keyContent = key.replace(/-----BEGIN (RSA )?PUBLIC KEY-----/, '')
-                        .replace(/-----END (RSA )?PUBLIC KEY-----/, '')
-                        .replace(/\s/g, '');
-  
+    .replace(/-----END (RSA )?PUBLIC KEY-----/, '')
+    .replace(/\s/g, '');
+
   if (keyContent.length < 500) {
-    return { 
-      valid: false, 
-      error: 'Key appears too short. RSA-4096 keys should be ~800 characters' 
+    return {
+      valid: false,
+      error: 'Key appears too short. RSA-4096 keys should be ~800 characters'
     };
   }
 
@@ -193,17 +193,17 @@ export const validateFile = (file, options = {}) => {
   // Check file size
   if (file.size > maxSize) {
     const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(2);
-    return { 
-      valid: false, 
-      error: `File size exceeds ${maxSizeMB}MB limit` 
+    return {
+      valid: false,
+      error: `File size exceeds ${maxSizeMB}MB limit`
     };
   }
 
   // Check MIME type
   if (allowedTypes.length > 0 && !allowedTypes.includes(file.type)) {
-    return { 
-      valid: false, 
-      error: `File type ${file.type} is not allowed` 
+    return {
+      valid: false,
+      error: `File type ${file.type} is not allowed`
     };
   }
 
@@ -211,9 +211,9 @@ export const validateFile = (file, options = {}) => {
   if (allowedExtensions.length > 0) {
     const extension = file.name.split('.').pop().toLowerCase();
     if (!allowedExtensions.includes(extension)) {
-      return { 
-        valid: false, 
-        error: `File extension .${extension} is not allowed` 
+      return {
+        valid: false,
+        error: `File extension .${extension} is not allowed`
       };
     }
   }
@@ -233,11 +233,11 @@ export const validateURL = (url, options = {}) => {
 
   try {
     const urlObj = new URL(url);
-    
+
     if (requireHTTPS && urlObj.protocol !== 'https:') {
-      return { 
-        valid: false, 
-        error: 'URL must use HTTPS protocol' 
+      return {
+        valid: false,
+        error: 'URL must use HTTPS protocol'
       };
     }
 
@@ -258,7 +258,7 @@ export const validateDate = (date, options = {}) => {
   }
 
   const dateObj = new Date(date);
-  
+
   if (isNaN(dateObj.getTime())) {
     return { valid: false, error: 'Invalid date format' };
   }
@@ -274,16 +274,16 @@ export const validateDate = (date, options = {}) => {
   }
 
   if (minDate && dateObj < new Date(minDate)) {
-    return { 
-      valid: false, 
-      error: `Date must be after ${new Date(minDate).toLocaleDateString()}` 
+    return {
+      valid: false,
+      error: `Date must be after ${new Date(minDate).toLocaleDateString()}`
     };
   }
 
   if (maxDate && dateObj > new Date(maxDate)) {
-    return { 
-      valid: false, 
-      error: `Date must be before ${new Date(maxDate).toLocaleDateString()}` 
+    return {
+      valid: false,
+      error: `Date must be before ${new Date(maxDate).toLocaleDateString()}`
     };
   }
 
@@ -322,16 +322,16 @@ export const validateLength = (value, options = {}) => {
   const length = value.length;
 
   if (min !== undefined && length < min) {
-    return { 
-      valid: false, 
-      error: `${fieldName} must be at least ${min} characters` 
+    return {
+      valid: false,
+      error: `${fieldName} must be at least ${min} characters`
     };
   }
 
   if (max !== undefined && length > max) {
-    return { 
-      valid: false, 
-      error: `${fieldName} must be at most ${max} characters` 
+    return {
+      valid: false,
+      error: `${fieldName} must be at most ${max} characters`
     };
   }
 
@@ -359,16 +359,16 @@ export const validateNumber = (value, options = {}) => {
   }
 
   if (min !== undefined && num < min) {
-    return { 
-      valid: false, 
-      error: `${fieldName} must be at least ${min}` 
+    return {
+      valid: false,
+      error: `${fieldName} must be at least ${min}`
     };
   }
 
   if (max !== undefined && num > max) {
-    return { 
-      valid: false, 
-      error: `${fieldName} must be at most ${max}` 
+    return {
+      valid: false,
+      error: `${fieldName} must be at most ${max}`
     };
   }
 
@@ -393,9 +393,9 @@ export const validateTokenName = (name) => {
 
   // Allow alphanumeric, spaces, hyphens, underscores
   if (!/^[a-zA-Z0-9\s\-_]+$/.test(name)) {
-    return { 
-      valid: false, 
-      error: 'Token name can only contain letters, numbers, spaces, hyphens, and underscores' 
+    return {
+      valid: false,
+      error: 'Token name can only contain letters, numbers, spaces, hyphens, and underscores'
     };
   }
 
@@ -463,4 +463,4 @@ export default {
   validateForm
 };
 
-// Made with Bob
+

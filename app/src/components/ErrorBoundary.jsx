@@ -26,7 +26,7 @@ class ErrorBoundary extends React.Component {
   componentDidCatch(error, errorInfo) {
     // Log error details for debugging
     console.error('ErrorBoundary caught an error:', error, errorInfo);
-    
+
     // Update state with error details
     this.setState(prevState => ({
       error,
@@ -168,4 +168,4 @@ class ErrorBoundary extends React.Component {
 
 export default ErrorBoundary;
 
-// Made with Bob
+

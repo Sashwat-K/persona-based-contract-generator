@@ -47,35 +47,35 @@ import tokenService from '../services/tokenService';
  */
 const APITokenManager = () => {
   const { user, apiTokens, fetchApiTokens } = useAuthStore();
-  
+
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRows, setSelectedRows] = useState([]);
-  
+
   // Modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showRevokeModal, setShowRevokeModal] = useState(false);
   const [showTokenModal, setShowTokenModal] = useState(false);
-  
+
   // Create token form
   const [tokenName, setTokenName] = useState('');
   const [tokenExpiry, setTokenExpiry] = useState('90');
   const [createdToken, setCreatedToken] = useState(null);
-  
+
   // Token visibility
   const [visibleTokens, setVisibleTokens] = useState(new Set());
-  
+
   useEffect(() => {
     loadTokens();
   }, []);
-  
+
   const loadTokens = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       await fetchApiTokens();
     } catch (err) {
@@ -84,28 +84,28 @@ const APITokenManager = () => {
       setLoading(false);
     }
   };
-  
+
   const handleCreateToken = async () => {
     if (!tokenName.trim()) {
       setError('Token name is required');
       return;
     }
-    
+
     setLoading(true);
     setError(null);
-    
+
     try {
       const expiryDays = parseInt(tokenExpiry);
       const result = await tokenService.createToken(tokenName.trim(), expiryDays);
-      
+
       setCreatedToken(result);
       setShowCreateModal(false);
       setShowTokenModal(true);
-      
+
       // Reset form
       setTokenName('');
       setTokenExpiry('90');
-      
+
       // Reload tokens
       await loadTokens();
     } catch (err) {
@@ -114,19 +114,19 @@ const APITokenManager = () => {
       setLoading(false);
     }
   };
-  
+
   const handleRevokeTokens = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const tokenIds = selectedRows.map(row => row.id);
       await tokenService.bulkRevokeTokens(tokenIds);
-      
+
       setSuccess(`Successfully revoked ${tokenIds.length} token(s)`);
       setSelectedRows([]);
       setShowRevokeModal(false);
-      
+
       // Reload tokens
       await loadTokens();
     } catch (err) {
@@ -135,15 +135,15 @@ const APITokenManager = () => {
       setLoading(false);
     }
   };
-  
+
   const handleRevokeToken = async (tokenId) => {
     setLoading(true);
     setError(null);
-    
+
     try {
       await tokenService.revokeToken(tokenId);
       setSuccess('Token revoked successfully');
-      
+
       // Reload tokens
       await loadTokens();
     } catch (err) {
@@ -152,7 +152,7 @@ const APITokenManager = () => {
       setLoading(false);
     }
   };
-  
+
   const toggleTokenVisibility = (tokenId) => {
     setVisibleTokens(prev => {
       const newSet = new Set(prev);
@@ -164,26 +164,26 @@ const APITokenManager = () => {
       return newSet;
     });
   };
-  
+
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     setSuccess('Copied to clipboard');
   };
-  
+
   const maskToken = (token) => {
     if (!token) return 'N/A';
     return `${token.substring(0, 8)}${'*'.repeat(32)}${token.substring(token.length - 8)}`;
   };
-  
+
   const getStatusTag = (token) => {
     if (token.revoked_at) {
       return <Tag type="red" renderIcon={ErrorFilled}>Revoked</Tag>;
     }
-    
+
     const now = new Date();
     const expiry = new Date(token.expires_at);
     const daysUntilExpiry = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
-    
+
     if (daysUntilExpiry < 0) {
       return <Tag type="red" renderIcon={ErrorFilled}>Expired</Tag>;
     } else if (daysUntilExpiry <= 7) {
@@ -194,46 +194,46 @@ const APITokenManager = () => {
       return <Tag type="green" renderIcon={CheckmarkFilled}>Active</Tag>;
     }
   };
-  
+
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleString();
   };
-  
+
   const filterRows = (rows) => {
     if (!searchTerm) return rows;
-    
+
     return rows.filter(row =>
       row.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       row.token_prefix?.toLowerCase().includes(searchTerm.toLowerCase())
     );
   };
-  
+
   const getTokenStats = () => {
     const now = new Date();
-    
-    const active = apiTokens.filter(t => 
+
+    const active = apiTokens.filter(t =>
       !t.revoked_at && new Date(t.expires_at) > now
     ).length;
-    
-    const expired = apiTokens.filter(t => 
+
+    const expired = apiTokens.filter(t =>
       !t.revoked_at && new Date(t.expires_at) <= now
     ).length;
-    
+
     const expiringSoon = apiTokens.filter(t => {
       if (t.revoked_at) return false;
       const expiry = new Date(t.expires_at);
       const daysUntilExpiry = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
       return daysUntilExpiry > 0 && daysUntilExpiry <= 30;
     }).length;
-    
+
     const revoked = apiTokens.filter(t => t.revoked_at).length;
-    
+
     return { active, expired, expiringSoon, revoked };
   };
-  
+
   const renderStats = () => {
     const stats = getTokenStats();
-    
+
     return (
       <div className="token-stats">
         <Tile className="stat-tile">
@@ -255,7 +255,7 @@ const APITokenManager = () => {
       </div>
     );
   };
-  
+
   const headers = [
     { key: 'name', header: 'Name' },
     { key: 'token_prefix', header: 'Token Prefix' },
@@ -265,7 +265,7 @@ const APITokenManager = () => {
     { key: 'status', header: 'Status' },
     { key: 'actions', header: 'Actions' }
   ];
-  
+
   const rows = filterRows(apiTokens).map(token => ({
     id: token.id,
     name: token.name,
@@ -292,7 +292,7 @@ const APITokenManager = () => {
     ),
     _token: token
   }));
-  
+
   return (
     <div className="api-token-manager">
       {error && (
@@ -304,7 +304,7 @@ const APITokenManager = () => {
           lowContrast
         />
       )}
-      
+
       {success && (
         <InlineNotification
           kind="success"
@@ -314,7 +314,7 @@ const APITokenManager = () => {
           lowContrast
         />
       )}
-      
+
       <div className="manager-header">
         <h3>API Token Management</h3>
         <div className="header-actions">
@@ -335,9 +335,9 @@ const APITokenManager = () => {
           </Button>
         </div>
       </div>
-      
+
       {renderStats()}
-      
+
       {loading && !apiTokens.length ? (
         <Loading description="Loading tokens..." withOverlay={false} />
       ) : (
@@ -430,7 +430,7 @@ const APITokenManager = () => {
           )}
         </DataTable>
       )}
-      
+
       {/* Create Token Modal */}
       <Modal
         open={showCreateModal}
@@ -451,7 +451,7 @@ const APITokenManager = () => {
             onChange={(e) => setTokenName(e.target.value)}
             disabled={loading}
           />
-          
+
           <Select
             id="token-expiry"
             labelText="Expiry Period"
@@ -465,7 +465,7 @@ const APITokenManager = () => {
             <SelectItem value="180" text="180 days" />
             <SelectItem value="365" text="1 year" />
           </Select>
-          
+
           <InlineNotification
             kind="info"
             title="Security Notice"
@@ -475,7 +475,7 @@ const APITokenManager = () => {
           />
         </div>
       </Modal>
-      
+
       {/* Show Created Token Modal */}
       <Modal
         open={showTokenModal}
@@ -491,7 +491,7 @@ const APITokenManager = () => {
             lowContrast
             hideCloseButton
           />
-          
+
           <div className="token-info">
             <div className="info-item">
               <span className="info-label">Name:</span>
@@ -504,13 +504,13 @@ const APITokenManager = () => {
               </span>
             </div>
           </div>
-          
+
           <div className="token-display">
             <CodeSnippet type="multi" feedback="Copied">
               {createdToken?.token}
             </CodeSnippet>
           </div>
-          
+
           <Button
             kind="primary"
             renderIcon={Copy}
@@ -520,7 +520,7 @@ const APITokenManager = () => {
           </Button>
         </div>
       </Modal>
-      
+
       {/* Revoke Tokens Modal */}
       <Modal
         open={showRevokeModal}
@@ -538,7 +538,7 @@ const APITokenManager = () => {
           This action cannot be undone and will immediately invalidate the tokens.
         </p>
       </Modal>
-      
+
       <style>{`
         .api-token-manager {
           padding: 1rem;
@@ -648,4 +648,3 @@ const APITokenManager = () => {
 
 export default APITokenManager;
 
-// Made with Bob

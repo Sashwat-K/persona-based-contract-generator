@@ -19,7 +19,7 @@ class KeyManager {
         format: 'pem'
       }
     });
-    
+
     return { publicKey, privateKey };
   }
 
@@ -47,13 +47,13 @@ class KeyManager {
       .replace(/-----BEGIN PUBLIC KEY-----/, '')
       .replace(/-----END PUBLIC KEY-----/, '')
       .replace(/\s/g, '');
-    
+
     // Decode base64 to get DER bytes
     const derBytes = Buffer.from(pemContent, 'base64');
-    
+
     // Compute SHA-256 hash of DER bytes
     const hash = crypto.createHash('sha256').update(derBytes).digest('hex');
-    
+
     // Format as XX:XX:XX:... (uppercase with colons)
     return hash
       .toUpperCase()
@@ -64,4 +64,4 @@ class KeyManager {
 
 module.exports = new KeyManager();
 
-// Made with Bob
+

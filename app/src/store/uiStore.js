@@ -6,7 +6,7 @@ export const useUIStore = create((set, get) => ({
   modals: {},
   sideNavExpanded: true,
   theme: 'g100', // Carbon dark theme
-  
+
   // Notification Actions
   addNotification: (notification) => set((state) => ({
     notifications: [...state.notifications, {
@@ -15,50 +15,50 @@ export const useUIStore = create((set, get) => ({
       ...notification
     }]
   })),
-  
+
   removeNotification: (id) => set((state) => ({
     notifications: state.notifications.filter(n => n.id !== id)
   })),
-  
+
   clearNotifications: () => set({ notifications: [] }),
-  
+
   // Modal Actions
   openModal: (modalId, data = null) => set((state) => ({
-    modals: { 
-      ...state.modals, 
-      [modalId]: { open: true, data } 
+    modals: {
+      ...state.modals,
+      [modalId]: { open: true, data }
     }
   })),
-  
+
   closeModal: (modalId) => set((state) => ({
-    modals: { 
-      ...state.modals, 
-      [modalId]: { open: false, data: null } 
+    modals: {
+      ...state.modals,
+      [modalId]: { open: false, data: null }
     }
   })),
-  
+
   closeAllModals: () => set({ modals: {} }),
-  
+
   // UI State Actions
   toggleSideNav: () => set((state) => ({
     sideNavExpanded: !state.sideNavExpanded
   })),
-  
+
   setSideNavExpanded: (expanded) => set({ sideNavExpanded: expanded }),
-  
+
   setTheme: (theme) => set({ theme }),
-  
+
   // Computed
   isModalOpen: (modalId) => {
     const state = get();
     return state.modals[modalId]?.open || false;
   },
-  
+
   getModalData: (modalId) => {
     const state = get();
     return state.modals[modalId]?.data || null;
   },
-  
+
   hasNotifications: () => {
     const state = get();
     return state.notifications.length > 0;
@@ -102,4 +102,4 @@ export const showInfoNotification = (title, subtitle) => {
   });
 };
 
-// Made with Bob
+

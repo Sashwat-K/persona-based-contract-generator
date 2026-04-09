@@ -10,7 +10,7 @@ import {
 } from '@carbon/react';
 import { useAuthStore } from '../store/authStore';
 import PublicKeyManager from '../components/PublicKeyManager';
-import APITokenManager from '../components/APITokenManager';
+import PasswordManager from '../components/PasswordManager';
 
 /**
  * AccountSettings View
@@ -28,7 +28,7 @@ const AccountSettings = () => {
       <Tabs selectedIndex={selectedTab} onChange={(e) => setSelectedTab(e.selectedIndex)}>
         <TabList aria-label="Account settings tabs" contained>
           <Tab>Cryptographic Identity</Tab>
-          <Tab>API Tokens</Tab>
+          <Tab>Password</Tab>
         </TabList>
         
         <TabPanels>
@@ -46,12 +46,12 @@ const AccountSettings = () => {
             </div>
           </TabPanel>
           
-          {/* API Token Management Tab */}
+          {/* Password Management Tab */}
           <TabPanel>
             <div style={{ padding: '2rem 0' }}>
               <Grid narrow>
                 <Column lg={16}>
-                  <APITokenManager />
+                  <PasswordManager />
                 </Column>
               </Grid>
             </div>

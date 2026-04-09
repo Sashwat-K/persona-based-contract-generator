@@ -31,34 +31,34 @@ import cryptoService from '../services/cryptoService';
  */
 const AuditViewer = ({ buildId }) => {
   const { getBuildAuditEvents, getBuildVerificationResult } = useBuildStore();
-  
+
   const [auditEvents, setAuditEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
+
   // Verification state
   const [verificationResult, setVerificationResult] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  
+
   // Display options
   const [showHashChain, setShowHashChain] = useState(true);
   const [showSignatures, setShowSignatures] = useState(false);
   const [expandedEvents, setExpandedEvents] = useState(new Set());
-  
+
   useEffect(() => {
     loadAuditEvents();
-    
+
     // Load cached verification result
     const cached = getBuildVerificationResult(buildId);
     if (cached) {
       setVerificationResult(cached);
     }
   }, [buildId]);
-  
+
   const loadAuditEvents = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const events = await buildService.getAuditTrail(buildId);
       setAuditEvents(events);
@@ -68,15 +68,15 @@ const AuditViewer = ({ buildId }) => {
       setLoading(false);
     }
   };
-  
+
   const handleVerify = async () => {
     setIsVerifying(true);
     setError(null);
-    
+
     try {
       const result = await verificationService.performCompleteVerification(buildId);
       setVerificationResult(result);
-      
+
       if (result.overall.valid) {
         // Success notification handled by result display
       } else {
@@ -88,7 +88,7 @@ const AuditViewer = ({ buildId }) => {
       setIsVerifying(false);
     }
   };
-  
+
   const toggleEventExpansion = (eventId) => {
     setExpandedEvents(prev => {
       const newSet = new Set(prev);
@@ -100,7 +100,7 @@ const AuditViewer = ({ buildId }) => {
       return newSet;
     });
   };
-  
+
   const getEventTypeTag = (eventType) => {
     const typeConfig = {
       build_created: { type: 'blue', label: 'Created' },
@@ -111,11 +111,11 @@ const AuditViewer = ({ buildId }) => {
       contract_downloaded: { type: 'magenta', label: 'Download' },
       verification_performed: { type: 'gray', label: 'Verification' }
     };
-    
+
     const config = typeConfig[eventType] || { type: 'gray', label: eventType };
     return <Tag type={config.type}>{config.label}</Tag>;
   };
-  
+
   const getVerificationStatusTag = (isValid) => {
     return isValid ? (
       <Tag type="green" renderIcon={CheckmarkFilled}>Valid</Tag>
@@ -123,20 +123,20 @@ const AuditViewer = ({ buildId }) => {
       <Tag type="red" renderIcon={ErrorFilled}>Invalid</Tag>
     );
   };
-  
+
   const formatHash = (hash) => {
     if (!hash) return 'N/A';
     return `${hash.substring(0, 8)}...${hash.substring(hash.length - 8)}`;
   };
-  
+
   const formatFingerprint = (fingerprint) => {
     if (!fingerprint) return 'N/A';
     return fingerprint.substring(0, 16) + '...';
   };
-  
+
   const renderHashChain = () => {
     if (!showHashChain || auditEvents.length === 0) return null;
-    
+
     return (
       <div className="hash-chain">
         <h5>Hash Chain Visualization</h5>
@@ -149,7 +149,7 @@ const AuditViewer = ({ buildId }) => {
               </CodeSnippet>
             </div>
           </div>
-          
+
           {auditEvents.map((event, index) => (
             <React.Fragment key={event.id}>
               <div className="chain-link">
@@ -172,19 +172,19 @@ const AuditViewer = ({ buildId }) => {
       </div>
     );
   };
-  
+
   const renderVerificationSummary = () => {
     if (!verificationResult) return null;
-    
+
     const { overall, auditChain, contractIntegrity, hashChain, signatures } = verificationResult;
-    
+
     return (
       <Tile className="verification-summary">
         <div className="summary-header">
           <h5>Verification Summary</h5>
           {getVerificationStatusTag(overall.valid)}
         </div>
-        
+
         <div className="verification-checks">
           <div className="check-item">
             <span className="check-label">Audit Chain:</span>
@@ -203,7 +203,7 @@ const AuditViewer = ({ buildId }) => {
             {getVerificationStatusTag(signatures?.every(s => s.valid))}
           </div>
         </div>
-        
+
         {overall.errors.length > 0 && (
           <InlineNotification
             kind="error"
@@ -212,7 +212,7 @@ const AuditViewer = ({ buildId }) => {
             lowContrast
           />
         )}
-        
+
         <div className="verification-stats">
           <span>Total Events: {hashChain?.totalEvents || 0}</span>
           <span>Verified: {hashChain?.verifiedEvents || 0}</span>
@@ -221,7 +221,7 @@ const AuditViewer = ({ buildId }) => {
       </Tile>
     );
   };
-  
+
   const renderEventDetails = (event) => {
     return (
       <div className="event-details">
@@ -242,7 +242,7 @@ const AuditViewer = ({ buildId }) => {
             </div>
           </div>
         </div>
-        
+
         <div className="detail-section">
           <h6>Actor Information</h6>
           <div className="detail-grid">
@@ -258,7 +258,7 @@ const AuditViewer = ({ buildId }) => {
             </div>
           </div>
         </div>
-        
+
         {showHashChain && (
           <div className="detail-section">
             <h6>Hash Chain</h6>
@@ -278,7 +278,7 @@ const AuditViewer = ({ buildId }) => {
             </div>
           </div>
         )}
-        
+
         {showSignatures && event.signature && (
           <div className="detail-section">
             <h6>Cryptographic Signature</h6>
@@ -287,7 +287,7 @@ const AuditViewer = ({ buildId }) => {
             </CodeSnippet>
           </div>
         )}
-        
+
         {event.event_data && (
           <div className="detail-section">
             <h6>Event Data</h6>
@@ -299,7 +299,7 @@ const AuditViewer = ({ buildId }) => {
       </div>
     );
   };
-  
+
   return (
     <div className="audit-viewer">
       {error && (
@@ -311,7 +311,7 @@ const AuditViewer = ({ buildId }) => {
           lowContrast
         />
       )}
-      
+
       <div className="viewer-header">
         <div className="header-content">
           <h4>Audit Trail</h4>
@@ -351,10 +351,10 @@ const AuditViewer = ({ buildId }) => {
           </div>
         </div>
       </div>
-      
+
       {renderVerificationSummary()}
       {renderHashChain()}
-      
+
       {loading ? (
         <Loading description="Loading audit events..." withOverlay={false} />
       ) : auditEvents.length === 0 ? (
@@ -384,7 +384,7 @@ const AuditViewer = ({ buildId }) => {
           ))}
         </Accordion>
       )}
-      
+
       <style>{`
         .audit-viewer {
           margin: 1rem 0;
@@ -589,4 +589,3 @@ const AuditViewer = ({ buildId }) => {
 
 export default AuditViewer;
 
-// Made with Bob

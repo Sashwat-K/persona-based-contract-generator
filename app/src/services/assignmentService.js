@@ -18,7 +18,7 @@ class AssignmentService {
       user_id: userId,
       persona_role: personaRole
     });
-    
+
     return response.data;
   }
 
@@ -49,7 +49,7 @@ class AssignmentService {
   async getMyAssignments() {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     return this.getUserAssignments(user.id);
   }
 
@@ -62,9 +62,9 @@ class AssignmentService {
    */
   async deleteAssignment(buildId, userId, personaRole) {
     await apiClient.delete(`/builds/${buildId}/assignments`, {
-      data: { 
-        user_id: userId, 
-        persona_role: personaRole 
+      data: {
+        user_id: userId,
+        persona_role: personaRole
       }
     });
   }
@@ -91,7 +91,7 @@ class AssignmentService {
   async validateUserAssignment(buildId, userId, personaRole) {
     try {
       const assignments = await this.getBuildAssignments(buildId);
-      return assignments.some(a => 
+      return assignments.some(a =>
         a.user_id === userId && a.persona_role === personaRole
       );
     } catch (error) {
@@ -109,7 +109,7 @@ class AssignmentService {
   async isAssignedToRole(buildId, personaRole) {
     const user = useAuthStore.getState().user;
     if (!user) return false;
-    
+
     return this.validateUserAssignment(buildId, user.id, personaRole);
   }
 
@@ -126,25 +126,25 @@ class AssignmentService {
     if (!user) {
       return { canSubmit: false, reason: 'User not authenticated' };
     }
-    
+
     // Check assignment
     const isAssigned = await this.validateUserAssignment(buildId, user.id, personaRole);
     if (!isAssigned) {
-      return { 
-        canSubmit: false, 
-        reason: 'You are not assigned to this build for this role' 
+      return {
+        canSubmit: false,
+        reason: 'You are not assigned to this build for this role'
       };
     }
-    
+
     // Check if section already submitted
     const alreadySubmitted = existingSections.some(s => s.persona_role === personaRole);
     if (alreadySubmitted) {
-      return { 
-        canSubmit: false, 
-        reason: 'Section already submitted for this role' 
+      return {
+        canSubmit: false,
+        reason: 'Section already submitted for this role'
       };
     }
-    
+
     return { canSubmit: true, reason: '' };
   }
 
@@ -155,19 +155,19 @@ class AssignmentService {
    */
   async getAssignmentSummary(buildId) {
     const assignments = await this.getBuildAssignments(buildId);
-    
+
     const byRole = {
       workload_owner: [],
       data_owner: [],
       auditor: []
     };
-    
+
     assignments.forEach(assignment => {
       if (byRole[assignment.persona_role]) {
         byRole[assignment.persona_role].push(assignment);
       }
     });
-    
+
     return {
       total: assignments.length,
       byRole,
@@ -185,11 +185,11 @@ class AssignmentService {
   async checkAssignmentCompleteness(buildId) {
     const summary = await this.getAssignmentSummary(buildId);
     const missing = [];
-    
+
     if (summary.workloadOwnerCount === 0) missing.push('workload_owner');
     if (summary.dataOwnerCount === 0) missing.push('data_owner');
     if (summary.auditorCount === 0) missing.push('auditor');
-    
+
     return {
       complete: missing.length === 0,
       missing
@@ -199,4 +199,3 @@ class AssignmentService {
 
 export default new AssignmentService();
 
-// Made with Bob

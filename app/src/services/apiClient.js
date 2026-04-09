@@ -86,8 +86,9 @@ class ApiClient {
           this.pendingRequests.delete(error.config.requestId);
         }
 
-        // Log error for debugging
-        console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
+        // Log error for debugging (400s are often expected, use warn)
+        const logFn = error.response?.status === 400 ? console.warn : console.error;
+        logFn(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
           status: error.response?.status,
           message: error.response?.data?.message || error.message,
           data: error.response?.data
@@ -134,8 +135,10 @@ class ApiClient {
    * Normalize error responses to a consistent format
    */
   normalizeError(error, customMessage = null) {
+    // Backend nest is {"error": {"message": "..."}} or {"message": "..."}
+    const backendMsg = error.response?.data?.error?.message || error.response?.data?.message;
     const normalized = {
-      message: customMessage || error.response?.data?.message || error.message || 'An unexpected error occurred',
+      message: customMessage || backendMsg || error.message || 'An unexpected error occurred',
       status: error.response?.status,
       code: error.code,
       data: error.response?.data,

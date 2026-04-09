@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { 
-  Form, 
-  TextInput, 
-  Button, 
+import {
+  Form,
+  TextInput,
+  Button,
   InlineNotification,
   Loading,
   Tile,
@@ -15,14 +15,14 @@ import { validateUrl } from '../utils/validators';
 import { formatDate } from '../utils/formatters';
 
 function ServerConfigSettings() {
-  const { 
-    serverUrl, 
-    setServerUrl, 
+  const {
+    serverUrl,
+    setServerUrl,
     setConnectionStatus,
     connectionStatus,
     lastConnectionTest
   } = useConfigStore();
-  
+
   const [inputUrl, setInputUrl] = useState(serverUrl);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -57,7 +57,7 @@ function ServerConfigSettings() {
 
       setTestResult('success');
       setConnectionStatus('connected', new Date().toISOString());
-      
+
       // Restore original URL (will be updated on save)
       apiClient.setBaseURL(originalUrl);
     } catch (err) {
@@ -210,4 +210,4 @@ function ServerConfigSettings() {
 
 export default ServerConfigSettings;
 
-// Made with Bob
+

@@ -9,31 +9,31 @@ export const useConfigStore = create(
       isServerConfigured: false,
       lastConnectionTest: null,
       connectionStatus: 'unknown', // 'unknown' | 'connected' | 'failed'
-      
+
       // Actions
       setServerUrl: (url) => set({
         serverUrl: url,
         isServerConfigured: true
       }),
-      
+
       setConnectionStatus: (status, timestamp = new Date().toISOString()) => set({
         connectionStatus: status,
         lastConnectionTest: timestamp
       }),
-      
+
       resetServerConfig: () => set({
         serverUrl: 'http://localhost:8080',
         isServerConfigured: false,
         lastConnectionTest: null,
         connectionStatus: 'unknown'
       }),
-      
+
       // Computed
       isConnected: () => {
         const state = get();
         return state.connectionStatus === 'connected';
       },
-      
+
       needsConfiguration: () => {
         const state = get();
         return !state.isServerConfigured || state.connectionStatus === 'failed';
@@ -41,7 +41,7 @@ export const useConfigStore = create(
     }),
     {
       name: 'server-config-storage',
-      partialize: (state) => ({ 
+      partialize: (state) => ({
         serverUrl: state.serverUrl,
         isServerConfigured: state.isServerConfigured
       })
@@ -49,4 +49,4 @@ export const useConfigStore = create(
   )
 );
 
-// Made with Bob
+

@@ -30,22 +30,22 @@ import verificationService from '../services/verificationService';
 const ContractExport = ({ buildId }) => {
   const { user } = useAuthStore();
   const { getBuildExportData, isBuildComplete } = useBuildStore();
-  
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  
+
   // Export state
   const [exportData, setExportData] = useState(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  
+
   // Verification state
   const [verificationResult, setVerificationResult] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  
+
   const buildComplete = isBuildComplete(buildId);
-  
+
   useEffect(() => {
     // Load cached export data if available
     const cached = getBuildExportData(buildId);
@@ -53,16 +53,16 @@ const ContractExport = ({ buildId }) => {
       setExportData(cached);
     }
   }, [buildId]);
-  
+
   const handleExport = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const data = await exportService.exportContract(buildId);
       setExportData(data);
       setSuccess('Contract exported successfully');
-      
+
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -71,7 +71,7 @@ const ContractExport = ({ buildId }) => {
       setLoading(false);
     }
   };
-  
+
   const handlePreview = () => {
     if (!exportData) {
       handleExport().then(() => setIsPreviewOpen(true));
@@ -79,26 +79,26 @@ const ContractExport = ({ buildId }) => {
       setIsPreviewOpen(true);
     }
   };
-  
+
   const handleDownload = async () => {
     if (!exportData) {
       setError('No export data available. Please export first.');
       return;
     }
-    
+
     setIsExporting(true);
     setError(null);
-    
+
     try {
       // Save contract locally and acknowledge download
       const result = await exportService.exportAndSave(
         buildId,
         `contract-${buildId}.yaml`
       );
-      
+
       setSuccess(`Contract saved to: ${result.path}`);
       setIsPreviewOpen(false);
-      
+
       // Clear success message after 5 seconds
       setTimeout(() => setSuccess(null), 5000);
     } catch (err) {
@@ -107,21 +107,21 @@ const ContractExport = ({ buildId }) => {
       setIsExporting(false);
     }
   };
-  
+
   const handleVerify = async () => {
     if (!exportData) {
       setError('No export data available. Please export first.');
       return;
     }
-    
+
     setIsVerifying(true);
     setError(null);
-    
+
     try {
       // Verify contract integrity
       const result = await verificationService.verifyContractIntegrity(buildId);
       setVerificationResult(result);
-      
+
       if (result.valid) {
         setSuccess('Contract verification passed ✓');
       } else {
@@ -133,7 +133,7 @@ const ContractExport = ({ buildId }) => {
       setIsVerifying(false);
     }
   };
-  
+
   const getExportStatus = () => {
     if (!buildComplete) {
       return {
@@ -142,7 +142,7 @@ const ContractExport = ({ buildId }) => {
         severity: 'warning'
       };
     }
-    
+
     if (!exportData) {
       return {
         canExport: true,
@@ -150,24 +150,24 @@ const ContractExport = ({ buildId }) => {
         severity: 'info'
       };
     }
-    
+
     return {
       canExport: true,
       message: 'Contract exported and ready for download',
       severity: 'success'
     };
   };
-  
+
   const status = getExportStatus();
-  
+
   const formatYAML = (yaml) => {
     // Add syntax highlighting hints
     return yaml;
   };
-  
+
   const getContractMetadata = () => {
     if (!exportData) return null;
-    
+
     return {
       hash: exportData.contract_hash,
       size: exportData.contract_yaml?.length || 0,
@@ -175,9 +175,9 @@ const ContractExport = ({ buildId }) => {
       exportedAt: exportData.exported_at || new Date().toISOString()
     };
   };
-  
+
   const metadata = getContractMetadata();
-  
+
   return (
     <div className="contract-export">
       {error && (
@@ -189,7 +189,7 @@ const ContractExport = ({ buildId }) => {
           lowContrast
         />
       )}
-      
+
       {success && (
         <InlineNotification
           kind="success"
@@ -199,7 +199,7 @@ const ContractExport = ({ buildId }) => {
           lowContrast
         />
       )}
-      
+
       <Tile className="export-tile">
         <div className="export-header">
           <div className="header-content">
@@ -212,7 +212,7 @@ const ContractExport = ({ buildId }) => {
             </Tag>
           )}
         </div>
-        
+
         <InlineNotification
           kind={status.severity}
           title={status.canExport ? 'Ready' : 'Not Ready'}
@@ -220,7 +220,7 @@ const ContractExport = ({ buildId }) => {
           lowContrast
           hideCloseButton
         />
-        
+
         {metadata && (
           <div className="metadata">
             <div className="metadata-row">
@@ -243,13 +243,13 @@ const ContractExport = ({ buildId }) => {
             </div>
           </div>
         )}
-        
+
         {verificationResult && (
           <div className="verification-result">
             <InlineNotification
               kind={verificationResult.valid ? 'success' : 'error'}
               title={verificationResult.valid ? 'Verification Passed' : 'Verification Failed'}
-              subtitle={verificationResult.valid 
+              subtitle={verificationResult.valid
                 ? 'Contract integrity verified successfully'
                 : `${verificationResult.errors?.length || 0} errors found`
               }
@@ -257,7 +257,7 @@ const ContractExport = ({ buildId }) => {
             />
           </div>
         )}
-        
+
         <div className="export-actions">
           <Button
             kind="primary"
@@ -267,7 +267,7 @@ const ContractExport = ({ buildId }) => {
           >
             {loading ? 'Exporting...' : exportData ? 'Re-export' : 'Export Contract'}
           </Button>
-          
+
           <Button
             kind="secondary"
             renderIcon={View}
@@ -276,7 +276,7 @@ const ContractExport = ({ buildId }) => {
           >
             Preview
           </Button>
-          
+
           <Button
             kind="tertiary"
             renderIcon={CheckmarkFilled}
@@ -287,7 +287,7 @@ const ContractExport = ({ buildId }) => {
           </Button>
         </div>
       </Tile>
-      
+
       <Modal
         open={isPreviewOpen}
         onRequestClose={() => setIsPreviewOpen(false)}
@@ -307,7 +307,7 @@ const ContractExport = ({ buildId }) => {
             <ProgressBar label="Download Progress" helperText="Signing with your private key..." />
           </div>
         )}
-        
+
         {exportData && (
           <div className="preview-content">
             <InlineNotification
@@ -317,7 +317,7 @@ const ContractExport = ({ buildId }) => {
               lowContrast
               hideCloseButton
             />
-            
+
             <div className="contract-info">
               <h5>Contract Information</h5>
               <div className="info-grid">
@@ -337,7 +337,7 @@ const ContractExport = ({ buildId }) => {
                 </div>
               </div>
             </div>
-            
+
             <div className="yaml-preview">
               <h5>Contract YAML</h5>
               <CodeSnippet
@@ -348,7 +348,7 @@ const ContractExport = ({ buildId }) => {
                 {formatYAML(exportData.contract_yaml)}
               </CodeSnippet>
             </div>
-            
+
             {exportData.sections && exportData.sections.length > 0 && (
               <div className="sections-info">
                 <h5>Included Sections</h5>
@@ -377,7 +377,7 @@ const ContractExport = ({ buildId }) => {
           </div>
         )}
       </Modal>
-      
+
       <style>{`
         .contract-export {
           margin: 1rem 0;
@@ -519,4 +519,3 @@ const ContractExport = ({ buildId }) => {
 
 export default ContractExport;
 
-// Made with Bob

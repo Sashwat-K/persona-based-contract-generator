@@ -36,22 +36,22 @@ class ExportService {
   async acknowledgeDownload(buildId, contractHash) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     // Get private key
     const privateKey = await cryptoService.getPrivateKey(user.id);
     if (!privateKey) {
       throw new Error('Private key not found. Please register your public key first.');
     }
-    
+
     // Sign the contract hash
     const signature = await cryptoService.sign(contractHash, privateKey);
-    
+
     // Submit acknowledgment
     const response = await apiClient.post(`/builds/${buildId}/acknowledge-download`, {
       downloaded_at: new Date().toISOString(),
       signature: signature
     });
-    
+
     return response.data;
   }
 
@@ -64,7 +64,7 @@ class ExportService {
    */
   async saveContractLocally(buildId, contractYaml, filename = null) {
     const defaultFilename = filename || `contract-${buildId}-${Date.now()}.yaml`;
-    
+
     try {
       const result = await window.electron.fs.saveFile({
         filename: defaultFilename,
@@ -74,7 +74,7 @@ class ExportService {
           { name: 'All Files', extensions: ['*'] }
         ]
       });
-      
+
       return {
         success: true,
         path: result.filePath,
@@ -98,7 +98,7 @@ class ExportService {
           { name: 'All Files', extensions: ['*'] }
         ]
       });
-      
+
       return {
         content: result.content,
         path: result.filePath,
@@ -118,12 +118,12 @@ class ExportService {
   async generateDownloadSignature(contractHash) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     const privateKey = await cryptoService.getPrivateKey(user.id);
     if (!privateKey) {
       throw new Error('Private key not found');
     }
-    
+
     return await cryptoService.sign(contractHash, privateKey);
   }
 
@@ -147,17 +147,17 @@ class ExportService {
   async exportAndSave(buildId, filename = null) {
     // Export contract
     const exportData = await this.exportContract(buildId);
-    
+
     // Save to filesystem
     const saveResult = await this.saveContractLocally(
       buildId,
       exportData.contract_yaml,
       filename
     );
-    
+
     // Acknowledge download
     await this.acknowledgeDownload(buildId, exportData.contract_hash);
-    
+
     return {
       success: true,
       path: saveResult.path,
@@ -175,10 +175,10 @@ class ExportService {
     // This would come from audit events
     const response = await apiClient.get(`/builds/${buildId}/audit`);
     const events = response.data.events || [];
-    
+
     // Filter for export-related events
-    return events.filter(e => 
-      e.event_type === 'contract_exported' || 
+    return events.filter(e =>
+      e.event_type === 'contract_exported' ||
       e.event_type === 'contract_downloaded'
     );
   }
@@ -190,12 +190,12 @@ class ExportService {
    */
   validateContractStructure(contractYaml) {
     const errors = [];
-    
+
     if (!contractYaml || contractYaml.trim().length === 0) {
       errors.push('Contract content is empty');
       return { valid: false, errors };
     }
-    
+
     // Check for required sections
     const requiredSections = ['workload:', 'env:', 'attestation:'];
     requiredSections.forEach(section => {
@@ -203,12 +203,12 @@ class ExportService {
         errors.push(`Missing required section: ${section}`);
       }
     });
-    
+
     // Check for hyper-protect-basic encryption format
     if (!contractYaml.includes('hyper-protect-basic')) {
       errors.push('Contract does not contain encrypted sections');
     }
-    
+
     return {
       valid: errors.length === 0,
       errors
@@ -229,7 +229,7 @@ class ExportService {
       size: contractYaml.length,
       lines: contractYaml.split('\n').length
     };
-    
+
     return metadata;
   }
 
@@ -242,11 +242,10 @@ class ExportService {
   async createBackup(buildId, contractYaml) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupFilename = `contract-${buildId}-backup-${timestamp}.yaml`;
-    
+
     return await this.saveContractLocally(buildId, contractYaml, backupFilename);
   }
 }
 
 export default new ExportService();
 
-// Made with Bob

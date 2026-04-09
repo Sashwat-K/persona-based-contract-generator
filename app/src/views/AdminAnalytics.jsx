@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DonutChart, SimpleBarChart } from '@carbon/charts-react';
+import { DonutChart, GroupedBarChart } from '@carbon/charts-react';
 import {
   Grid,
   Column,
@@ -44,7 +44,7 @@ const AdminAnalytics = () => {
         const [usersData, buildsData, rotationData] = await Promise.all([
           userService.listUsers(),
           buildService.getBuilds(),
-          rotationService.getRotationStatus().catch(() => null) // Optional, may fail if no data
+          rotationService.getExpiryDashboard().catch(() => null) // Optional, may fail if no data
         ]);
 
         setUsers(usersData);
@@ -89,7 +89,7 @@ const AdminAnalytics = () => {
 
   // Process data for Donut Chart (Build Status)
   const buildStatusCount = builds.reduce((acc, build) => {
-    const statusName = build.status.replace(/_/g, ' ');
+    const statusName = (build.status || 'UNKNOWN').replace(/_/g, ' ');
     acc[statusName] = (acc[statusName] || 0) + 1;
     return acc;
   }, {});
@@ -126,16 +126,27 @@ const AdminAnalytics = () => {
   };
 
   // Process data for Bar Chart (Users by Role)
-  const userRoleCount = users.reduce((acc, user) => {
-    const roleName = user.role.replace(/_/g, ' ');
-    acc[roleName] = (acc[roleName] || 0) + 1;
-    return acc;
-  }, {});
+  const roleStats = {};
+  users.forEach(user => {
+    const roles = user.roles && user.roles.length > 0 ? user.roles : ['No Role'];
+    roles.forEach(role => {
+      const roleName = role.replace(/_/g, ' ');
+      if (!roleStats[roleName]) {
+        roleStats[roleName] = { active: 0, inactive: 0 };
+      }
+      if (user.is_active) {
+        roleStats[roleName].active += 1;
+      } else {
+        roleStats[roleName].inactive += 1;
+      }
+    });
+  });
 
-  const barData = Object.entries(userRoleCount).map(([group, value]) => ({
-    group,
-    value
-  }));
+  const barData = [];
+  Object.entries(roleStats).forEach(([roleName, stats]) => {
+    barData.push({ group: 'Active', key: roleName, value: stats.active });
+    barData.push({ group: 'Inactive', key: roleName, value: stats.inactive });
+  });
 
   const barOptions = {
     title: 'Users by Persona Role',
@@ -149,7 +160,7 @@ const AdminAnalytics = () => {
         }
       },
       bottom: {
-        mapsTo: 'group',
+        mapsTo: 'key',
         scaleType: 'labels',
         truncation: {
           type: 'none'
@@ -157,6 +168,12 @@ const AdminAnalytics = () => {
       }
     },
     height: '400px',
+    color: {
+      scale: {
+        'Active': '#24a148',
+        'Inactive': '#da1e28'
+      }
+    },
     bars: {
       maxWidth: 50
     },
@@ -179,6 +196,9 @@ const AdminAnalytics = () => {
   }).length;
 
   const activeBuilds = builds.filter(b => b.status !== 'FINALIZED' && b.status !== 'CANCELLED').length;
+
+  const activeUsers = users.filter(u => u.is_active).length;
+  const disabledUsers = users.filter(u => !u.is_active).length;
 
   return (
     <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '2rem' }}>
@@ -218,6 +238,35 @@ const AdminAnalytics = () => {
                   <Tile style={{ minHeight: '120px' }}>
                      <h3>Total Builds</h3>
                      <h1 style={{ fontSize: '3rem', marginTop: '1rem' }}>{builds.length}</h1>
+                  </Tile>
+                </Column>
+              </Grid>
+
+              {/* User Status Row */}
+              <Grid narrow style={{ marginBottom: '2rem' }}>
+                <Column lg={8}>
+                  <Tile style={{
+                    minHeight: '120px',
+                    backgroundColor: '#24a148',
+                    color: '#fff'
+                  }}>
+                    <h3 style={{ color: '#fff' }}>Active Users</h3>
+                    <h1 style={{ fontSize: '3rem', marginTop: '1rem', color: '#fff' }}>{activeUsers}</h1>
+                  </Tile>
+                </Column>
+                <Column lg={8}>
+                  <Tile style={{
+                    minHeight: '120px',
+                    backgroundColor: disabledUsers > 0 ? '#da1e28' : '#24a148',
+                    color: '#fff'
+                  }}>
+                    <h3 style={{ color: '#fff' }}>Disabled Users</h3>
+                    <h1 style={{ fontSize: '3rem', marginTop: '1rem', color: '#fff' }}>{disabledUsers}</h1>
+                    {disabledUsers > 0 && (
+                      <p style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+                        {disabledUsers} user(s) are currently deactivated
+                      </p>
+                    )}
                   </Tile>
                 </Column>
               </Grid>
@@ -275,7 +324,7 @@ const AdminAnalytics = () => {
                 </Column>
                 <Column lg={8}>
                   <Tile>
-                    {typeof window !== 'undefined' && <SimpleBarChart data={barData} options={barOptions} />}
+                    {typeof window !== 'undefined' && <GroupedBarChart data={barData} options={barOptions} />}
                   </Tile>
                 </Column>
               </Grid>

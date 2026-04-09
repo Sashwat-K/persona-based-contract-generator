@@ -22,7 +22,7 @@ const NotFound = ({ onNavigate }) => {
       }}>
         404
       </div>
-      
+
       <h1 style={{
         fontSize: '2rem',
         marginBottom: '1rem',
@@ -30,17 +30,17 @@ const NotFound = ({ onNavigate }) => {
       }}>
         Page Not Found
       </h1>
-      
+
       <p style={{
         fontSize: '1rem',
         color: 'var(--cds-text-secondary)',
         marginBottom: '2rem',
         maxWidth: '500px'
       }}>
-        The page you're looking for doesn't exist or has been moved. 
+        The page you're looking for doesn't exist or has been moved.
         Please check the URL or navigate back to the home page.
       </p>
-      
+
       <div style={{
         display: 'flex',
         gap: '1rem',
@@ -53,7 +53,7 @@ const NotFound = ({ onNavigate }) => {
         >
           Go to Home
         </Button>
-        
+
         <Button
           kind="secondary"
           renderIcon={ArrowLeft}
@@ -62,7 +62,7 @@ const NotFound = ({ onNavigate }) => {
           Go Back
         </Button>
       </div>
-      
+
       <div style={{
         marginTop: '3rem',
         padding: '1.5rem',
@@ -78,7 +78,7 @@ const NotFound = ({ onNavigate }) => {
           color: 'var(--cds-text-secondary)',
           margin: 0
         }}>
-          If you believe this is an error, please contact your system administrator 
+          If you believe this is an error, please contact your system administrator
           or check the application documentation.
         </p>
       </div>
@@ -88,4 +88,4 @@ const NotFound = ({ onNavigate }) => {
 
 export default NotFound;
 
-// Made with Bob
+

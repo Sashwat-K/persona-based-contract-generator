@@ -114,4 +114,4 @@ attestationPublicKey: ${encryptedAttestationKey}
 
 module.exports = new ContractCliBridge();
 
-// Made with Bob
+

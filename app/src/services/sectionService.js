@@ -19,36 +19,36 @@ class SectionService {
   async submitSection(buildId, personaRole, plaintext, certContent) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     // Get existing sections to validate
     const existingSections = await this.getSections(buildId);
-    
+
     // Validate assignment and check if section already submitted
     const validation = await assignmentService.canSubmitSection(
-      buildId, 
-      personaRole, 
+      buildId,
+      personaRole,
       existingSections
     );
-    
+
     if (!validation.canSubmit) {
       throw new Error(validation.reason);
     }
-    
+
     // Encrypt section with HPCR certificate
     const encryptedPayload = await cryptoService.encryptSection(plaintext, certContent);
-    
+
     // Compute hash of encrypted payload
     const sectionHash = await cryptoService.hash(encryptedPayload);
-    
+
     // Get private key
     const privateKey = await cryptoService.getPrivateKey(user.id);
     if (!privateKey) {
       throw new Error('Private key not found. Please register your public key first.');
     }
-    
+
     // Sign the hash
     const signature = await cryptoService.sign(sectionHash, privateKey);
-    
+
     // Submit to backend
     const response = await apiClient.post(`/builds/${buildId}/sections`, {
       persona_role: personaRole,
@@ -56,7 +56,7 @@ class SectionService {
       section_hash: sectionHash,
       signature: signature
     });
-    
+
     return response.data;
   }
 
@@ -89,7 +89,7 @@ class SectionService {
   async getMySection(buildId) {
     const user = useAuthStore.getState().user;
     if (!user) return null;
-    
+
     const sections = await this.getSections(buildId);
     return sections.find(s => s.submitted_by === user.id) || null;
   }
@@ -122,12 +122,12 @@ class SectionService {
   async signSectionHash(sectionHash) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     const privateKey = await cryptoService.getPrivateKey(user.id);
     if (!privateKey) {
       throw new Error('Private key not found');
     }
-    
+
     return await cryptoService.sign(sectionHash, privateKey);
   }
 
@@ -141,7 +141,7 @@ class SectionService {
     if (!section.section_hash || !section.signature) {
       return false;
     }
-    
+
     return await cryptoService.verify(
       section.section_hash,
       section.signature,
@@ -156,7 +156,7 @@ class SectionService {
    */
   async getSectionStatus(buildId) {
     const sections = await this.getSections(buildId);
-    
+
     const status = {
       workload_owner: false,
       data_owner: false,
@@ -164,7 +164,7 @@ class SectionService {
       complete: false,
       sections: []
     };
-    
+
     sections.forEach(section => {
       status[section.persona_role] = true;
       status.sections.push({
@@ -174,9 +174,9 @@ class SectionService {
         hash: section.section_hash
       });
     });
-    
+
     status.complete = status.workload_owner && status.data_owner && status.auditor;
-    
+
     return status;
   }
 
@@ -199,15 +199,15 @@ class SectionService {
    */
   validateSectionContent(plaintext, personaRole) {
     const errors = [];
-    
+
     if (!plaintext || plaintext.trim().length === 0) {
       errors.push('Section content cannot be empty');
     }
-    
+
     if (plaintext.length > 1024 * 1024) { // 1MB limit
       errors.push('Section content exceeds 1MB limit');
     }
-    
+
     // Role-specific validation
     if (personaRole === 'workload_owner') {
       // Validate workload section structure
@@ -220,7 +220,7 @@ class SectionService {
         errors.push('Environment section must contain "env:" key');
       }
     }
-    
+
     return {
       valid: errors.length === 0,
       errors
@@ -230,4 +230,3 @@ class SectionService {
 
 export default new SectionService();
 
-// Made with Bob

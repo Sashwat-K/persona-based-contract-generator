@@ -39,42 +39,42 @@ import userService from '../services/userService';
 const BuildAssignments = ({ buildId }) => {
   const { user } = useAuthStore();
   const { getBuildAssignments } = useBuildStore();
-  
+
   const [assignments, setAssignments] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  
+
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedRole, setSelectedRole] = useState(null);
-  
+
   // Search state
   const [searchValue, setSearchValue] = useState('');
-  
+
   const isAdmin = userService.isAdmin();
   const isArchitect = userService.isArchitect();
   const canManageAssignments = isAdmin || isArchitect;
-  
+
   const personaRoles = [
     { id: 'workload_owner', label: 'Workload Owner', description: 'Submits workload section' },
     { id: 'data_owner', label: 'Data Owner', description: 'Submits environment section' },
     { id: 'auditor', label: 'Auditor', description: 'Submits attestation section' }
   ];
-  
+
   useEffect(() => {
     loadAssignments();
     if (canManageAssignments) {
       loadUsers();
     }
   }, [buildId]);
-  
+
   const loadAssignments = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const data = await assignmentService.getBuildAssignments(buildId);
       setAssignments(data);
@@ -84,7 +84,7 @@ const BuildAssignments = ({ buildId }) => {
       setLoading(false);
     }
   };
-  
+
   const loadUsers = async () => {
     try {
       const data = await userService.listUsers();
@@ -93,27 +93,27 @@ const BuildAssignments = ({ buildId }) => {
       console.error('Failed to load users:', err);
     }
   };
-  
+
   const handleCreateAssignment = async () => {
     if (!selectedUser || !selectedRole) {
       setError('Please select both user and role');
       return;
     }
-    
+
     setLoading(true);
     setError(null);
-    
+
     try {
       await assignmentService.createAssignment(buildId, selectedUser.id, selectedRole.id);
       setSuccess(`Successfully assigned ${selectedUser.label} as ${selectedRole.label}`);
-      
+
       // Reload assignments
       await loadAssignments();
-      
+
       // Close modal
       setIsModalOpen(false);
       resetModal();
-      
+
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -122,22 +122,22 @@ const BuildAssignments = ({ buildId }) => {
       setLoading(false);
     }
   };
-  
+
   const handleDeleteAssignment = async (userId, personaRole) => {
     if (!confirm(`Are you sure you want to remove this assignment?`)) {
       return;
     }
-    
+
     setLoading(true);
     setError(null);
-    
+
     try {
       await assignmentService.deleteAssignment(buildId, userId, personaRole);
       setSuccess('Assignment removed successfully');
-      
+
       // Reload assignments
       await loadAssignments();
-      
+
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -146,45 +146,45 @@ const BuildAssignments = ({ buildId }) => {
       setLoading(false);
     }
   };
-  
+
   const resetModal = () => {
     setSelectedUser(null);
     setSelectedRole(null);
   };
-  
+
   const handleOpenModal = () => {
     resetModal();
     setIsModalOpen(true);
   };
-  
+
   const handleCloseModal = () => {
     setIsModalOpen(false);
     resetModal();
   };
-  
+
   const getRoleTag = (role) => {
     const roleConfig = {
       workload_owner: { type: 'blue', label: 'Workload Owner' },
       data_owner: { type: 'green', label: 'Data Owner' },
       auditor: { type: 'purple', label: 'Auditor' }
     };
-    
+
     const config = roleConfig[role] || { type: 'gray', label: role };
     return <Tag type={config.type}>{config.label}</Tag>;
   };
-  
+
   const getAssignmentStatus = (assignment) => {
     // Check if section already submitted
     const sections = useBuildStore.getState().sections[buildId] || [];
     const hasSubmitted = sections.some(s => s.persona_role === assignment.persona_role);
-    
+
     if (hasSubmitted) {
       return <Tag type="green" renderIcon={CheckmarkFilled}>Submitted</Tag>;
     } else {
       return <Tag type="gray" renderIcon={WarningAlt}>Pending</Tag>;
     }
   };
-  
+
   const getUserOptions = () => {
     return users.map(u => ({
       id: u.id,
@@ -192,7 +192,7 @@ const BuildAssignments = ({ buildId }) => {
       email: u.email
     }));
   };
-  
+
   const getRoleOptions = () => {
     return personaRoles.map(r => ({
       id: r.id,
@@ -200,34 +200,34 @@ const BuildAssignments = ({ buildId }) => {
       description: r.description
     }));
   };
-  
+
   const getFilteredAssignments = () => {
     if (!searchValue) return assignments;
-    
+
     const search = searchValue.toLowerCase();
-    return assignments.filter(a => 
+    return assignments.filter(a =>
       a.user_name?.toLowerCase().includes(search) ||
       a.user_email?.toLowerCase().includes(search) ||
       a.persona_role?.toLowerCase().includes(search)
     );
   };
-  
+
   const getAssignmentSummary = () => {
     const summary = {
       workload_owner: 0,
       data_owner: 0,
       auditor: 0
     };
-    
+
     assignments.forEach(a => {
       if (summary.hasOwnProperty(a.persona_role)) {
         summary[a.persona_role]++;
       }
     });
-    
+
     return summary;
   };
-  
+
   const headers = [
     { key: 'user_name', header: 'User' },
     { key: 'user_email', header: 'Email' },
@@ -236,7 +236,7 @@ const BuildAssignments = ({ buildId }) => {
     { key: 'assigned_at', header: 'Assigned At' },
     { key: 'actions', header: 'Actions' }
   ];
-  
+
   const rows = getFilteredAssignments().map((assignment, index) => ({
     id: `${assignment.user_id}-${assignment.persona_role}`,
     user_name: assignment.user_name,
@@ -254,9 +254,9 @@ const BuildAssignments = ({ buildId }) => {
       </OverflowMenu>
     ) : null
   }));
-  
+
   const summary = getAssignmentSummary();
-  
+
   return (
     <div className="build-assignments">
       {error && (
@@ -268,7 +268,7 @@ const BuildAssignments = ({ buildId }) => {
           lowContrast
         />
       )}
-      
+
       {success && (
         <InlineNotification
           kind="success"
@@ -278,7 +278,7 @@ const BuildAssignments = ({ buildId }) => {
           lowContrast
         />
       )}
-      
+
       <div className="assignment-summary">
         <div className="summary-item">
           <UserMultiple size={20} />
@@ -298,7 +298,7 @@ const BuildAssignments = ({ buildId }) => {
           <span className="summary-value">{summary.auditor}</span>
         </div>
       </div>
-      
+
       <DataTable rows={rows} headers={headers}>
         {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
           <TableContainer title="Build Assignments" description="User-to-role assignments for this build">
@@ -342,7 +342,7 @@ const BuildAssignments = ({ buildId }) => {
           </TableContainer>
         )}
       </DataTable>
-      
+
       {assignments.length === 0 && !loading && (
         <div className="empty-state">
           <UserMultiple size={48} />
@@ -355,7 +355,7 @@ const BuildAssignments = ({ buildId }) => {
           )}
         </div>
       )}
-      
+
       <Modal
         open={isModalOpen}
         onRequestClose={handleCloseModal}
@@ -373,7 +373,7 @@ const BuildAssignments = ({ buildId }) => {
             Assign a user to a specific role for this build. Users must be assigned
             to submit sections for their role.
           </p>
-          
+
           <ComboBox
             id="user-select"
             titleText="Select User"
@@ -383,7 +383,7 @@ const BuildAssignments = ({ buildId }) => {
             onChange={({ selectedItem }) => setSelectedUser(selectedItem)}
             itemToString={(item) => item ? item.label : ''}
           />
-          
+
           <ComboBox
             id="role-select"
             titleText="Select Role"
@@ -394,7 +394,7 @@ const BuildAssignments = ({ buildId }) => {
             itemToString={(item) => item ? item.label : ''}
             helperText={selectedRole?.description}
           />
-          
+
           {selectedUser && selectedRole && (
             <InlineNotification
               kind="info"
@@ -406,7 +406,7 @@ const BuildAssignments = ({ buildId }) => {
           )}
         </div>
       </Modal>
-      
+
       <style>{`
         .build-assignments {
           margin: 1rem 0;
@@ -474,4 +474,3 @@ const BuildAssignments = ({ buildId }) => {
 
 export default BuildAssignments;
 
-// Made with Bob

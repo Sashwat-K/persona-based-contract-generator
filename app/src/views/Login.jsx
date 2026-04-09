@@ -13,6 +13,7 @@ import {
 } from '@carbon/react';
 import { LogoGithub, Document, WarningAlt, Settings, CheckmarkFilled, ErrorFilled, Renew } from '@carbon/icons-react';
 import { useAuthStore } from '../store/authStore';
+import { useConfigStore } from '../store/configStore';
 import authService from '../services/authService';
 import apiClient from '../services/apiClient';
 import HyperProtectIcon from '../components/HyperProtectIcon';
@@ -21,19 +22,20 @@ const Login = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberEmail, setRememberEmail] = useState(false);
-  
+
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [tempServerUrl, setTempServerUrl] = useState('http://localhost:8080');
   const [error, setError] = useState('');
-  
+
   // Server status
   const [serverStatus, setServerStatus] = useState('checking'); // 'checking', 'online', 'offline'
   const [isCheckingServer, setIsCheckingServer] = useState(false);
   const [serverVersion, setServerVersion] = useState(null);
-  
+
   const { setAuth } = useAuthStore();
-  
+  const setServerUrl = useConfigStore((state) => state.setServerUrl);
+
   // Load remembered email on mount
   useEffect(() => {
     const rememberedEmail = localStorage.getItem('remembered_email');
@@ -42,20 +44,20 @@ const Login = ({ onLogin }) => {
       setRememberEmail(true);
     }
   }, []);
-  
+
   useEffect(() => {
     // Get server URL from localStorage or use default
     const savedUrl = localStorage.getItem('server_url') || 'http://localhost:8080';
     setTempServerUrl(savedUrl);
-    
+
     // Check server status on mount
     checkServerStatus(savedUrl);
   }, []);
-  
+
   const checkServerStatus = async (url) => {
     setIsCheckingServer(true);
     setServerStatus('checking');
-    
+
     try {
       // Try to reach the health endpoint with proper CORS handling
       const response = await fetch(`${url}/health`, {
@@ -68,7 +70,7 @@ const Login = ({ onLogin }) => {
         credentials: 'omit',
         signal: AbortSignal.timeout(5000) // 5 second timeout
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         setServerStatus('online');
@@ -97,24 +99,24 @@ const Login = ({ onLogin }) => {
     e.preventDefault();
     setError('');
     setIsLoggingIn(true);
-    
+
     try {
       // Call real backend API
       const response = await authService.login(username, password);
-      
+
       // Store auth in Zustand store
       setAuth(response.user, response.token);
-      
+
       // Handle remember email
       if (rememberEmail) {
         localStorage.setItem('remembered_email', username);
       } else {
         localStorage.removeItem('remembered_email');
       }
-      
+
       // Notify parent component
       onLogin(true);
-      
+
     } catch (err) {
       console.error('Login error:', err);
       setError(err.message || 'Login failed. Please check your credentials and try again.');
@@ -125,12 +127,12 @@ const Login = ({ onLogin }) => {
 
   const handleServerUrlChange = async () => {
     const newUrl = tempServerUrl.trim();
-    
+
     if (!newUrl) {
       setError('Server URL cannot be empty');
       return;
     }
-    
+
     // Validate URL format
     try {
       const urlObj = new URL(newUrl);
@@ -142,11 +144,11 @@ const Login = ({ onLogin }) => {
       setError('Invalid URL format. Please enter a valid URL (e.g., http://localhost:8080)');
       return;
     }
-    
+
     // Check if server is reachable before applying
     setIsCheckingServer(true);
     setError('');
-    
+
     try {
       const response = await fetch(`${newUrl}/health`, {
         method: 'GET',
@@ -158,14 +160,15 @@ const Login = ({ onLogin }) => {
         credentials: 'omit',
         signal: AbortSignal.timeout(5000)
       });
-      
+
       if (response.ok) {
         // Server is reachable, apply the change
         localStorage.setItem('server_url', newUrl);
-        apiClient.defaults.baseURL = newUrl;
+        setServerUrl(newUrl);
+        apiClient.setBaseURL(newUrl);
         setServerStatus('online');
         setShowServerConfig(false);
-        
+
         const data = await response.json();
         setServerVersion(data.version || 'Unknown');
       } else {
@@ -220,7 +223,7 @@ const Login = ({ onLogin }) => {
             HPCR Contract Builder
           </span>
         </div>
-        
+
         {/* Window Controls */}
         <div style={{
           display: 'flex',
@@ -254,7 +257,7 @@ const Login = ({ onLogin }) => {
             title="Minimize"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
           <button
@@ -283,7 +286,7 @@ const Login = ({ onLogin }) => {
             title="Maximize"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <rect x="1" y="1" width="10" height="10" stroke="currentColor" strokeWidth="1.5" fill="none" rx="1"/>
+              <rect x="1" y="1" width="10" height="10" stroke="currentColor" strokeWidth="1.5" fill="none" rx="1" />
             </svg>
           </button>
           <button
@@ -312,8 +315,8 @@ const Login = ({ onLogin }) => {
             title="Close"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
         </div>
@@ -343,17 +346,17 @@ const Login = ({ onLogin }) => {
             </div>
 
             {/* Title */}
-            <h1 style={{ 
-              fontSize: '2rem', 
-              fontWeight: '400', 
+            <h1 style={{
+              fontSize: '2rem',
+              fontWeight: '400',
               marginBottom: '0.5rem',
               color: 'var(--cds-text-primary)'
             }}>
               Log in to <strong>IBM Confidential Computing Contract Generator</strong>
             </h1>
 
-            <p style={{ 
-              fontSize: '0.875rem', 
+            <p style={{
+              fontSize: '0.875rem',
               color: 'var(--cds-text-secondary)',
               marginBottom: '2rem'
             }}>
@@ -577,8 +580,8 @@ const Login = ({ onLogin }) => {
         }}>
           <div style={{ maxWidth: '600px' }}>
             {/* Main Heading */}
-            <h2 style={{ 
-              fontSize: '2.5rem', 
+            <h2 style={{
+              fontSize: '2.5rem',
               fontWeight: '300',
               marginBottom: '1rem',
               color: 'var(--cds-text-primary)',
@@ -587,7 +590,7 @@ const Login = ({ onLogin }) => {
               IBM Confidential Computing Contract Generator
             </h2>
 
-            <p style={{ 
+            <p style={{
               fontSize: '1rem',
               color: 'var(--cds-text-secondary)',
               marginBottom: '0.5rem',
@@ -596,7 +599,7 @@ const Login = ({ onLogin }) => {
               Powered by IBM Confidential Computing Team
             </p>
 
-            <p style={{ 
+            <p style={{
               fontSize: '1.125rem',
               color: 'var(--cds-text-secondary)',
               marginBottom: '2.5rem',
@@ -710,16 +713,16 @@ const Login = ({ onLogin }) => {
               borderRadius: '4px',
               borderLeft: '4px solid var(--cds-border-interactive)'
             }}>
-              <div style={{ 
-                fontSize: '0.875rem', 
+              <div style={{
+                fontSize: '0.875rem',
                 color: 'var(--cds-text-secondary)',
                 marginBottom: '1rem'
               }}>
                 <strong style={{ color: 'var(--cds-text-primary)' }}>Version:</strong> 1.0.0-beta
               </div>
 
-              <div style={{ 
-                display: 'flex', 
+              <div style={{
+                display: 'flex',
                 gap: '1.5rem',
                 flexWrap: 'wrap'
               }}>
@@ -794,7 +797,7 @@ const Login = ({ onLogin }) => {
               fontSize: '0.875rem',
               color: 'var(--cds-text-secondary)'
             }}>
-              <strong style={{ color: 'var(--cds-text-primary)' }}>Note:</strong> This is a development build. 
+              <strong style={{ color: 'var(--cds-text-primary)' }}>Note:</strong> This is a development build.
               For production deployment, ensure all security configurations are properly set and reviewed by your security team.
             </div>
           </div>
@@ -806,4 +809,4 @@ const Login = ({ onLogin }) => {
 
 export default Login;
 
-// Made with Bob
+

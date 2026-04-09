@@ -30,7 +30,7 @@ class UserService {
       password,
       roles
     });
-    
+
     return response.data.user;
   }
 
@@ -44,7 +44,23 @@ class UserService {
     const response = await apiClient.patch(`/users/${userId}/roles`, {
       roles
     });
-    
+
+    return response.data;
+  }
+
+  /**
+   * Update user profile details (admin only)
+   * @param {string} userId - User ID
+   * @param {string} name - User's full name
+   * @param {string} email - User's email
+   * @returns {Promise<Object>}
+   */
+  async updateUserProfile(userId, name, email) {
+    const response = await apiClient.patch(`/users/${userId}`, {
+      name,
+      email
+    });
+
     return response.data;
   }
 
@@ -55,6 +71,29 @@ class UserService {
    */
   async deactivateUser(userId) {
     await apiClient.delete(`/users/${userId}`);
+  }
+
+  /**
+   * Reactivate a deactivated user (admin only)
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>}
+   */
+  async reactivateUser(userId) {
+    const response = await apiClient.patch(`/users/${userId}/reactivate`);
+    return response.data;
+  }
+
+  /**
+   * Admin reset password for a user (admin only)
+   * @param {string} userId - User ID
+   * @param {string} newPassword - New password
+   * @returns {Promise<Object>}
+   */
+  async adminResetPassword(userId, newPassword) {
+    const response = await apiClient.patch(`/users/${userId}/reset-password`, {
+      new_password: newPassword
+    });
+    return response.data;
   }
 
   /**
@@ -77,7 +116,7 @@ class UserService {
     const response = await apiClient.put(`/users/${userId}/public-key`, {
       public_key: publicKey
     });
-    
+
     return response.data;
   }
 
@@ -101,7 +140,7 @@ class UserService {
     const response = await apiClient.patch(`/users/${userId}/password`, {
       new_password: newPassword
     });
-    
+
     return response.data;
   }
 
@@ -112,6 +151,16 @@ class UserService {
    */
   async forcePasswordChange(userId) {
     const response = await apiClient.post(`/rotation/force-password-change/${userId}`);
+    return response.data;
+  }
+
+  /**
+   * Force key rotation by revoking current public key (admin only)
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>}
+   */
+  async forceKeyRotation(userId) {
+    const response = await apiClient.post(`/rotation/revoke-key/${userId}`);
     return response.data;
   }
 
@@ -137,7 +186,7 @@ class UserService {
       name,
       expires_in_days: expiresInDays
     });
-    
+
     return response.data;
   }
 
@@ -189,4 +238,3 @@ class UserService {
 
 export default new UserService();
 
-// Made with Bob

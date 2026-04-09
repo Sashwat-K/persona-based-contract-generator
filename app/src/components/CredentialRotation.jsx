@@ -46,62 +46,81 @@ import rotationService from '../services/rotationService';
  */
 const CredentialRotation = () => {
   const {
-    expiredPasswords,
-    expiredKeys,
-    expiringPasswords,
-    expiringKeys,
+    expiredCredentials,
+    expiringSoon,
     loading,
     error,
-    fetchRotationStatus
+    setExpiredCredentials,
+    setExpiringSoon,
+    setLoading,
+    setError
   } = useRotationStore();
-  
+
+  // Derive arrays from store shape
+  const expiredPasswords = expiredCredentials?.expired_passwords || [];
+  const expiredKeys = expiredCredentials?.expired_keys || [];
+  const expiringPasswords = expiringSoon?.filter(i => i.type === 'password') || [];
+  const expiringKeys = expiringSoon?.filter(i => i.type === 'key') || [];
+
   const { user } = useAuthStore();
-  
+
   // UI state
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedRows, setSelectedRows] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  
+
   // Modal state
   const [showForceChangeModal, setShowForceChangeModal] = useState(false);
   const [showRevokeModal, setShowRevokeModal] = useState(false);
   const [operationInProgress, setOperationInProgress] = useState(false);
   const [operationResult, setOperationResult] = useState(null);
-  
+
   // Current user status
   const [userStatus, setUserStatus] = useState(null);
-  
+
   useEffect(() => {
     loadData();
   }, []);
-  
+
   const loadData = async () => {
-    await fetchRotationStatus();
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await rotationService.getExpiredCredentials();
+      setExpiredCredentials(data);
+
+      const soon = await rotationService.getUsersExpiringSoon(30).catch(() => []);
+      setExpiringSoon(soon);
+    } catch (err) {
+      setError(err.message || 'Failed to load rotation data');
+    } finally {
+      setLoading(false);
+    }
     await loadUserStatus();
   };
-  
+
   const loadUserStatus = async () => {
     try {
-      const status = await rotationService.getCurrentUserStatus();
+      const status = await rotationService.checkMyCredentialStatus();
       setUserStatus(status);
     } catch (err) {
       console.error('Failed to load user status:', err);
     }
   };
-  
+
   const handleForcePasswordChange = async () => {
     setOperationInProgress(true);
     setOperationResult(null);
-    
+
     try {
       const userIds = selectedRows.map(row => row.id);
       const result = await rotationService.bulkForcePasswordChange(userIds);
-      
+
       setOperationResult({
         success: true,
         message: `Successfully forced password change for ${result.affected} user(s)`
       });
-      
+
       // Refresh data
       await loadData();
       setSelectedRows([]);
@@ -115,20 +134,20 @@ const CredentialRotation = () => {
       setOperationInProgress(false);
     }
   };
-  
+
   const handleRevokeKeys = async () => {
     setOperationInProgress(true);
     setOperationResult(null);
-    
+
     try {
       const userIds = selectedRows.map(row => row.id);
       const result = await rotationService.bulkRevokeKeys(userIds);
-      
+
       setOperationResult({
         success: true,
         message: `Successfully revoked keys for ${result.affected} user(s)`
       });
-      
+
       // Refresh data
       await loadData();
       setSelectedRows([]);
@@ -142,7 +161,7 @@ const CredentialRotation = () => {
       setOperationInProgress(false);
     }
   };
-  
+
   const getStatusTag = (daysUntilExpiry) => {
     if (daysUntilExpiry < 0) {
       return <Tag type="red" renderIcon={ErrorFilled}>Expired</Tag>;
@@ -154,11 +173,11 @@ const CredentialRotation = () => {
       return <Tag type="green" renderIcon={CheckmarkFilled}>Good</Tag>;
     }
   };
-  
+
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString();
   };
-  
+
   const getDaysUntilExpiry = (expiryDate) => {
     const now = new Date();
     const expiry = new Date(expiryDate);
@@ -166,17 +185,17 @@ const CredentialRotation = () => {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return diffDays;
   };
-  
+
   const filterRows = (rows) => {
     if (!searchTerm) return rows;
-    
+
     return rows.filter(row =>
       row.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       row.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       row.full_name?.toLowerCase().includes(searchTerm.toLowerCase())
     );
   };
-  
+
   const renderPasswordTable = (data, title) => {
     const headers = [
       { key: 'username', header: 'Username' },
@@ -186,7 +205,7 @@ const CredentialRotation = () => {
       { key: 'days_until_expiry', header: 'Days Until Expiry' },
       { key: 'status', header: 'Status' }
     ];
-    
+
     const rows = filterRows(data).map(item => ({
       id: item.user_id,
       username: item.username,
@@ -196,7 +215,7 @@ const CredentialRotation = () => {
       days_until_expiry: item.days_until_expiry,
       status: getStatusTag(item.days_until_expiry)
     }));
-    
+
     return (
       <DataTable rows={rows} headers={headers}>
         {({
@@ -230,31 +249,37 @@ const CredentialRotation = () => {
               <TableHead>
                 <TableRow>
                   <TableSelectAll {...getSelectionProps()} />
-                  {headers.map((header) => (
-                    <TableHeader {...getHeaderProps({ header })}>
-                      {header.header}
-                    </TableHeader>
-                  ))}
+                  {headers.map((header) => {
+                    const { key, ...headerProps } = getHeaderProps({ header });
+                    return (
+                      <TableHeader key={key} {...headerProps}>
+                        {header.header}
+                      </TableHeader>
+                    );
+                  })}
                 </TableRow>
               </TableHead>
               <TableBody>
-                {rows.map((row) => (
-                  <TableRow {...getRowProps({ row })}>
-                    <TableSelectRow
-                      {...getSelectionProps({ row })}
-                      onChange={(checked) => {
-                        if (checked) {
-                          setSelectedRows([...selectedRows, row]);
-                        } else {
-                          setSelectedRows(selectedRows.filter(r => r.id !== row.id));
-                        }
-                      }}
-                    />
-                    {row.cells.map((cell) => (
-                      <TableCell key={cell.id}>{cell.value}</TableCell>
-                    ))}
-                  </TableRow>
-                ))}
+                {rows.map((row) => {
+                  const { key, ...rowProps } = getRowProps({ row });
+                  return (
+                    <TableRow key={key} {...rowProps}>
+                      <TableSelectRow
+                        {...getSelectionProps({ row })}
+                        onChange={(checked) => {
+                          if (checked) {
+                            setSelectedRows([...selectedRows, row]);
+                          } else {
+                            setSelectedRows(selectedRows.filter(r => r.id !== row.id));
+                          }
+                        }}
+                      />
+                      {row.cells.map((cell) => (
+                        <TableCell key={cell.id}>{cell.value}</TableCell>
+                      ))}
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>
@@ -262,7 +287,7 @@ const CredentialRotation = () => {
       </DataTable>
     );
   };
-  
+
   const renderKeyTable = (data, title) => {
     const headers = [
       { key: 'username', header: 'Username' },
@@ -273,7 +298,7 @@ const CredentialRotation = () => {
       { key: 'days_until_expiry', header: 'Days Until Expiry' },
       { key: 'status', header: 'Status' }
     ];
-    
+
     const rows = filterRows(data).map(item => ({
       id: item.user_id,
       username: item.username,
@@ -284,7 +309,7 @@ const CredentialRotation = () => {
       days_until_expiry: item.days_until_expiry,
       status: getStatusTag(item.days_until_expiry)
     }));
-    
+
     return (
       <DataTable rows={rows} headers={headers}>
         {({
@@ -317,31 +342,37 @@ const CredentialRotation = () => {
               <TableHead>
                 <TableRow>
                   <TableSelectAll {...getSelectionProps()} />
-                  {headers.map((header) => (
-                    <TableHeader {...getHeaderProps({ header })}>
-                      {header.header}
-                    </TableHeader>
-                  ))}
+                  {headers.map((header) => {
+                    const { key, ...headerProps } = getHeaderProps({ header });
+                    return (
+                      <TableHeader key={key} {...headerProps}>
+                        {header.header}
+                      </TableHeader>
+                    );
+                  })}
                 </TableRow>
               </TableHead>
               <TableBody>
-                {rows.map((row) => (
-                  <TableRow {...getRowProps({ row })}>
-                    <TableSelectRow
-                      {...getSelectionProps({ row })}
-                      onChange={(checked) => {
-                        if (checked) {
-                          setSelectedRows([...selectedRows, row]);
-                        } else {
-                          setSelectedRows(selectedRows.filter(r => r.id !== row.id));
-                        }
-                      }}
-                    />
-                    {row.cells.map((cell) => (
-                      <TableCell key={cell.id}>{cell.value}</TableCell>
-                    ))}
-                  </TableRow>
-                ))}
+                {rows.map((row) => {
+                  const { key, ...rowProps } = getRowProps({ row });
+                  return (
+                    <TableRow key={key} {...rowProps}>
+                      <TableSelectRow
+                        {...getSelectionProps({ row })}
+                        onChange={(checked) => {
+                          if (checked) {
+                            setSelectedRows([...selectedRows, row]);
+                          } else {
+                            setSelectedRows(selectedRows.filter(r => r.id !== row.id));
+                          }
+                        }}
+                      />
+                      {row.cells.map((cell) => (
+                        <TableCell key={cell.id}>{cell.value}</TableCell>
+                      ))}
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>
@@ -349,59 +380,66 @@ const CredentialRotation = () => {
       </DataTable>
     );
   };
-  
+
   const renderUserStatus = () => {
     if (!userStatus) return null;
-    
-    const passwordDays = getDaysUntilExpiry(userStatus.password_expires_at);
-    const keyDays = userStatus.key_expires_at ? getDaysUntilExpiry(userStatus.key_expires_at) : null;
-    
+
+    const passwordExpiry = userStatus.passwordExpiry;
+    const keyExpiry = userStatus.keyExpiry;
+
+    // If neither exists, nothing to show
+    if (!passwordExpiry && !keyExpiry) return null;
+
     return (
       <Tile className="user-status">
         <h5>Your Credential Status</h5>
-        
+
         <div className="status-grid">
-          <div className="status-item">
-            <div className="status-header">
-              <span className="status-label">Password</span>
-              {getStatusTag(passwordDays)}
+          {passwordExpiry && (
+            <div className="status-item">
+              <div className="status-header">
+                <span className="status-label">Password</span>
+                {getStatusTag(passwordExpiry.daysUntilExpiry)}
+              </div>
+              <div className="status-details">
+                <span>Changed: {formatDate(passwordExpiry.changedAt)}</span>
+                <span className="days-count">
+                  {passwordExpiry.isExpired ? 'Expired' : `${passwordExpiry.daysUntilExpiry} days remaining`}
+                </span>
+              </div>
+              {passwordExpiry.daysUntilExpiry <= 30 && (
+                <InlineNotification
+                  kind={passwordExpiry.isExpired ? 'error' : 'warning'}
+                  title={passwordExpiry.isExpired ? 'Password Expired' : 'Password Expiring Soon'}
+                  subtitle="Please change your password in Account Settings"
+                  lowContrast
+                  hideCloseButton
+                />
+              )}
             </div>
-            <div className="status-details">
-              <span>Expires: {formatDate(userStatus.password_expires_at)}</span>
-              <span className="days-count">
-                {passwordDays < 0 ? 'Expired' : `${passwordDays} days remaining`}
-              </span>
-            </div>
-            {passwordDays <= 30 && (
-              <InlineNotification
-                kind={passwordDays < 0 ? 'error' : 'warning'}
-                title={passwordDays < 0 ? 'Password Expired' : 'Password Expiring Soon'}
-                subtitle="Please change your password in Account Settings"
-                lowContrast
-                hideCloseButton
-              />
-            )}
-          </div>
-          
-          {userStatus.key_fingerprint && (
+          )}
+
+          {keyExpiry && (
             <div className="status-item">
               <div className="status-header">
                 <span className="status-label">Public Key</span>
-                {getStatusTag(keyDays)}
+                {getStatusTag(keyExpiry.daysUntilExpiry)}
               </div>
               <div className="status-details">
-                <span>Expires: {formatDate(userStatus.key_expires_at)}</span>
+                <span>Expires: {formatDate(keyExpiry.expiresAt)}</span>
                 <span className="days-count">
-                  {keyDays < 0 ? 'Expired' : `${keyDays} days remaining`}
+                  {keyExpiry.isExpired ? 'Expired' : `${keyExpiry.daysUntilExpiry} days remaining`}
                 </span>
-                <span className="fingerprint">
-                  Fingerprint: {userStatus.key_fingerprint.substring(0, 16)}...
-                </span>
+                {keyExpiry.fingerprint && (
+                  <span className="fingerprint">
+                    Fingerprint: {keyExpiry.fingerprint.substring(0, 16)}...
+                  </span>
+                )}
               </div>
-              {keyDays <= 30 && (
+              {keyExpiry.daysUntilExpiry <= 30 && (
                 <InlineNotification
-                  kind={keyDays < 0 ? 'error' : 'warning'}
-                  title={keyDays < 0 ? 'Key Expired' : 'Key Expiring Soon'}
+                  kind={keyExpiry.isExpired ? 'error' : 'warning'}
+                  title={keyExpiry.isExpired ? 'Key Expired' : 'Key Expiring Soon'}
                   subtitle="Please rotate your public key in Account Settings"
                   lowContrast
                   hideCloseButton
@@ -413,11 +451,11 @@ const CredentialRotation = () => {
       </Tile>
     );
   };
-  
+
   const renderSummaryStats = () => {
     const totalExpired = expiredPasswords.length + expiredKeys.length;
     const totalExpiring = expiringPasswords.length + expiringKeys.length;
-    
+
     return (
       <div className="summary-stats">
         <Tile className="stat-tile critical">
@@ -439,7 +477,7 @@ const CredentialRotation = () => {
       </div>
     );
   };
-  
+
   return (
     <div className="credential-rotation">
       {error && (
@@ -450,7 +488,7 @@ const CredentialRotation = () => {
           lowContrast
         />
       )}
-      
+
       {operationResult && (
         <InlineNotification
           kind={operationResult.success ? 'success' : 'error'}
@@ -460,7 +498,7 @@ const CredentialRotation = () => {
           lowContrast
         />
       )}
-      
+
       <div className="rotation-header">
         <h3>Credential Rotation Management</h3>
         <Button
@@ -472,10 +510,10 @@ const CredentialRotation = () => {
           Refresh
         </Button>
       </div>
-      
+
       {renderUserStatus()}
       {renderSummaryStats()}
-      
+
       {loading ? (
         <Loading description="Loading credential data..." withOverlay={false} />
       ) : (
@@ -506,7 +544,7 @@ const CredentialRotation = () => {
           </TabPanels>
         </Tabs>
       )}
-      
+
       {/* Force Password Change Modal */}
       <Modal
         open={showForceChangeModal}
@@ -529,7 +567,7 @@ const CredentialRotation = () => {
           </ProgressIndicator>
         )}
       </Modal>
-      
+
       {/* Revoke Keys Modal */}
       <Modal
         open={showRevokeModal}
@@ -553,7 +591,7 @@ const CredentialRotation = () => {
           </ProgressIndicator>
         )}
       </Modal>
-      
+
       <style>{`
         .credential-rotation {
           padding: 1rem;
@@ -657,4 +695,3 @@ const CredentialRotation = () => {
 
 export default CredentialRotation;
 
-// Made with Bob

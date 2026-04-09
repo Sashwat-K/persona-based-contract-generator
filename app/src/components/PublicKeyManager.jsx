@@ -34,25 +34,25 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  
+
   // Key generation state
   const [generatedKeyPair, setGeneratedKeyPair] = useState(null);
   const [keyFingerprint, setKeyFingerprint] = useState('');
-  
+
   // Key info state
   const [keyInfo, setKeyInfo] = useState(null);
   const [keyStatus, setKeyStatus] = useState(null);
-  
+
   const targetUserId = userId || user?.id;
   const isCurrentUser = !userId || userId === user?.id;
-  
+
   useEffect(() => {
     if (targetUserId) {
       loadKeyInfo();
       checkKeyStatus();
     }
   }, [targetUserId]);
-  
+
   const loadKeyInfo = async () => {
     try {
       const info = isCurrentUser
@@ -68,7 +68,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
       setKeyInfo(null);
     }
   };
-  
+
   const checkKeyStatus = async () => {
     try {
       const status = await authService.checkKeyExpiry();
@@ -77,18 +77,18 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
       console.error('Failed to check key status:', err);
     }
   };
-  
+
   const handleGenerateKey = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       // Generate RSA-4096 key pair
       const keyPair = await cryptoService.generateIdentityKeyPair();
-      
+
       // Compute fingerprint
       const fingerprint = await cryptoService.computeFingerprint(keyPair.publicKey);
-      
+
       setGeneratedKeyPair(keyPair);
       setKeyFingerprint(fingerprint);
       setCurrentStep(1);
@@ -98,27 +98,27 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
       setLoading(false);
     }
   };
-  
+
   const handleRegisterKey = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       // Store private key securely
       await cryptoService.storePrivateKey(targetUserId, generatedKeyPair.privateKey);
-      
+
       // Register public key with backend
       const result = isCurrentUser
         ? await authService.registerPublicKey(generatedKeyPair.publicKey)
         : await authService.registerPublicKeyForUser(targetUserId, generatedKeyPair.publicKey);
-      
+
       setSuccess(`Public key registered successfully! Fingerprint: ${result.fingerprint.substring(0, 16)}...`);
       setCurrentStep(2);
-      
+
       // Reload key info
       await loadKeyInfo();
       await checkKeyStatus();
-      
+
       // Close modal after 2 seconds
       setTimeout(() => {
         setIsModalOpen(false);
@@ -130,7 +130,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
       setLoading(false);
     }
   };
-  
+
   const resetModal = () => {
     setCurrentStep(0);
     setGeneratedKeyPair(null);
@@ -138,20 +138,20 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
     setError(null);
     setSuccess(null);
   };
-  
+
   const handleOpenModal = () => {
     resetModal();
     setIsModalOpen(true);
   };
-  
+
   const handleCloseModal = () => {
     setIsModalOpen(false);
     resetModal();
   };
-  
+
   const getKeyStatusTag = () => {
     if (!keyStatus) return null;
-    
+
     if (keyStatus.isExpired) {
       return <Tag type="red" renderIcon={ErrorFilled}>Expired</Tag>;
     } else if (keyStatus.daysUntilExpiry <= 7) {
@@ -160,13 +160,15 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
       return <Tag type="green" renderIcon={CheckmarkFilled}>Active</Tag>;
     }
   };
-  
+
   const formatFingerprint = (fingerprint) => {
     if (!fingerprint) return 'N/A';
-    // Format as XX:XX:XX:...
+    // If already formatted with colons, return as-is
+    if (fingerprint.includes(':')) return fingerprint;
+    // Format plain hex as XX:XX:XX:...
     return fingerprint.match(/.{1,2}/g)?.join(':') || fingerprint;
   };
-  
+
   return (
     <div className="public-key-manager">
       <Tile className="key-info-tile">
@@ -177,7 +179,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           </h4>
           {getKeyStatusTag()}
         </div>
-        
+
         {keyInfo ? (
           <div className="key-details">
             <div className="key-detail-row">
@@ -186,12 +188,12 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
                 {formatFingerprint(keyInfo.fingerprint)}
               </CodeSnippet>
             </div>
-            
+
             <div className="key-detail-row">
               <span className="label">Registered:</span>
               <span>{new Date(keyInfo.created_at).toLocaleDateString()}</span>
             </div>
-            
+
             <div className="key-detail-row">
               <span className="label">Expires:</span>
               <span>
@@ -203,7 +205,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
                 )}
               </span>
             </div>
-            
+
             {keyStatus?.isExpired && (
               <InlineNotification
                 kind="error"
@@ -212,7 +214,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
                 lowContrast
               />
             )}
-            
+
             {keyStatus && keyStatus.daysUntilExpiry <= 7 && !keyStatus.isExpired && (
               <InlineNotification
                 kind="warning"
@@ -221,7 +223,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
                 lowContrast
               />
             )}
-            
+
             <Button
               kind="tertiary"
               renderIcon={Renew}
@@ -239,7 +241,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
               subtitle="You must register a public key to perform cryptographic operations."
               lowContrast
             />
-            
+
             <Button
               kind="primary"
               renderIcon={Locked}
@@ -250,7 +252,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           </div>
         )}
       </Tile>
-      
+
       <Modal
         open={isModalOpen}
         onRequestClose={handleCloseModal}
@@ -277,7 +279,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
             description="Key registered successfully"
           />
         </ProgressIndicator>
-        
+
         <div className="modal-content">
           {error && (
             <InlineNotification
@@ -288,7 +290,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
               lowContrast
             />
           )}
-          
+
           {success && (
             <InlineNotification
               kind="success"
@@ -297,7 +299,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
               lowContrast
             />
           )}
-          
+
           {currentStep === 0 && (
             <div className="step-content">
               <p>
@@ -305,7 +307,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
                 The private key will be stored securely on your device, and the public key
                 will be registered with the server.
               </p>
-              
+
               {keyInfo && (
                 <InlineNotification
                   kind="info"
@@ -316,11 +318,11 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
               )}
             </div>
           )}
-          
+
           {currentStep === 1 && generatedKeyPair && (
             <div className="step-content">
               <p>Key pair generated successfully!</p>
-              
+
               <div className="key-info-display">
                 <TextInput
                   id="fingerprint"
@@ -328,7 +330,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
                   value={formatFingerprint(keyFingerprint)}
                   readOnly
                 />
-                
+
                 <InlineNotification
                   kind="info"
                   title="Secure Storage"
@@ -338,7 +340,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
               </div>
             </div>
           )}
-          
+
           {currentStep === 2 && (
             <div className="step-content">
               <InlineNotification
@@ -351,7 +353,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           )}
         </div>
       </Modal>
-      
+
       <style>{`
         .public-key-manager {
           margin: 1rem 0;
@@ -428,4 +430,3 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
 
 export default PublicKeyManager;
 
-// Made with Bob

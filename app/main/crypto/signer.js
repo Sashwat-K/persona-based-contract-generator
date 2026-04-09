@@ -66,4 +66,4 @@ class Signer {
 
 module.exports = new Signer();
 
-// Made with Bob
+

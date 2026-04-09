@@ -6,7 +6,7 @@
  */
 export const formatDate = (timestamp, options = {}) => {
   if (!timestamp) return 'N/A';
-  
+
   const defaultOptions = {
     year: 'numeric',
     month: 'short',
@@ -15,7 +15,7 @@ export const formatDate = (timestamp, options = {}) => {
     minute: '2-digit',
     ...options
   };
-  
+
   return new Date(timestamp).toLocaleString('en-US', defaultOptions);
 };
 
@@ -26,7 +26,7 @@ export const formatDate = (timestamp, options = {}) => {
  */
 export const formatRelativeTime = (timestamp) => {
   if (!timestamp) return 'N/A';
-  
+
   const now = new Date();
   const date = new Date(timestamp);
   const diffMs = now - date;
@@ -34,12 +34,12 @@ export const formatRelativeTime = (timestamp) => {
   const diffMin = Math.floor(diffSec / 60);
   const diffHour = Math.floor(diffMin / 60);
   const diffDay = Math.floor(diffHour / 24);
-  
+
   if (diffSec < 60) return 'just now';
   if (diffMin < 60) return `${diffMin} minute${diffMin > 1 ? 's' : ''} ago`;
   if (diffHour < 24) return `${diffHour} hour${diffHour > 1 ? 's' : ''} ago`;
   if (diffDay < 30) return `${diffDay} day${diffDay > 1 ? 's' : ''} ago`;
-  
+
   return formatDate(timestamp);
 };
 
@@ -52,11 +52,11 @@ export const formatRelativeTime = (timestamp) => {
  */
 export const formatHash = (hash, truncate = true, length = 8) => {
   if (!hash) return 'N/A';
-  
+
   if (!truncate || hash.length <= length * 2 + 3) {
     return hash;
   }
-  
+
   return `${hash.substring(0, length)}...${hash.substring(hash.length - length)}`;
 };
 
@@ -67,10 +67,10 @@ export const formatHash = (hash, truncate = true, length = 8) => {
  */
 export const formatFingerprint = (fingerprint) => {
   if (!fingerprint) return 'N/A';
-  
+
   // If already formatted, return as-is
   if (fingerprint.includes(':')) return fingerprint;
-  
+
   // Add colons every 2 characters
   return fingerprint.match(/.{1,2}/g)?.join(':').toUpperCase() || fingerprint;
 };
@@ -84,13 +84,13 @@ export const formatFingerprint = (fingerprint) => {
 export const formatFileSize = (bytes, decimals = 2) => {
   if (bytes === 0) return '0 Bytes';
   if (!bytes) return 'N/A';
-  
+
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  
+
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
+
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
@@ -111,7 +111,7 @@ export const formatUserName = (user) => {
  */
 export const formatRoleName = (role) => {
   if (!role) return 'N/A';
-  
+
   // Convert SNAKE_CASE to Title Case
   return role
     .split('_')
@@ -126,7 +126,7 @@ export const formatRoleName = (role) => {
  */
 export const formatBuildStatus = (status) => {
   if (!status) return 'Unknown';
-  
+
   return status
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
@@ -140,12 +140,12 @@ export const formatBuildStatus = (status) => {
  */
 export const formatDuration = (ms) => {
   if (!ms || ms < 0) return '0s';
-  
+
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-  
+
   if (days > 0) return `${days}d ${hours % 24}h`;
   if (hours > 0) return `${hours}h ${minutes % 60}m`;
   if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
@@ -159,12 +159,12 @@ export const formatDuration = (ms) => {
  */
 export const formatDaysUntilExpiry = (expiryDate) => {
   if (!expiryDate) return 'N/A';
-  
+
   const now = new Date();
   const expiry = new Date(expiryDate);
   const diffMs = expiry - now;
   const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-  
+
   if (diffDays < 0) return 'Expired';
   if (diffDays === 0) return 'Expires today';
   if (diffDays === 1) return 'Expires tomorrow';
@@ -181,7 +181,7 @@ export const formatDaysUntilExpiry = (expiryDate) => {
 export const truncateText = (text, maxLength = 50, suffix = '...') => {
   if (!text) return '';
   if (text.length <= maxLength) return text;
-  
+
   return text.substring(0, maxLength - suffix.length) + suffix;
 };
 
@@ -194,7 +194,7 @@ export const truncateText = (text, maxLength = 50, suffix = '...') => {
  */
 export const formatPercentage = (value, total, decimals = 1) => {
   if (!total || total === 0) return '0%';
-  
+
   const percentage = (value / total) * 100;
   return `${percentage.toFixed(decimals)}%`;
 };
@@ -231,12 +231,12 @@ export const formatJSON = (obj, indent = 2) => {
  */
 export const formatBase64 = (base64, length = 20) => {
   if (!base64) return 'N/A';
-  
+
   if (base64.length <= length * 2) {
     return base64;
   }
-  
+
   return `${base64.substring(0, length)}...${base64.substring(base64.length - length)}`;
 };
 
-// Made with Bob
+

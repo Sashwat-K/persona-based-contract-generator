@@ -14,13 +14,13 @@ class TokenService {
   async listTokens(userId) {
     const response = await apiClient.get(`/users/${userId}/tokens`);
     const tokens = response.data.tokens || [];
-    
+
     // Update store if it's current user's tokens
     const currentUser = useAuthStore.getState().user;
     if (currentUser && userId === currentUser.id) {
       useAuthStore.getState().setApiTokens(tokens);
     }
-    
+
     return tokens;
   }
 
@@ -31,7 +31,7 @@ class TokenService {
   async listMyTokens() {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     return this.listTokens(user.id);
   }
 
@@ -47,15 +47,15 @@ class TokenService {
       name,
       expires_in_days: expiresInDays
     });
-    
+
     const token = response.data;
-    
+
     // Update store if it's current user's token
     const currentUser = useAuthStore.getState().user;
     if (currentUser && userId === currentUser.id) {
       useAuthStore.getState().addApiToken(token);
     }
-    
+
     return token;
   }
 
@@ -68,7 +68,7 @@ class TokenService {
   async createMyToken(name, expiresInDays) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     return this.createToken(user.id, name, expiresInDays);
   }
 
@@ -80,7 +80,7 @@ class TokenService {
    */
   async revokeToken(userId, tokenId) {
     await apiClient.delete(`/users/${userId}/tokens/${tokenId}`);
-    
+
     // Update store if it's current user's token
     const currentUser = useAuthStore.getState().user;
     if (currentUser && userId === currentUser.id) {
@@ -96,7 +96,7 @@ class TokenService {
   async revokeMyToken(tokenId) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     return this.revokeToken(user.id, tokenId);
   }
 
@@ -133,7 +133,7 @@ class TokenService {
     const tokens = await this.listTokens(userId);
     const now = Date.now();
     const sevenDaysFromNow = now + (7 * 24 * 60 * 60 * 1000);
-    
+
     const stats = {
       total: tokens.length,
       active: 0,
@@ -145,10 +145,10 @@ class TokenService {
         expiringSoon: []
       }
     };
-    
+
     tokens.forEach(token => {
       const expiresAt = new Date(token.expires_at).getTime();
-      
+
       if (expiresAt < now) {
         stats.expired++;
         stats.tokens.expired.push(token);
@@ -162,7 +162,7 @@ class TokenService {
         stats.tokens.active.push(token);
       }
     });
-    
+
     return stats;
   }
 
@@ -173,7 +173,7 @@ class TokenService {
   async getMyTokenStatistics() {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     return this.getTokenStatistics(user.id);
   }
 
@@ -188,7 +188,7 @@ class TokenService {
       success: [],
       failed: []
     };
-    
+
     for (const tokenId of tokenIds) {
       try {
         await this.revokeToken(userId, tokenId);
@@ -200,7 +200,7 @@ class TokenService {
         });
       }
     }
-    
+
     return results;
   }
 
@@ -212,11 +212,11 @@ class TokenService {
   async revokeExpiredTokens(userId) {
     const stats = await this.getTokenStatistics(userId);
     const expiredTokenIds = stats.tokens.expired.map(t => t.token_id);
-    
+
     if (expiredTokenIds.length === 0) {
       return 0;
     }
-    
+
     const results = await this.bulkRevokeTokens(userId, expiredTokenIds);
     return results.success.length;
   }
@@ -228,14 +228,14 @@ class TokenService {
   async revokeAllMyTokens() {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
-    
+
     const tokens = await this.listMyTokens();
     const tokenIds = tokens.map(t => t.token_id);
-    
+
     if (tokenIds.length === 0) {
       return 0;
     }
-    
+
     const results = await this.bulkRevokeTokens(user.id, tokenIds);
     return results.success.length;
   }
@@ -274,7 +274,7 @@ class TokenService {
     if (!token || token.length < 16) {
       return '****';
     }
-    
+
     const start = token.substring(0, 8);
     const end = token.substring(token.length - 8);
     return `${start}...${end}`;
@@ -318,7 +318,7 @@ class TokenService {
    */
   getTokenStatus(token) {
     const days = this.daysUntilExpiry(token.expires_at);
-    
+
     if (days <= 0) {
       return {
         status: 'expired',
@@ -343,4 +343,3 @@ class TokenService {
 
 export default new TokenService();
 
-// Made with Bob

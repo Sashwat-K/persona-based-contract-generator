@@ -10,12 +10,12 @@ export const useRotationStore = create((set, get) => ({
     expired_passwords: [],
     expired_keys: []
   },
-  
+
   myCredentialStatus: null,
-  
+
   loading: false,
   error: null,
-  
+
   // Dashboard data
   dashboard: {
     totalExpiredPasswords: 0,
@@ -23,10 +23,10 @@ export const useRotationStore = create((set, get) => ({
     totalAffectedUsers: 0,
     lastUpdated: null
   },
-  
+
   // Expiring soon (within 7 days)
   expiringSoon: [],
-  
+
   // Actions
   setExpiredCredentials: (data) => set({
     expiredCredentials: data,
@@ -41,17 +41,17 @@ export const useRotationStore = create((set, get) => ({
     },
     error: null
   }),
-  
+
   setMyStatus: (status) => set({ myCredentialStatus: status }),
-  
+
   setExpiringSoon: (users) => set({ expiringSoon: users }),
-  
+
   setLoading: (loading) => set({ loading }),
-  
+
   setError: (error) => set({ error }),
-  
+
   clearError: () => set({ error: null }),
-  
+
   // Update after action
   removeExpiredPassword: (userId) => set((state) => ({
     expiredCredentials: {
@@ -65,7 +65,7 @@ export const useRotationStore = create((set, get) => ({
       totalExpiredPasswords: Math.max(0, state.dashboard.totalExpiredPasswords - 1)
     }
   })),
-  
+
   removeExpiredKey: (userId) => set((state) => ({
     expiredCredentials: {
       ...state.expiredCredentials,
@@ -78,24 +78,24 @@ export const useRotationStore = create((set, get) => ({
       totalExpiredKeys: Math.max(0, state.dashboard.totalExpiredKeys - 1)
     }
   })),
-  
+
   // Computed
   hasExpiredCredentials: () => {
     const state = get();
-    return state.dashboard.totalExpiredPasswords > 0 || 
-           state.dashboard.totalExpiredKeys > 0;
+    return state.dashboard.totalExpiredPasswords > 0 ||
+      state.dashboard.totalExpiredKeys > 0;
   },
-  
+
   getExpiredPasswordUsers: () => {
     const state = get();
     return state.expiredCredentials.expired_passwords || [];
   },
-  
+
   getExpiredKeyUsers: () => {
     const state = get();
     return state.expiredCredentials.expired_keys || [];
   },
-  
+
   getUsersWithBothExpired: () => {
     const state = get();
     const passwordUserIds = new Set(
@@ -104,7 +104,7 @@ export const useRotationStore = create((set, get) => ({
     const keyUserIds = new Set(
       state.expiredCredentials.expired_keys?.map(u => u.user_id) || []
     );
-    
+
     const bothExpired = [];
     passwordUserIds.forEach(userId => {
       if (keyUserIds.has(userId)) {
@@ -114,7 +114,7 @@ export const useRotationStore = create((set, get) => ({
         const keyUser = state.expiredCredentials.expired_keys.find(
           u => u.user_id === userId
         );
-        
+
         bothExpired.push({
           user_id: userId,
           name: passwordUser?.name || keyUser?.name,
@@ -124,37 +124,37 @@ export const useRotationStore = create((set, get) => ({
         });
       }
     });
-    
+
     return bothExpired;
   },
-  
+
   getMyWarnings: () => {
     const state = get();
     return state.myCredentialStatus?.warnings || [];
   },
-  
+
   hasMyWarnings: () => {
     const state = get();
     return (state.myCredentialStatus?.warnings?.length || 0) > 0;
   },
-  
+
   hasMyErrors: () => {
     const state = get();
     return state.myCredentialStatus?.warnings?.some(w => w.severity === 'error') || false;
   },
-  
+
   getExpiringSoonCount: () => {
     const state = get();
     return state.expiringSoon.length;
   },
-  
+
   getExpiringSoonByType: () => {
     const state = get();
     const byType = {
       password: [],
       key: []
     };
-    
+
     state.expiringSoon.forEach(item => {
       if (item.type === 'password') {
         byType.password.push(item);
@@ -162,10 +162,10 @@ export const useRotationStore = create((set, get) => ({
         byType.key.push(item);
       }
     });
-    
+
     return byType;
   },
-  
+
   getDashboardSummary: () => {
     const state = get();
     return {
@@ -175,12 +175,12 @@ export const useRotationStore = create((set, get) => ({
       criticalUsers: state.getUsersWithBothExpired().length
     };
   },
-  
+
   // Get users sorted by urgency
   getUsersByUrgency: () => {
     const state = get();
     const users = [];
-    
+
     // Add users with both expired
     const bothExpired = state.getUsersWithBothExpired();
     bothExpired.forEach(user => {
@@ -190,7 +190,7 @@ export const useRotationStore = create((set, get) => ({
         issues: ['password', 'key']
       });
     });
-    
+
     // Add users with only password expired
     const passwordUserIds = new Set(bothExpired.map(u => u.user_id));
     state.expiredCredentials.expired_passwords?.forEach(user => {
@@ -202,7 +202,7 @@ export const useRotationStore = create((set, get) => ({
         });
       }
     });
-    
+
     // Add users with only key expired
     const keyUserIds = new Set(bothExpired.map(u => u.user_id));
     state.expiredCredentials.expired_keys?.forEach(user => {
@@ -214,7 +214,7 @@ export const useRotationStore = create((set, get) => ({
         });
       }
     });
-    
+
     // Add users expiring soon
     state.expiringSoon.forEach(item => {
       const existingUser = users.find(u => u.user_id === item.userId);
@@ -230,15 +230,15 @@ export const useRotationStore = create((set, get) => ({
         });
       }
     });
-    
+
     return users;
   },
-  
+
   // Statistics
   getRotationStatistics: () => {
     const state = get();
     const usersByUrgency = state.getUsersByUrgency();
-    
+
     return {
       total: usersByUrgency.length,
       critical: usersByUrgency.filter(u => u.urgency === 'critical').length,
@@ -253,4 +253,3 @@ export const useRotationStore = create((set, get) => ({
   }
 }));
 
-// Made with Bob

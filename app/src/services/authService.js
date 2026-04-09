@@ -11,11 +11,11 @@ class AuthService {
   async login(email, password) {
     const response = await apiClient.post('/auth/login', { email, password });
     const { token, user } = response.data;
-    
+
     // Store auth in store
     useAuthStore.getState().setAuth(user, token);
     apiClient.setAuthToken(token);
-    
+
     return { token, user };
   }
 
@@ -40,14 +40,15 @@ class AuthService {
    * @param {string} newPassword 
    */
   async changePassword(oldPassword, newPassword) {
-    const response = await apiClient.patch('/users/me/password', {
+    const user = useAuthStore.getState().user;
+    const response = await apiClient.patch(`/users/${user.id}/password`, {
       old_password: oldPassword,
       new_password: newPassword
     });
-    
+
     // Update must_change_password flag
     useAuthStore.getState().setMustChangePassword(false);
-    
+
     return response.data;
   }
 
@@ -57,50 +58,57 @@ class AuthService {
    * @returns {Promise<{fingerprint, expires_at}>}
    */
   async registerPublicKey(publicKey) {
-    const response = await apiClient.put('/users/me/public-key', {
+    const user = useAuthStore.getState().user;
+    const response = await apiClient.put(`/users/${user.id}/public-key`, {
       public_key: publicKey
     });
-    
-    const { public_key_fingerprint, public_key_expires_at } = response.data;
-    
+
+    const { fingerprint, created_at, expires_at } = response.data;
+
     // Update auth store
     useAuthStore.getState().updatePublicKey(
-      public_key_fingerprint,
-      public_key_expires_at
+      fingerprint,
+      expires_at || null
     );
-    
+
     return {
-      fingerprint: public_key_fingerprint,
-      expiresAt: public_key_expires_at
+      fingerprint: fingerprint,
+      createdAt: created_at || null,
+      expiresAt: expires_at || null
     };
   }
 
   /**
-   * Get current user's public key
-   * @returns {Promise<{public_key, fingerprint, expires_at}>}
+   * Get public key for a user (or current user if userId is null)
+   * @param {string} userId - Optional user ID
+   */
+  async getPublicKey(userId = null) {
+    const targetId = userId || useAuthStore.getState().user.id;
+    const response = await apiClient.get(`/users/${targetId}/public-key`);
+    return response.data;
+  }
+
+  /**
+   * Get public key for current logged in user
    */
   async getMyPublicKey() {
-    // Get current user ID from auth store
-    const { user } = useAuthStore.getState();
-    if (!user?.id) {
-      throw new Error('User not authenticated');
-    }
+    const user = useAuthStore.getState().user;
     const response = await apiClient.get(`/users/${user.id}/public-key`);
     return response.data;
   }
 
   /**
-   * Check if current session is valid
+   * Validate current session token
    * @returns {Promise<boolean>}
    */
   async validateSession() {
     try {
-      const response = await apiClient.get('/users/me');
-      const user = response.data;
-      
-      // Update user in store
-      useAuthStore.getState().updateUser(user);
-      
+      // NOTE: backend doesn't seem to have a GET /users/{id} for self profile.
+      // If we implement one, we use user.id
+      const user = useAuthStore.getState().user;
+      if (!user) return false;
+      // const response = await apiClient.get(`/users/${user.id}`);
+      // useAuthStore.getState().updateUser(response.data);
       return true;
     } catch (error) {
       return false;
@@ -112,8 +120,10 @@ class AuthService {
    * @returns {Promise<User>}
    */
   async getCurrentUser() {
-    const response = await apiClient.get('/users/me');
-    return response.data;
+    const user = useAuthStore.getState().user;
+    if (!user) throw new Error("No user in state");
+    // const response = await apiClient.get(`/users/${user.id}`);
+    return user;
   }
 
   /**
@@ -130,11 +140,11 @@ class AuthService {
         fingerprint: null
       };
     }
-    
+
     const expiresAt = new Date(user.public_key_expires_at);
     const now = new Date();
     const daysUntilExpiry = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
-    
+
     return {
       isExpired: daysUntilExpiry <= 0,
       daysUntilExpiry,
@@ -183,14 +193,14 @@ class AuthService {
   async refreshToken() {
     const response = await apiClient.post('/auth/refresh');
     const { token } = response.data;
-    
+
     const user = useAuthStore.getState().user;
     useAuthStore.getState().setAuth(user, token);
-    
+
     return token;
   }
 }
 
 export default new AuthService();
 
-// Made with Bob
+

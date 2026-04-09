@@ -42,20 +42,20 @@ class RotationService {
   async checkMyCredentialStatus() {
     const user = useAuthStore.getState().user;
     if (!user) return null;
-    
+
     const status = {
       passwordExpiry: null,
       keyExpiry: null,
       warnings: []
     };
-    
+
     // Check password expiry
     if (user.password_changed_at) {
       const passwordChangedAt = new Date(user.password_changed_at);
       const passwordAge = Date.now() - passwordChangedAt.getTime();
       const daysOld = Math.floor(passwordAge / (1000 * 60 * 60 * 24));
       const daysUntilExpiry = 90 - daysOld;
-      
+
       if (daysOld >= 90) {
         status.warnings.push({
           type: 'password',
@@ -71,7 +71,7 @@ class RotationService {
           daysUntilExpiry
         });
       }
-      
+
       status.passwordExpiry = {
         changedAt: user.password_changed_at,
         daysOld,
@@ -79,12 +79,12 @@ class RotationService {
         isExpired: daysOld >= 90
       };
     }
-    
+
     // Check key expiry
     if (user.public_key_expires_at) {
       const expiresAt = new Date(user.public_key_expires_at);
       const daysUntilExpiry = Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24));
-      
+
       if (daysUntilExpiry <= 0) {
         status.warnings.push({
           type: 'key',
@@ -100,7 +100,7 @@ class RotationService {
           daysUntilExpiry
         });
       }
-      
+
       status.keyExpiry = {
         expiresAt: user.public_key_expires_at,
         daysUntilExpiry,
@@ -108,7 +108,7 @@ class RotationService {
         fingerprint: user.public_key_fingerprint
       };
     }
-    
+
     return status;
   }
 
@@ -128,7 +128,7 @@ class RotationService {
   async hasExpiredCredentials() {
     const status = await this.checkMyCredentialStatus();
     if (!status) return false;
-    
+
     return status.warnings.some(w => w.severity === 'error');
   }
 
@@ -138,7 +138,7 @@ class RotationService {
    */
   async getExpiryDashboard() {
     const expiredData = await this.getExpiredCredentials();
-    
+
     const summary = {
       totalExpiredPasswords: expiredData.expired_passwords?.length || 0,
       totalExpiredKeys: expiredData.expired_keys?.length || 0,
@@ -149,7 +149,7 @@ class RotationService {
       expiredPasswords: expiredData.expired_passwords || [],
       expiredKeys: expiredData.expired_keys || []
     };
-    
+
     return summary;
   }
 
@@ -161,15 +161,15 @@ class RotationService {
   async getUsersExpiringSoon(days = 7) {
     const expiredData = await this.getExpiredCredentials();
     const threshold = Date.now() + (days * 24 * 60 * 60 * 1000);
-    
+
     const expiringSoon = [];
-    
+
     // Check passwords
     if (expiredData.expired_passwords) {
       expiredData.expired_passwords.forEach(user => {
         const changedAt = new Date(user.password_changed_at);
         const expiryDate = new Date(changedAt.getTime() + (90 * 24 * 60 * 60 * 1000));
-        
+
         if (expiryDate.getTime() <= threshold) {
           expiringSoon.push({
             userId: user.user_id,
@@ -182,12 +182,12 @@ class RotationService {
         }
       });
     }
-    
+
     // Check keys
     if (expiredData.expired_keys) {
       expiredData.expired_keys.forEach(user => {
         const expiresAt = new Date(user.public_key_expires_at);
-        
+
         if (expiresAt.getTime() <= threshold) {
           expiringSoon.push({
             userId: user.user_id,
@@ -201,7 +201,7 @@ class RotationService {
         }
       });
     }
-    
+
     return expiringSoon;
   }
 
@@ -215,7 +215,7 @@ class RotationService {
       success: [],
       failed: []
     };
-    
+
     for (const userId of userIds) {
       try {
         await this.forcePasswordChange(userId);
@@ -227,7 +227,7 @@ class RotationService {
         });
       }
     }
-    
+
     return results;
   }
 
@@ -241,7 +241,7 @@ class RotationService {
       success: [],
       failed: []
     };
-    
+
     for (const userId of userIds) {
       try {
         await this.revokeExpiredKey(userId);
@@ -253,7 +253,7 @@ class RotationService {
         });
       }
     }
-    
+
     return results;
   }
 
@@ -265,7 +265,7 @@ class RotationService {
   calculatePasswordStrength(password) {
     const feedback = [];
     let score = 0;
-    
+
     // Length check
     if (password.length >= 12) {
       score += 2;
@@ -274,42 +274,42 @@ class RotationService {
     } else {
       feedback.push('Password should be at least 8 characters long');
     }
-    
+
     // Uppercase check
     if (/[A-Z]/.test(password)) {
       score += 1;
     } else {
       feedback.push('Add uppercase letters');
     }
-    
+
     // Lowercase check
     if (/[a-z]/.test(password)) {
       score += 1;
     } else {
       feedback.push('Add lowercase letters');
     }
-    
+
     // Number check
     if (/[0-9]/.test(password)) {
       score += 1;
     } else {
       feedback.push('Add numbers');
     }
-    
+
     // Special character check
     if (/[^A-Za-z0-9]/.test(password)) {
       score += 1;
     } else {
       feedback.push('Add special characters');
     }
-    
+
     // Common patterns check
     const commonPatterns = ['password', '123456', 'qwerty', 'admin'];
     if (commonPatterns.some(pattern => password.toLowerCase().includes(pattern))) {
       score -= 2;
       feedback.push('Avoid common patterns');
     }
-    
+
     return {
       score: Math.max(0, Math.min(5, score)),
       strength: score >= 4 ? 'strong' : score >= 2 ? 'medium' : 'weak',
@@ -344,4 +344,3 @@ class RotationService {
 
 export default new RotationService();
 
-// Made with Bob

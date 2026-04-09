@@ -24,7 +24,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   const publicKeyExpiry = useAuthStore((state) => state.publicKeyExpiry);
   const isKeyExpired = useAuthStore((state) => state.isKeyExpired);
   const isPasswordExpired = useAuthStore((state) => state.isPasswordExpired);
-  
+
   const [myBuilds, setMyBuilds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -117,7 +117,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   // Get build actions separately
   const getBuildActions = () => {
     const buildActions = [];
-    
+
     myBuilds.forEach(build => {
       if (userRole === 'SOLUTION_PROVIDER' && build.status === 'CREATED') {
         buildActions.push({
@@ -161,7 +161,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
         });
       }
     });
-    
+
     return buildActions;
   };
 
@@ -179,7 +179,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   };
 
   const keyStatusDisplay = getStatusDisplay(currentUser.keyStatus);
-  const passwordStatusDisplay = currentUser.passwordExpired 
+  const passwordStatusDisplay = currentUser.passwordExpired
     ? { color: 'red', icon: WarningAlt, text: 'Expired' }
     : { color: 'green', icon: Checkmark, text: 'Valid' };
 
@@ -205,7 +205,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
         <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
           <Tile style={{ height: '100%' }}>
             <h3 style={{ marginBottom: '1.5rem' }}>Account Status</h3>
-            
+
             {/* Password Status */}
             <div style={{ marginBottom: '1.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
@@ -258,16 +258,16 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
         <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
           <Tile style={{ height: '100%' }}>
             <h3 style={{ marginBottom: '1.5rem' }}>Account & System Alerts</h3>
-            
+
             {pendingActions.length > 0 ? (
-              
+
               <div>
                 {pendingActions.map((action, index) => {
                   const Icon = action.icon;
                   const bgColor = action.type === 'critical' ? 'var(--cds-support-error)' :
-                                  action.type === 'warning' ? 'var(--cds-support-warning)' :
-                                  'var(--cds-support-info)';
-                  
+                    action.type === 'warning' ? 'var(--cds-support-warning)' :
+                      'var(--cds-support-info)';
+
                   return (
                     <div key={index} style={{
                       display: 'flex',
@@ -341,7 +341,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
         <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
           <Tile style={{ height: '100%' }}>
             <h3 style={{ marginBottom: '1.5rem' }}>My Builds</h3>
-            
+
             {myBuilds.length > 0 ? (
               <>
                 <div style={{ marginBottom: '1rem' }}>
@@ -352,10 +352,10 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                     Active builds assigned to you
                   </div>
                 </div>
-                
+
                 <div style={{ marginBottom: '1rem' }}>
                   {myBuilds.map(build => (
-                    <div key={build.id} style={{ 
+                    <div key={build.id} style={{
                       padding: '0.75rem',
                       marginBottom: '0.5rem',
                       backgroundColor: 'var(--cds-layer-01)',
@@ -380,7 +380,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                 </Button>
               </>
             ) : (
-              <div style={{ 
+              <div style={{
                 padding: '2rem',
                 textAlign: 'center',
                 color: 'var(--cds-text-secondary)'
@@ -395,7 +395,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
         <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
           <Tile style={{ height: '100%' }}>
             <h3 style={{ marginBottom: '1.5rem' }}>Build Actions Required</h3>
-            
+
             {buildActions.length > 0 ? (
               <div>
                 {buildActions.map((action, index) => (
@@ -465,4 +465,4 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
 
 export default Home;
 
-// Made with Bob
+

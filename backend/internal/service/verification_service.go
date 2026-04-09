@@ -290,5 +290,3 @@ type SignatureVerificationResult struct {
 	PublicKeyUsed string `json:"public_key_used,omitempty"`
 	Details       string `json:"details"`
 }
-
-// Made with Bob

@@ -56,20 +56,20 @@ class VerificationService {
    */
   async verifyHashChain(auditEvents, genesisHash) {
     if (!auditEvents || auditEvents.length === 0) {
-      return { 
-        valid: true, 
-        errors: [], 
-        totalEvents: 0, 
-        verifiedEvents: 0 
+      return {
+        valid: true,
+        errors: [],
+        totalEvents: 0,
+        verifiedEvents: 0
       };
     }
-    
+
     const errors = [];
     let previousHash = genesisHash;
-    
+
     for (let i = 0; i < auditEvents.length; i++) {
       const event = auditEvents[i];
-      
+
       // Verify previous hash link
       if (event.previous_event_hash !== previousHash) {
         errors.push({
@@ -80,13 +80,13 @@ class VerificationService {
           eventType: event.event_type
         });
       }
-      
+
       // Verify event hash
       const eventData = JSON.stringify(event.event_data);
       const computedHash = await cryptoService.hash(
         eventData + event.previous_event_hash
       );
-      
+
       if (computedHash !== event.event_hash) {
         errors.push({
           sequence: event.sequence_no,
@@ -96,10 +96,10 @@ class VerificationService {
           eventType: event.event_type
         });
       }
-      
+
       previousHash = event.event_hash;
     }
-    
+
     return {
       valid: errors.length === 0,
       errors,
@@ -115,7 +115,7 @@ class VerificationService {
    */
   async validateActorSignatures(auditEvents) {
     const results = [];
-    
+
     for (const event of auditEvents) {
       if (!event.signature || !event.actor_public_key) {
         results.push({
@@ -127,14 +127,14 @@ class VerificationService {
         });
         continue;
       }
-      
+
       try {
         const isValid = await this.verifySignature(
           event.event_hash,
           event.signature,
           event.actor_public_key
         );
-        
+
         results.push({
           sequence: event.sequence_no,
           eventType: event.event_type,
@@ -152,7 +152,7 @@ class VerificationService {
         });
       }
     }
-    
+
     return results;
   }
 
@@ -183,36 +183,36 @@ class VerificationService {
         errors: []
       }
     };
-    
+
     try {
       // 1. Verify audit chain (backend)
       report.auditChain = await this.verifyAuditChain(buildId);
-      
+
       // 2. Verify contract integrity (backend)
       report.contractIntegrity = await this.verifyContractIntegrity(buildId);
-      
+
       // 3. Get audit events for local verification
       const auditResponse = await apiClient.get(`/builds/${buildId}/audit`);
       const auditEvents = auditResponse.data.events || [];
-      
+
       // 4. Compute genesis hash
       const genesisHash = await this.computeGenesisHash(buildId);
-      
+
       // 5. Verify hash chain locally
       report.hashChain = await this.verifyHashChain(auditEvents, genesisHash);
-      
+
       // 6. Validate actor signatures
       report.signatures = await this.validateActorSignatures(auditEvents);
-      
+
       // 7. Determine overall validity
-      const allValid = 
+      const allValid =
         report.auditChain.valid &&
         report.contractIntegrity.valid &&
         report.hashChain.valid &&
         report.signatures.every(s => s.valid);
-      
+
       report.overall.valid = allValid;
-      
+
       if (!allValid) {
         if (!report.auditChain.valid) {
           report.overall.errors.push('Audit chain verification failed');
@@ -228,12 +228,12 @@ class VerificationService {
           report.overall.errors.push(`${invalidSignatures.length} invalid signatures`);
         }
       }
-      
+
     } catch (error) {
       report.overall.valid = false;
       report.overall.errors.push(`Verification failed: ${error.message}`);
     }
-    
+
     return report;
   }
 
@@ -258,7 +258,7 @@ class VerificationService {
     if (!section.section_hash || !section.signature) {
       return false;
     }
-    
+
     return await this.verifySignature(
       section.section_hash,
       section.signature,
@@ -291,7 +291,7 @@ class VerificationService {
       },
       errors: verificationReport.overall.errors
     };
-    
+
     return summary;
   }
 
@@ -305,7 +305,7 @@ class VerificationService {
     if (format === 'json') {
       return JSON.stringify(verificationReport, null, 2);
     }
-    
+
     // Text format
     const summary = this.generateReportSummary(verificationReport);
     let text = `Verification Report for Build ${summary.buildId}\n`;
@@ -325,7 +325,7 @@ class VerificationService {
     text += `  Total Signatures: ${summary.statistics.totalSignatures}\n`;
     text += `  Valid Signatures: ${summary.statistics.validSignatures}\n`;
     text += `  Errors: ${summary.statistics.errors}\n`;
-    
+
     if (summary.errors.length > 0) {
       text += `\n`;
       text += `Errors:\n`;
@@ -333,11 +333,10 @@ class VerificationService {
         text += `  ${i + 1}. ${error}\n`;
       });
     }
-    
+
     return text;
   }
 }
 
 export default new VerificationService();
 
-// Made with Bob
