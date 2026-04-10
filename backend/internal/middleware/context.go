@@ -10,9 +10,13 @@ import (
 type contextKey string
 
 const (
-	userIDKey    contextKey = "user_id"
-	userRolesKey contextKey = "user_roles"
-	tokenHashKey contextKey = "token_hash"
+	userIDKey       contextKey = "user_id"
+	userRolesKey    contextKey = "user_roles"
+	tokenHashKey    contextKey = "token_hash"
+	setupNeededKey  contextKey = "setup_needed"
+	setupPendingKey contextKey = "setup_pending"
+	requestSigKey   contextKey = "request_signature"
+	requestHashKey  contextKey = "request_signature_hash"
 )
 
 // AuthenticatedUser holds the user info extracted from a valid token.
@@ -22,10 +26,12 @@ type AuthenticatedUser struct {
 }
 
 // SetAuthContext stores authentication information in the request context.
-func SetAuthContext(ctx context.Context, userID uuid.UUID, roles []string, tokenHash string) context.Context {
+func SetAuthContext(ctx context.Context, userID uuid.UUID, roles []string, tokenHash string, setupNeeded bool, setupPending []string) context.Context {
 	ctx = context.WithValue(ctx, userIDKey, userID)
 	ctx = context.WithValue(ctx, userRolesKey, roles)
 	ctx = context.WithValue(ctx, tokenHashKey, tokenHash)
+	ctx = context.WithValue(ctx, setupNeededKey, setupNeeded)
+	ctx = context.WithValue(ctx, setupPendingKey, setupPending)
 	return ctx
 }
 
@@ -53,6 +59,24 @@ func GetTokenHash(ctx context.Context) string {
 	return hash
 }
 
+// IsSetupRequired indicates if the authenticated user is restricted to setup-only endpoints.
+func IsSetupRequired(ctx context.Context) bool {
+	required, ok := ctx.Value(setupNeededKey).(bool)
+	if !ok {
+		return false
+	}
+	return required
+}
+
+// GetSetupPending returns the pending setup actions for the authenticated user.
+func GetSetupPending(ctx context.Context) []string {
+	pending, ok := ctx.Value(setupPendingKey).([]string)
+	if !ok {
+		return nil
+	}
+	return pending
+}
+
 // HasRole checks if the authenticated user has any of the specified roles.
 func HasRole(ctx context.Context, roles ...string) bool {
 	userRoles := GetUserRoles(ctx)
@@ -64,4 +88,29 @@ func HasRole(ctx context.Context, roles ...string) bool {
 		}
 	}
 	return false
+}
+
+// SetRequestSignatureContext stores validated request signature metadata in context.
+func SetRequestSignatureContext(ctx context.Context, signature, signatureHash string) context.Context {
+	ctx = context.WithValue(ctx, requestSigKey, signature)
+	ctx = context.WithValue(ctx, requestHashKey, signatureHash)
+	return ctx
+}
+
+// GetRequestSignature retrieves the validated request signature from context.
+func GetRequestSignature(ctx context.Context) string {
+	sig, ok := ctx.Value(requestSigKey).(string)
+	if !ok {
+		return ""
+	}
+	return sig
+}
+
+// GetRequestSignatureHash retrieves the validated request signature hash from context.
+func GetRequestSignatureHash(ctx context.Context) string {
+	hash, ok := ctx.Value(requestHashKey).(string)
+	if !ok {
+		return ""
+	}
+	return hash
 }

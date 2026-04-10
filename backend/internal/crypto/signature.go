@@ -90,12 +90,19 @@ func VerifySignature(publicKeyPEM string, hashHex string, signatureBase64 string
 		Hash:       crypto.SHA256,
 	}
 
-	err = rsa.VerifyPSS(rsaPub, crypto.SHA256, hashBytes, sig, opts)
-	if err != nil {
-		return fmt.Errorf("signature verification failed: %w", err)
+	// Primary mode: RSA-SHA256 semantics (sign/verify over the hash string bytes).
+	// This matches Node createSign/createVerify('RSA-SHA256') with PSS padding.
+	digest := sha256.Sum256([]byte(hashHex))
+	if err := rsa.VerifyPSS(rsaPub, crypto.SHA256, digest[:], sig, opts); err == nil {
+		return nil
 	}
 
-	return nil
+	// Backward compatibility: verify against pre-hashed digest bytes directly.
+	if err := rsa.VerifyPSS(rsaPub, crypto.SHA256, hashBytes, sig, opts); err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("signature verification failed")
 }
 
 // ParseCertificatePEM validates and parses a PEM-encoded X.509 certificate.

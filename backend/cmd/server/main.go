@@ -55,10 +55,11 @@ func main() {
 	// Initialize services (order matters due to dependencies)
 	auditService := service.NewAuditService(queries)
 	assignmentService := service.NewAssignmentService(queries, auditService)
-	sectionService := service.NewSectionService(queries, assignmentService)
 	buildService := service.NewBuildService(queries, auditService)
-	authService := service.NewAuthService(queries, cfg.BcryptCost)
+	sectionService := service.NewSectionService(queries, assignmentService, buildService)
+	authService := service.NewAuthService(queries, cfg.BcryptCost, cfg.TokenExpiry)
 	userService := service.NewUserService(queries, cfg.BcryptCost)
+	roleService := service.NewRoleService(queries)
 	verificationService := service.NewVerificationService(queries)
 	exportService := service.NewExportService(queries, auditService, assignmentService)
 	rotationService := service.NewRotationService(queries)
@@ -71,13 +72,14 @@ func main() {
 	buildHandler := handler.NewBuildHandler(buildService)
 	authHandler := handler.NewAuthHandler(authService, systemLogService)
 	userHandler := handler.NewUserHandler(userService, systemLogService)
+	roleHandler := handler.NewRoleHandler(roleService)
 	exportHandler := handler.NewExportHandler(exportService, verificationService, userService)
 	rotationHandler := handler.NewRotationHandler(rotationService)
 	swaggerHandler := handler.NewSwaggerHandler()
 	systemLogHandler := handler.NewSystemLogHandler(systemLogService)
 
 	// Build router
-	r := buildRouter(cfg, queries, authHandler, userHandler, buildHandler, sectionHandler, auditHandler, assignmentHandler, exportHandler, rotationHandler, swaggerHandler, systemLogHandler)
+	r := buildRouter(cfg, queries, authHandler, userHandler, roleHandler, buildHandler, sectionHandler, auditHandler, assignmentHandler, exportHandler, rotationHandler, swaggerHandler, systemLogHandler)
 
 	// Start credential rotation monitor (checks every 24 hours)
 	monitorCtx, cancelMonitor := context.WithCancel(ctx)
@@ -131,6 +133,7 @@ func buildRouter(
 	queries repository.Querier,
 	authHandler *handler.AuthHandler,
 	userHandler *handler.UserHandler,
+	roleHandler *handler.RoleHandler,
 	buildHandler *handler.BuildHandler,
 	sectionHandler *handler.SectionHandler,
 	auditHandler *handler.AuditHandler,
@@ -163,10 +166,15 @@ func buildRouter(
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries))
+		r.Use(middleware.Auth(queries, cfg.TokenExpiry))
+		r.Use(middleware.SetupGuard())
+		r.Use(middleware.RequireRequestSignature(queries))
 
 		// Auth (authenticated)
 		r.Post("/auth/logout", authHandler.Logout)
+
+		// Roles reference data
+		r.Get("/roles", roleHandler.ListRoles)
 
 		// User management (ADMIN only)
 		r.Route("/users", func(r chi.Router) {
@@ -212,6 +220,7 @@ func buildRouter(
 			r.Route("/{id}", func(r chi.Router) {
 				r.Get("/", buildHandler.GetBuild)
 				r.Patch("/status", buildHandler.TransitionStatus) // Role validation done internally in service based on transition state
+				r.With(middleware.RequireRole("AUDITOR")).Post("/attestation", buildHandler.RegisterAttestation)
 				r.With(middleware.RequireRole("AUDITOR")).Post("/finalize", buildHandler.FinalizeBuild)
 				r.With(middleware.RequireRole("ADMIN")).Post("/cancel", buildHandler.CancelBuild)
 
@@ -220,6 +229,7 @@ func buildRouter(
 				r.Post("/sections", sectionHandler.SubmitSection) // Assignment validation done internally
 
 				// Audit Trail
+				r.Get("/audit", auditHandler.GetAuditTrail)
 				r.Get("/audit-trail", auditHandler.GetAuditTrail)
 
 				// Build Assignments (ADMIN only for create/delete, any authenticated for read)

@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
@@ -12,7 +13,7 @@ import (
 // Auth returns middleware that validates Bearer token authentication.
 // It extracts the token from the Authorization header, validates it against the DB,
 // and populates the request context with user info.
-func Auth(queries repository.Querier) func(http.Handler) http.Handler {
+func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract Bearer token from Authorization header
@@ -39,6 +40,11 @@ func Auth(queries repository.Querier) func(http.Handler) http.Handler {
 
 			// Check if token is revoked
 			if token.RevokedAt.Valid {
+				writeUnauthorized(w)
+				return
+			}
+			// Check if token is expired
+			if tokenExpiry > 0 && time.Now().After(token.CreatedAt.Add(tokenExpiry)) {
 				writeUnauthorized(w)
 				return
 			}
@@ -69,13 +75,23 @@ func Auth(queries repository.Querier) func(http.Handler) http.Handler {
 				roleStrings[i] = role.Role
 			}
 
+			setupPending := make([]string, 0, 2)
+			if user.MustChangePassword {
+				setupPending = append(setupPending, "password_change")
+			}
+			publicKeyExpired := user.PublicKeyExpiresAt.Valid && user.PublicKeyExpiresAt.Time.Before(time.Now())
+			if user.PublicKey == nil || publicKeyExpired {
+				setupPending = append(setupPending, "public_key_registration")
+			}
+			setupRequired := len(setupPending) > 0
+
 			// Update last_used_at (fire-and-forget, don't block the request)
 			go func() {
 				_ = queries.UpdateTokenLastUsed(r.Context(), token.ID)
 			}()
 
 			// Set auth context and continue
-			ctx := SetAuthContext(r.Context(), user.ID, roleStrings, tokenHash)
+			ctx := SetAuthContext(r.Context(), user.ID, roleStrings, tokenHash, setupRequired, setupPending)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

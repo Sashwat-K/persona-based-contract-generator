@@ -13,7 +13,7 @@ func CORS() func(http.Handler) http.Handler {
 			// TODO: In production, restrict to specific origins
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Request-ID, X-Signature, X-Public-Key-Fingerprint")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Request-ID, X-Signature, X-Signature-Hash, X-Timestamp, X-Key-Fingerprint")
 			w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
 
 			// Handle preflight requests

@@ -1,7 +1,9 @@
 package crypto
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -45,9 +47,31 @@ func ComputeGenesisHash(buildID string) string {
 // ComputeEventHash computes the hash of an audit event using canonical JSON.
 // The hash is computed as: SHA256(canonical_json(event_data) + previous_hash)
 func ComputeEventHash(eventDataJSON []byte, previousHash string) string {
+	// Canonicalize JSON to avoid representation drift (e.g., JSONB round-trips).
+	// If canonicalization fails, fall back to raw bytes to preserve backward compatibility.
+	canonical := eventDataJSON
+	if normalized, err := canonicalizeJSONBytes(eventDataJSON); err == nil {
+		canonical = normalized
+	}
+
 	// Concatenate canonical JSON with previous hash
-	payload := append(eventDataJSON, []byte(previousHash)...)
+	payload := append(canonical, []byte(previousHash)...)
 	return SHA256Hex(payload)
+}
+
+func canonicalizeJSONBytes(raw []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return []byte("null"), nil
+	}
+
+	var v interface{}
+	if err := json.Unmarshal(trimmed, &v); err != nil {
+		return nil, err
+	}
+
+	// encoding/json marshaling is deterministic for maps (sorted keys).
+	return json.Marshal(v)
 }
 
 // CanonicalizeJSON converts JSON to RFC 8785 canonical form.

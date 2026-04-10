@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -11,6 +14,47 @@ import (
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
 )
+
+func signatureHashForEvent(eventType string, eventData []byte, defaultHash string) string {
+	switch eventType {
+	case "BUILD_FINALIZED", "CONTRACT_DOWNLOADED", "BUILD_CREATED", "ROLE_ASSIGNED":
+		var payload map[string]interface{}
+		if err := json.Unmarshal(eventData, &payload); err == nil {
+			if (eventType == "BUILD_FINALIZED" || eventType == "CONTRACT_DOWNLOADED") {
+				if v, ok := payload["contract_hash"].(string); ok && v != "" {
+					return v
+				}
+			}
+			if v, ok := payload["request_signature_hash"].(string); ok && v != "" {
+				return v
+			}
+		}
+	}
+	return defaultHash
+}
+
+func decodeContractYAMLBytes(contractYAML string) []byte {
+	trimmed := strings.TrimSpace(contractYAML)
+	if trimmed == "" {
+		return []byte{}
+	}
+
+	// Newer builds may store raw YAML directly.
+	if strings.Contains(trimmed, "\n") ||
+		strings.Contains(trimmed, "workload:") ||
+		strings.Contains(trimmed, "env:") {
+		return []byte(contractYAML)
+	}
+
+	// Backward-compatible: older builds may store base64-encoded YAML.
+	decoded, err := base64.StdEncoding.DecodeString(trimmed)
+	if err == nil {
+		return decoded
+	}
+
+	// Fallback to raw bytes if value is not valid base64.
+	return []byte(contractYAML)
+}
 
 // VerificationService handles audit trail and signature verification.
 type VerificationService struct {
@@ -62,7 +106,15 @@ func (s *VerificationService) VerifyBuildAuditChain(ctx context.Context, buildID
 	}
 
 	if len(rows) == 0 {
-		return nil, model.ErrNotFound("no audit events found for build")
+		return &VerificationResult{
+			IsValid:         true,
+			TotalEvents:     0,
+			VerifiedEvents:  0,
+			FailedEvents:    []FailedEventDetail{},
+			GenesisHash:     crypto.ComputeGenesisHash(buildID.String()),
+			ChainIntact:     true,
+			SignaturesValid: true,
+		}, nil
 	}
 
 	result := &VerificationResult{
@@ -124,7 +176,8 @@ func (s *VerificationService) VerifyBuildAuditChain(ctx context.Context, buildID
 
 		// 3. Verify signature if present
 		if row.Signature != nil && row.ActorPublicKey != nil {
-			err := crypto.VerifySignature(*row.ActorPublicKey, row.EventHash, *row.Signature)
+			hashToVerify := signatureHashForEvent(row.EventType, row.EventData, row.EventHash)
+			err := crypto.VerifySignature(*row.ActorPublicKey, hashToVerify, *row.Signature)
 			if err != nil {
 				result.IsValid = false
 				result.SignaturesValid = false
@@ -162,8 +215,6 @@ func requiresSignature(eventType string) bool {
 	signedEvents := map[string]bool{
 		"BUILD_FINALIZED":     true,
 		"CONTRACT_DOWNLOADED": true,
-		"WORKLOAD_SUBMITTED":  true,
-		"ENVIRONMENT_STAGED":  true,
 	}
 	return signedEvents[eventType]
 }
@@ -198,8 +249,9 @@ func (s *VerificationService) VerifyContractIntegrity(ctx context.Context, build
 
 	result.ContractHash = *build.ContractHash
 
-	// Compute hash of contract YAML
-	computedHash := crypto.SHA256Hex([]byte(*build.ContractYaml))
+	// Compute hash of contract YAML bytes (supports both raw YAML and base64-encoded YAML).
+	contractYAMLBytes := decodeContractYAMLBytes(*build.ContractYaml)
+	computedHash := crypto.SHA256Hex(contractYAMLBytes)
 	result.ComputedHash = computedHash
 
 	// Verify hash matches

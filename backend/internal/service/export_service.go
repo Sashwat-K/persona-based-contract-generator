@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -17,6 +18,29 @@ type ExportService struct {
 	queries           repository.Querier
 	auditService      *AuditService
 	assignmentService *AssignmentService
+}
+
+func decodeContractYAMLForUserData(contractYAML string) string {
+	trimmed := strings.TrimSpace(contractYAML)
+	if trimmed == "" {
+		return ""
+	}
+
+	// Raw YAML path
+	if strings.Contains(trimmed, "\n") ||
+		strings.Contains(trimmed, "workload:") ||
+		strings.Contains(trimmed, "env:") {
+		return contractYAML
+	}
+
+	// Backward-compatible base64 path
+	decodedYAML, err := base64.StdEncoding.DecodeString(trimmed)
+	if err == nil {
+		return string(decodedYAML)
+	}
+
+	// Fallback: return as-is instead of failing hard.
+	return contractYAML
 }
 
 // NewExportService creates a new ExportService.
@@ -38,7 +62,7 @@ type ExportContractOutput struct {
 }
 
 // ExportContract returns the finalized contract for download.
-// Only AUDITOR and ENV_OPERATOR roles can export.
+// Only assigned ENV_OPERATOR can export.
 func (s *ExportService) ExportContract(ctx context.Context, buildID, userID uuid.UUID) (*ExportContractOutput, error) {
 	// 1. Get build
 	build, err := s.queries.GetBuildByID(ctx, buildID)
@@ -56,19 +80,13 @@ func (s *ExportService) ExportContract(ctx context.Context, buildID, userID uuid
 		return nil, model.ErrInvalidRequest("contract not available")
 	}
 
-	// 4. Verify user is assigned as AUDITOR or ENV_OPERATOR
-	isAuditor, err := s.assignmentService.CheckUserAssignment(ctx, buildID, userID, "AUDITOR")
-	if err != nil {
-		return nil, fmt.Errorf("failed to check auditor assignment: %w", err)
-	}
-
+	// 4. Verify user is assigned as ENV_OPERATOR
 	isEnvOp, err := s.assignmentService.CheckUserAssignment(ctx, buildID, userID, "ENV_OPERATOR")
 	if err != nil {
 		return nil, fmt.Errorf("failed to check env operator assignment: %w", err)
 	}
-
-	if !isAuditor && !isEnvOp {
-		return nil, model.ErrForbidden("only assigned AUDITOR or ENV_OPERATOR can export contract")
+	if !isEnvOp {
+		return nil, model.ErrForbidden("only assigned ENV_OPERATOR can export contract")
 	}
 
 	// 5. Return contract data
@@ -195,15 +213,12 @@ func (s *ExportService) GetUserData(ctx context.Context, buildID, userID uuid.UU
 		return nil, model.ErrForbidden("only assigned ENV_OPERATOR can get userdata")
 	}
 
-	// 5. Decode base64 contract YAML
-	decodedYAML, err := base64.StdEncoding.DecodeString(*build.ContractYaml)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode contract YAML: %w", err)
-	}
+	// 5. Decode contract YAML if needed (supports raw YAML and base64-encoded YAML).
+	decodedYAML := decodeContractYAMLForUserData(*build.ContractYaml)
 
 	// 6. Return decoded YAML
 	return &GetUserDataOutput{
-		ContractYAML: string(decodedYAML),
+		ContractYAML: decodedYAML,
 		ContractHash: *build.ContractHash,
 		BuildID:      buildID.String(),
 	}, nil

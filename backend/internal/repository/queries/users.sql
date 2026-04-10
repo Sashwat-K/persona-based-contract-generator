@@ -56,14 +56,19 @@ WHERE id = $1;
 SELECT id, name, email, password_changed_at, must_change_password, created_at
 FROM users
 WHERE is_active = true
-  AND password_changed_at < NOW() - INTERVAL '90 days'
-  AND must_change_password = false;
+  AND (
+    must_change_password = true
+    OR password_changed_at < NOW() - INTERVAL '90 days'
+  );
 
 -- name: GetUsersWithExpiredPublicKeys :many
 SELECT id, name, email, public_key_fingerprint, public_key_registered_at, public_key_expires_at
 FROM users
 WHERE is_active = true
-  AND public_key_expires_at < NOW();
+  AND (
+    public_key_registered_at IS NULL
+    OR public_key_expires_at < NOW()
+  );
 
 -- name: UpdateUser :one
 UPDATE users

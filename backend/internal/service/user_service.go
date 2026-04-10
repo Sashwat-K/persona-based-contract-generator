@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -20,6 +21,12 @@ type UserService struct {
 	bcryptCost int
 }
 
+// SetupState represents setup requirements for a user account.
+type SetupState struct {
+	RequiresSetup bool     `json:"requires_setup"`
+	SetupPending  []string `json:"setup_pending"`
+}
+
 // NewUserService creates a new UserService.
 func NewUserService(queries repository.Querier, bcryptCost int) *UserService {
 	return &UserService{
@@ -30,15 +37,15 @@ func NewUserService(queries repository.Querier, bcryptCost int) *UserService {
 
 // UserWithRoles represents a user with their assigned roles.
 type UserWithRoles struct {
-	ID                     uuid.UUID `json:"id"`
-	Name                   string    `json:"name"`
-	Email                  string    `json:"email"`
-	Roles                  []string  `json:"roles"`
-	IsActive               bool      `json:"is_active"`
-	CreatedAt              string    `json:"created_at"`
-	MustChangePassword     bool      `json:"must_change_password"`
-	PublicKeyFingerprint   *string   `json:"public_key_fingerprint"`
-	PublicKeyExpiresAt     *string   `json:"public_key_expires_at"`
+	ID                   uuid.UUID `json:"id"`
+	Name                 string    `json:"name"`
+	Email                string    `json:"email"`
+	Roles                []string  `json:"roles"`
+	IsActive             bool      `json:"is_active"`
+	CreatedAt            string    `json:"created_at"`
+	MustChangePassword   bool      `json:"must_change_password"`
+	PublicKeyFingerprint *string   `json:"public_key_fingerprint"`
+	PublicKeyExpiresAt   *string   `json:"public_key_expires_at"`
 }
 
 // ListUsers returns all users with their roles. ADMIN only.
@@ -356,6 +363,30 @@ func (s *UserService) GetPublicKey(ctx context.Context, userID uuid.UUID) (strin
 	}
 
 	return *user.PublicKey, fingerprint, registeredAt, expiresAt, nil
+}
+
+// GetSetupState returns the current setup requirements for the given user.
+func (s *UserService) GetSetupState(ctx context.Context, userID uuid.UUID) (*SetupState, error) {
+	user, err := s.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load user: %w", err)
+	}
+
+	setupPending := make([]string, 0, 2)
+	if user.MustChangePassword {
+		setupPending = append(setupPending, "password_change")
+	}
+
+	publicKeyExpired := user.PublicKeyExpiresAt.Valid && user.PublicKeyExpiresAt.Time.Before(time.Now())
+	hasPublicKey := user.PublicKey != nil && strings.TrimSpace(*user.PublicKey) != ""
+	if !hasPublicKey || publicKeyExpired {
+		setupPending = append(setupPending, "public_key_registration")
+	}
+
+	return &SetupState{
+		RequiresSetup: len(setupPending) > 0,
+		SetupPending:  setupPending,
+	}, nil
 }
 
 // ChangePassword changes a user's password and clears the must_change_password flag.

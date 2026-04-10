@@ -16,54 +16,115 @@ import (
 type SectionService struct {
 	queries           repository.Querier
 	assignmentService *AssignmentService
+	buildService      *BuildService
 }
 
 // NewSectionService creates a new SectionService.
-func NewSectionService(queries repository.Querier, assignmentService *AssignmentService) *SectionService {
+func NewSectionService(queries repository.Querier, assignmentService *AssignmentService, buildService *BuildService) *SectionService {
 	return &SectionService{
 		queries:           queries,
 		assignmentService: assignmentService,
+		buildService:      buildService,
 	}
+}
+
+// roleToNextStatus maps each persona role to the build status that should be set after they submit.
+var roleToNextStatus = map[model.PersonaRole]model.BuildStatus{
+	model.RoleSolutionProvider: model.StatusWorkloadSubmitted,
+	model.RoleDataOwner:        model.StatusEnvironmentStaged,
+	model.RoleAuditor:          model.StatusAuditorKeysRegistered,
 }
 
 // SubmitSectionInput contains the data for a new build section.
 type SubmitSectionInput struct {
 	BuildID               uuid.UUID
-	PersonaRole           model.PersonaRole
+	RoleID                *uuid.UUID
+	PersonaRole           model.PersonaRole // Backward-compatible fallback when role_id is absent
 	SubmittedBy           uuid.UUID
 	EncryptedPayload      string
 	EncryptedSymmetricKey *string
 	SectionHash           string
 	Signature             string
+	// For auto-transitioning build status after submission
+	ActorRoles []string
+	ActorIP    string
+}
+
+// requiredBuildStatusForRole maps each submitting role to the build status that must be current.
+var requiredBuildStatusForRole = map[model.PersonaRole]model.BuildStatus{
+	model.RoleSolutionProvider: model.StatusCreated,
+	model.RoleDataOwner:        model.StatusWorkloadSubmitted,
+	model.RoleAuditor:          model.StatusEnvironmentStaged,
 }
 
 // SubmitSection stores an encrypted payload for a specific persona role.
 // The backend does not decrypt or validate the payload natively (Zero-Knowledge).
 func (s *SectionService) SubmitSection(ctx context.Context, input SubmitSectionInput) (*repository.BuildSection, error) {
+	// Resolve role from role_id (preferred) or persona role (fallback).
+	roleName := input.PersonaRole.String()
+	var roleID uuid.UUID
+	if input.RoleID != nil && *input.RoleID != uuid.Nil {
+		role, err := s.queries.GetRoleByID(ctx, *input.RoleID)
+		if err != nil {
+			return nil, model.ErrInvalidRequest("invalid role_id")
+		}
+		roleName = role.Name
+		roleID = role.ID
+	} else {
+		role, err := s.queries.GetRoleByName(ctx, roleName)
+		if err != nil {
+			return nil, model.ErrInvalidRequest("invalid persona_role")
+		}
+		roleID = role.ID
+	}
+	resolvedRole := model.PersonaRole(roleName)
+	if !resolvedRole.IsValid() {
+		return nil, model.ErrInvalidRequest("invalid role")
+	}
+
 	// 1. Validate user is assigned to this role for this build (two-layer access control)
-	err := s.assignmentService.ValidateAssignmentForSubmission(ctx, input.BuildID, input.SubmittedBy, string(input.PersonaRole))
+	err := s.assignmentService.ValidateAssignmentForSubmission(ctx, input.BuildID, input.SubmittedBy, roleName)
 	if err != nil {
 		return nil, err // Returns AppError with proper status code
 	}
 
-	// 2. Verify a section for this role doesn't already exist for this build
+	// 2. Validate build is in the required state for this role's submission
+	if requiredStatus, ok := requiredBuildStatusForRole[resolvedRole]; ok {
+		build, err := s.queries.GetBuildByID(ctx, input.BuildID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get build: %w", err)
+		}
+		currentStatus := model.BuildStatus(build.Status)
+		if currentStatus != requiredStatus {
+			return nil, model.ErrInvalidStateTransition(currentStatus.String(), requiredStatus.String())
+		}
+	}
+
+	// 3. DATA_OWNER must supply a wrapped symmetric key (AES key wrapped with Auditor's RSA public key)
+	if resolvedRole == model.RoleDataOwner {
+		if input.EncryptedSymmetricKey == nil || *input.EncryptedSymmetricKey == "" {
+			return nil, model.ErrInvalidRequest("DATA_OWNER submission requires encrypted_symmetric_key (AES key wrapped with Auditor's RSA public key)")
+		}
+	}
+
+	// 4. Verify a section for this role doesn't already exist for this build
 	_, err = s.queries.GetBuildSectionByRole(ctx, repository.GetBuildSectionByRoleParams{
 		BuildID:     input.BuildID,
-		PersonaRole: string(input.PersonaRole),
+		PersonaRole: roleName,
 	})
 	if err == nil {
 		// No error means a row was found
-		return nil, model.ErrDuplicateSection(string(input.PersonaRole))
+		return nil, model.ErrDuplicateSection(roleName)
 	}
 	if !strings.Contains(err.Error(), "no rows in result set") {
 		return nil, fmt.Errorf("failed to check existing sections: %w", err)
 	}
 
-	// 3. Insert the section
+	// 5. Insert the section
 	section, err := s.queries.CreateBuildSection(ctx, repository.CreateBuildSectionParams{
 		BuildID:             input.BuildID,
-		PersonaRole:         string(input.PersonaRole),
-		RoleID:              pgtype.UUID{Valid: false}, // Will be populated later with proper role lookup
+		PersonaRole:         roleName,
+		RoleID:              pgtype.UUID{Bytes: roleID, Valid: true},
 		SubmittedBy:         input.SubmittedBy,
 		EncryptedPayload:    input.EncryptedPayload,
 		WrappedSymmetricKey: input.EncryptedSymmetricKey,
@@ -86,6 +147,13 @@ func (s *SectionService) SubmitSection(ctx context.Context, input SubmitSectionI
 		SectionHash:         section.SectionHash,
 		Signature:           section.Signature,
 		SubmittedAt:         section.SubmittedAt,
+	}
+
+	// 6. Auto-transition build status based on the submitting role
+	if nextStatus, ok := roleToNextStatus[resolvedRole]; ok {
+		if transErr := s.buildService.TransitionStatus(ctx, input.BuildID, nextStatus, input.SubmittedBy, input.ActorIP, input.ActorRoles); transErr != nil {
+			return nil, fmt.Errorf("section stored but status transition to %s failed: %w", nextStatus, transErr)
+		}
 	}
 
 	return &result, nil

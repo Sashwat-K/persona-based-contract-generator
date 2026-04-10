@@ -168,7 +168,7 @@ func (h *UserHandler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		ipAddress = forwarded
 	}
-	
+
 	// Default to system or caller email if available. User ID is known.
 	actorEmail := "admin@hpcr" // Can fetch properly from token if needed, keeping simple.
 	h.systemLogService.LogEvent(r.Context(), actorEmail, "USER_DEACTIVATED", "User: "+userID.String(), ipAddress, "SUCCESS", "Deactivated user account")
@@ -322,8 +322,9 @@ func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) 
 
 	// Fetch the newly updated keys to get the registered and expiry dates assigned by the database layer.
 	_, fingerprintStr, registeredAt, expiresAt, _ := h.userService.GetPublicKey(r.Context(), userID)
+	setupState, _ := h.userService.GetSetupState(r.Context(), userID)
 
-	resp := map[string]string{
+	resp := map[string]any{
 		"fingerprint": fingerprintStr,
 		"message":     "Public key registered successfully",
 	}
@@ -332,6 +333,11 @@ func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) 
 	}
 	if expiresAt != nil {
 		resp["expires_at"] = expiresAt.Format(time.RFC3339)
+	}
+	if setupState != nil {
+		resp["requires_setup"] = setupState.RequiresSetup
+		resp["setup_pending"] = setupState.SetupPending
+		resp["must_change_password"] = containsSetupStep(setupState.SetupPending, "password_change")
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -408,9 +414,18 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
+	setupState, _ := h.userService.GetSetupState(r.Context(), userID)
+
+	resp := map[string]any{
 		"message": "Password changed successfully",
-	})
+	}
+	if setupState != nil {
+		resp["requires_setup"] = setupState.RequiresSetup
+		resp["setup_pending"] = setupState.SetupPending
+		resp["must_change_password"] = containsSetupStep(setupState.SetupPending, "password_change")
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ReactivateUser handles PATCH /users/{id}/reactivate.
@@ -490,4 +505,13 @@ func (h *UserHandler) AdminResetPassword(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Password reset successfully. User must change password on next login.",
 	})
+}
+
+func containsSetupStep(pending []string, step string) bool {
+	for _, s := range pending {
+		if s == step {
+			return true
+		}
+	}
+	return false
 }

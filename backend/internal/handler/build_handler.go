@@ -45,10 +45,21 @@ func (h *BuildHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, model.ErrUnauthorized())
 		return
 	}
+	requestSignature := middleware.GetRequestSignature(r.Context())
+	requestSignatureHash := middleware.GetRequestSignatureHash(r.Context())
 
 	ip := r.RemoteAddr
 
-	build, err := h.buildService.CreateBuild(r.Context(), req.Name, actorID, ip)
+	var sigPtr *string
+	var sigHashPtr *string
+	if requestSignature != "" {
+		sigPtr = &requestSignature
+	}
+	if requestSignatureHash != "" {
+		sigHashPtr = &requestSignatureHash
+	}
+
+	build, err := h.buildService.CreateBuild(r.Context(), req.Name, actorID, ip, sigPtr, sigHashPtr)
 	if err != nil {
 		writeError(w, model.ErrInternal("Failed to create build."))
 		return
@@ -180,6 +191,50 @@ func (h *BuildHandler) FinalizeBuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "FINALIZED"})
+}
+
+// RegisterAttestation handles POST /builds/{id}/attestation.
+// Called by the AUDITOR to confirm attestation keys are generated locally.
+// Transitions build from ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED.
+func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Request) {
+	buildID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, model.ErrInvalidRequest("Invalid build ID."))
+		return
+	}
+
+	actorID, _ := middleware.GetUserID(r.Context())
+	roles := middleware.GetUserRoles(r.Context())
+	ip := r.RemoteAddr
+
+	// Idempotent behavior:
+	// If attestation is already registered (or build already progressed beyond it),
+	// return success instead of failing transition validation.
+	build, err := h.buildService.GetBuild(r.Context(), buildID)
+	if err == nil {
+		current := model.BuildStatus(build.Status)
+		if current == model.StatusAuditorKeysRegistered ||
+			current == model.StatusContractAssembled ||
+			current == model.StatusFinalized {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"status":             current.String(),
+				"already_registered": true,
+			})
+			return
+		}
+	}
+
+	err = h.buildService.TransitionStatus(r.Context(), buildID, model.StatusAuditorKeysRegistered, actorID, ip, roles)
+	if err != nil {
+		if appErr, ok := err.(*model.AppError); ok {
+			writeError(w, appErr)
+			return
+		}
+		writeError(w, model.ErrInternal("Failed to register attestation."))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "AUDITOR_KEYS_REGISTERED"})
 }
 
 // CancelBuild handles POST /builds/{id}/cancel. ADMIN only.

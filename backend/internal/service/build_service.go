@@ -25,7 +25,7 @@ func NewBuildService(queries repository.Querier, auditService *AuditService) *Bu
 }
 
 // CreateBuild initializes a new build and logs the genesis audit event.
-func (s *BuildService) CreateBuild(ctx context.Context, name string, createdBy uuid.UUID, ip string) (*repository.Build, error) {
+func (s *BuildService) CreateBuild(ctx context.Context, name string, createdBy uuid.UUID, ip string, requestSignature *string, requestSignatureHash *string) (*repository.Build, error) {
 	// 1. Create the build
 	row, err := s.queries.CreateBuild(ctx, repository.CreateBuildParams{
 		Name:      name,
@@ -50,15 +50,21 @@ func (s *BuildService) CreateBuild(ctx context.Context, name string, createdBy u
 	}
 
 	// 2. Log creation event via AuditService
+	eventData := map[string]string{
+		"build_id":   build.ID.String(),
+		"build_name": name,
+	}
+	if requestSignatureHash != nil && *requestSignatureHash != "" {
+		eventData["request_signature_hash"] = *requestSignatureHash
+	}
+
 	_, err = s.auditService.LogEvent(ctx, LogEventInput{
 		BuildID:     build.ID,
 		EventType:   model.EventBuildCreated,
 		ActorUserID: createdBy,
 		IpAddress:   ip,
-		EventData: map[string]string{
-			"build_id":   build.ID.String(),
-			"build_name": name,
-		},
+		EventData:   eventData,
+		Signature:   requestSignature,
 	})
 	if err != nil {
 		// Log the error but don't fail the build creation entirely
@@ -145,7 +151,12 @@ func (s *BuildService) TransitionStatus(ctx context.Context, buildID uuid.UUID, 
 
 	// 2. Validate transition sequence
 	if !currentStatus.CanTransitionTo(newStatus) {
-		return model.ErrInvalidStateTransition(currentStatus.String(), newStatus.String())
+		// Report the true expected next state from the current status when available.
+		expected := newStatus.String()
+		if next, ok := model.ValidTransitions[currentStatus]; ok {
+			expected = next.String()
+		}
+		return model.ErrInvalidStateTransition(currentStatus.String(), expected)
 	}
 
 	// 3. Verify user has the required persona role for this specific transition
@@ -202,7 +213,7 @@ func (s *BuildService) FinalizeBuild(ctx context.Context, buildID uuid.UUID, con
 
 	currentStatus := model.BuildStatus(row.Status)
 	if !currentStatus.CanTransitionTo(model.StatusFinalized) {
-		return model.ErrInvalidStateTransition(currentStatus.String(), model.StatusFinalized.String())
+		return model.ErrInvalidStateTransition(currentStatus.String(), model.StatusContractAssembled.String())
 	}
 
 	// Finalize natively

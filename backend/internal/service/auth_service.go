@@ -17,32 +17,43 @@ import (
 
 // AuthService handles authentication logic including login, logout, and token management.
 type AuthService struct {
-	queries    repository.Querier
-	bcryptCost int
+	queries     repository.Querier
+	bcryptCost  int
+	tokenExpiry time.Duration
 }
 
 // NewAuthService creates a new AuthService.
-func NewAuthService(queries repository.Querier, bcryptCost int) *AuthService {
+func NewAuthService(queries repository.Querier, bcryptCost int, tokenExpiry time.Duration) *AuthService {
 	return &AuthService{
-		queries:    queries,
-		bcryptCost: bcryptCost,
+		queries:     queries,
+		bcryptCost:  bcryptCost,
+		tokenExpiry: tokenExpiry,
 	}
 }
 
 // LoginResult contains the result of a successful login.
 type LoginResult struct {
-	Token string   `json:"token"`
-	User  UserInfo `json:"user"`
+	Token         string    `json:"token"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	RequiresSetup bool      `json:"requires_setup"`
+	SetupPending  []string  `json:"setup_pending"`
+	User          UserInfo  `json:"user"`
 }
 
 // UserInfo represents the user information returned on login.
 type UserInfo struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	Roles     []string  `json:"roles"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                   uuid.UUID  `json:"id"`
+	Name                 string     `json:"name"`
+	Email                string     `json:"email"`
+	Roles                []string   `json:"roles"`
+	IsActive             bool       `json:"is_active"`
+	CreatedAt            time.Time  `json:"created_at"`
+	HasPublicKey         bool       `json:"has_public_key"`
+	PublicKeyExpired     bool       `json:"public_key_expired"`
+	PublicKeyFingerprint *string    `json:"public_key_fingerprint"`
+	PublicKeyExpiresAt   *time.Time `json:"public_key_expires_at"`
+	MustChangePassword   bool       `json:"must_change_password"`
+	PasswordChangedAt    *time.Time `json:"password_changed_at"`
 }
 
 // Login validates credentials and returns a bearer token.
@@ -87,15 +98,50 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 		return nil, fmt.Errorf("failed to create token: %w", err)
 	}
 
+	var publicKeyFingerprint *string
+	if user.PublicKeyFingerprint != nil {
+		publicKeyFingerprint = user.PublicKeyFingerprint
+	}
+	var publicKeyExpiresAt *time.Time
+	if user.PublicKeyExpiresAt.Valid {
+		t := user.PublicKeyExpiresAt.Time
+		publicKeyExpiresAt = &t
+	}
+	var passwordChangedAt *time.Time
+	if user.PasswordChangedAt.Valid {
+		t := user.PasswordChangedAt.Time
+		passwordChangedAt = &t
+	}
+	publicKeyExpired := user.PublicKeyExpiresAt.Valid && user.PublicKeyExpiresAt.Time.Before(time.Now())
+	hasPublicKey := user.PublicKey != nil
+
+	setupPending := make([]string, 0, 2)
+	if user.MustChangePassword {
+		setupPending = append(setupPending, "password_change")
+	}
+	if !hasPublicKey || publicKeyExpired {
+		setupPending = append(setupPending, "public_key_registration")
+	}
+	requiresSetup := len(setupPending) > 0
+
 	return &LoginResult{
-		Token: rawToken,
+		Token:         rawToken,
+		ExpiresAt:     time.Now().Add(s.tokenExpiry),
+		RequiresSetup: requiresSetup,
+		SetupPending:  setupPending,
 		User: UserInfo{
-			ID:        user.ID,
-			Name:      user.Name,
-			Email:     user.Email,
-			Roles:     roleStrings,
-			IsActive:  user.IsActive,
-			CreatedAt: user.CreatedAt,
+			ID:                   user.ID,
+			Name:                 user.Name,
+			Email:                user.Email,
+			Roles:                roleStrings,
+			IsActive:             user.IsActive,
+			CreatedAt:            user.CreatedAt,
+			HasPublicKey:         hasPublicKey,
+			PublicKeyExpired:     publicKeyExpired,
+			PublicKeyFingerprint: publicKeyFingerprint,
+			PublicKeyExpiresAt:   publicKeyExpiresAt,
+			MustChangePassword:   user.MustChangePassword,
+			PasswordChangedAt:    passwordChangedAt,
 		},
 	}, nil
 }

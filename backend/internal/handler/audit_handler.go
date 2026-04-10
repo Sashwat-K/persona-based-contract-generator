@@ -34,5 +34,9 @@ func (h *AuditHandler) GetAuditTrail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if events == nil {
+		events = []service.EnrichedAuditEvent{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"audit_events": events})
 }

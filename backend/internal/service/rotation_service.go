@@ -92,14 +92,21 @@ func (s *RotationService) CheckExpiredCredentials(ctx context.Context) (*Expired
 	}
 
 	for _, user := range expiredKeys {
-		if !user.PublicKeyRegisteredAt.Valid || !user.PublicKeyExpiresAt.Valid {
-			continue
+		var keyAge string
+		var registeredAt, expiresAt time.Time
+		var daysOverdue int
+
+		if user.PublicKeyRegisteredAt.Valid {
+			registeredAt = user.PublicKeyRegisteredAt.Time
+			keyAge = time.Since(registeredAt).Round(24 * time.Hour).String()
+		} else {
+			keyAge = "never registered"
 		}
 
-		registeredAt := user.PublicKeyRegisteredAt.Time
-		expiresAt := user.PublicKeyExpiresAt.Time
-		keyAge := time.Since(registeredAt).Round(24 * time.Hour).String()
-		daysOverdue := int(time.Since(expiresAt).Hours() / 24)
+		if user.PublicKeyExpiresAt.Valid {
+			expiresAt = user.PublicKeyExpiresAt.Time
+			daysOverdue = int(time.Since(expiresAt).Hours() / 24)
+		}
 
 		report.ExpiredPublicKeys = append(report.ExpiredPublicKeys, ExpiredPublicKeyInfo{
 			UserID:       user.ID.String(),

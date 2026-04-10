@@ -69,6 +69,19 @@ func (s *AuditService) LogEvent(ctx context.Context, input LogEventInput) (*repo
 		prevHash = latest.EventHash
 	}
 
+	// Auto-populate actor public key fields from the user record if not provided
+	if input.ActorPublicKey == nil || input.ActorKeyFingerprint == nil {
+		actor, err := s.queries.GetUserByID(ctx, input.ActorUserID)
+		if err == nil {
+			if input.ActorPublicKey == nil {
+				input.ActorPublicKey = actor.PublicKey
+			}
+			if input.ActorKeyFingerprint == nil {
+				input.ActorKeyFingerprint = actor.PublicKeyFingerprint
+			}
+		}
+	}
+
 	// Compute new event hash
 	eventHash := crypto.ComputeEventHash(eventDataJSON, prevHash)
 
@@ -129,8 +142,14 @@ func (s *AuditService) LogEvent(ctx context.Context, input LogEventInput) (*repo
 	return result, nil
 }
 
-// GetAuditTrail returns the full chronological audit trail for a build.
-func (s *AuditService) GetAuditTrail(ctx context.Context, buildID uuid.UUID) ([]repository.AuditEvent, error) {
+// EnrichedAuditEvent extends AuditEvent with actor display name.
+type EnrichedAuditEvent struct {
+	repository.AuditEvent
+	ActorName string `json:"actor_name"`
+}
+
+// GetAuditTrail returns the full chronological audit trail for a build, enriched with actor names.
+func (s *AuditService) GetAuditTrail(ctx context.Context, buildID uuid.UUID) ([]EnrichedAuditEvent, error) {
 	// Convert uuid.UUID to pgtype.UUID
 	buildIDPg := pgtype.UUID{
 		Bytes: buildID,
@@ -142,10 +161,12 @@ func (s *AuditService) GetAuditTrail(ctx context.Context, buildID uuid.UUID) ([]
 		return nil, fmt.Errorf("failed to get audit events: %w", err)
 	}
 
-	// Convert Row types to AuditEvent types
-	events := make([]repository.AuditEvent, len(rows))
+	// Cache user names to avoid repeated DB lookups
+	userNames := make(map[uuid.UUID]string)
+
+	events := make([]EnrichedAuditEvent, len(rows))
 	for i, row := range rows {
-		events[i] = repository.AuditEvent{
+		base := repository.AuditEvent{
 			ID:                  row.ID,
 			BuildID:             row.BuildID,
 			SequenceNo:          row.SequenceNo,
@@ -160,6 +181,23 @@ func (s *AuditService) GetAuditTrail(ctx context.Context, buildID uuid.UUID) ([]
 			EventHash:           row.EventHash,
 			Signature:           row.Signature,
 			CreatedAt:           row.CreatedAt,
+		}
+
+		// Resolve actor name
+		actorName, ok := userNames[row.ActorUserID]
+		if !ok {
+			user, err := s.queries.GetUserByID(ctx, row.ActorUserID)
+			if err == nil {
+				actorName = user.Name
+			} else {
+				actorName = row.ActorUserID.String()
+			}
+			userNames[row.ActorUserID] = actorName
+		}
+
+		events[i] = EnrichedAuditEvent{
+			AuditEvent: base,
+			ActorName:  actorName,
 		}
 	}
 

@@ -49,8 +49,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	result, err := h.authService.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
 		h.systemLogService.LogEvent(r.Context(), req.Email, "USER_LOGIN", "Authentication System", ipAddress, "FAILED", "Login attempt failed: "+err.Error())
-		// Don't leak whether the email exists or not
-		writeError(w, model.ErrUnauthorized())
+		// Don't leak whether the email exists or not.
+		// Return credential-specific 401 instead of bearer-token wording.
+		writeError(w, &model.AppError{
+			Code:       "INVALID_CREDENTIALS",
+			Message:    "Invalid email or password.",
+			HTTPStatus: http.StatusUnauthorized,
+		})
 		return
 	}
 

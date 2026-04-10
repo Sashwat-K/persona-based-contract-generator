@@ -25,8 +25,9 @@ func NewAssignmentHandler(assignmentService *service.AssignmentService) *Assignm
 
 // CreateAssignmentRequest represents the request body for creating an assignment.
 type CreateAssignmentRequest struct {
-	RoleName string    `json:"role_name"` // e.g., "SOLUTION_PROVIDER"
-	UserID   uuid.UUID `json:"user_id"`
+	RoleID   *uuid.UUID `json:"role_id,omitempty"`
+	RoleName string     `json:"role_name,omitempty"` // backward compatible
+	UserID   uuid.UUID  `json:"user_id"`
 }
 
 // CreateAssignment handles POST /builds/{id}/assignments
@@ -62,8 +63,8 @@ func (h *AssignmentHandler) CreateAssignment(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Validate required fields
-	if req.RoleName == "" {
-		writeError(w, model.ErrInvalidRequest("role_name is required"))
+	if req.RoleID == nil && req.RoleName == "" {
+		writeError(w, model.ErrInvalidRequest("role_id is required"))
 		return
 	}
 	if req.UserID == uuid.Nil {
@@ -77,15 +78,29 @@ func (h *AssignmentHandler) CreateAssignment(w http.ResponseWriter, r *http.Requ
 		writeError(w, model.ErrUnauthorized())
 		return
 	}
+	requestSignature := middleware.GetRequestSignature(ctx)
+	requestSignatureHash := middleware.GetRequestSignatureHash(ctx)
 	ip := r.RemoteAddr
+
+	var sigPtr *string
+	var sigHashPtr *string
+	if requestSignature != "" {
+		sigPtr = &requestSignature
+	}
+	if requestSignatureHash != "" {
+		sigHashPtr = &requestSignatureHash
+	}
 
 	// Create assignment
 	assignment, err := h.assignmentService.CreateAssignment(ctx, service.CreateAssignmentInput{
 		BuildID:    buildID,
+		RoleID:     req.RoleID,
 		RoleName:   req.RoleName,
 		UserID:     req.UserID,
 		AssignedBy: userID,
 		IPAddress:  ip,
+		Signature:  sigPtr,
+		SigHash:    sigHashPtr,
 	})
 	if err != nil {
 		// Check if it's an AppError
