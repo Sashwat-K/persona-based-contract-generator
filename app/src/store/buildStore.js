@@ -84,7 +84,7 @@ export const useBuildStore = create((set, get) => ({
     assignments: {
       ...state.assignments,
       [buildId]: (state.assignments[buildId] || []).filter(a =>
-        !(a.user_id === userId && a.persona_role === personaRole)
+        !(a.user_id === userId && (a.persona_role === personaRole || a.role_name === personaRole))
       )
     }
   })),
@@ -223,9 +223,9 @@ export const useBuildStore = create((set, get) => ({
   isBuildComplete: (buildId) => {
     const state = get();
     const sections = state.sections[buildId] || [];
-    const hasWorkload = sections.some(s => s.persona_role === 'workload_owner');
-    const hasEnvironment = sections.some(s => s.persona_role === 'data_owner');
-    const hasAttestation = sections.some(s => s.persona_role === 'auditor');
+    const hasWorkload = sections.some(s => s.persona_role === 'SOLUTION_PROVIDER');
+    const hasEnvironment = sections.some(s => s.persona_role === 'DATA_OWNER');
+    const hasAttestation = sections.some(s => s.persona_role === 'AUDITOR');
     return hasWorkload && hasEnvironment && hasAttestation;
   },
 
@@ -249,8 +249,7 @@ export const useBuildStore = create((set, get) => ({
     const state = get();
     const assignments = state.assignments[buildId] || [];
     const userAssignments = assignments.filter(a => a.user_id === userId);
-    return userAssignments.map(a => a.persona_role);
+    return userAssignments.map(a => a.role_name || a.persona_role);
   }
 }));
-
 

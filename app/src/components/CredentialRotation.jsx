@@ -56,9 +56,32 @@ const CredentialRotation = () => {
     setError
   } = useRotationStore();
 
-  // Derive arrays from store shape
-  const expiredPasswords = expiredCredentials?.expired_passwords || [];
-  const expiredKeys = expiredCredentials?.expired_keys || [];
+  // Derive arrays from store shape — normalize backend field names to what render functions expect
+  const expiredPasswords = (expiredCredentials?.expired_passwords || []).map(item => ({
+    user_id: item.user_id,
+    username: item.user_name,
+    full_name: item.user_name,
+    email: item.user_email,
+    password_expires_at: item.last_changed
+      ? new Date(new Date(item.last_changed).getTime() + 90 * 24 * 60 * 60 * 1000).toISOString()
+      : null,
+    // must_change overrides date math — treat as expired regardless of age
+    days_until_expiry: item.must_change
+      ? -1
+      : Math.ceil((new Date(item.last_changed).getTime() + 90 * 24 * 60 * 60 * 1000 - Date.now()) / (1000 * 60 * 60 * 24))
+  }));
+  const expiredKeys = (expiredCredentials?.expired_public_keys || []).map(item => {
+    const neverRegistered = !item.expires_at || item.expires_at.startsWith('0001-');
+    return {
+      user_id: item.user_id,
+      username: item.user_name,
+      full_name: item.user_name,
+      email: item.user_email,
+      key_fingerprint: null,
+      key_expires_at: neverRegistered ? null : item.expires_at,
+      days_until_expiry: neverRegistered ? -9999 : -item.days_overdue
+    };
+  });
   const expiringPasswords = expiringSoon?.filter(i => i.type === 'password') || [];
   const expiringKeys = expiringSoon?.filter(i => i.type === 'key') || [];
 
@@ -175,6 +198,7 @@ const CredentialRotation = () => {
   };
 
   const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString();
   };
 
@@ -197,6 +221,16 @@ const CredentialRotation = () => {
   };
 
   const renderPasswordTable = (data, title) => {
+    if (data.length === 0) {
+      return (
+        <Tile style={{ padding: '2rem', textAlign: 'center' }}>
+          <CheckmarkFilled size={32} style={{ color: 'var(--cds-support-success)', marginBottom: '0.5rem' }} />
+          <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{title}</p>
+          <p style={{ color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>No users found.</p>
+        </Tile>
+      );
+    }
+
     const headers = [
       { key: 'username', header: 'Username' },
       { key: 'full_name', header: 'Full Name' },
@@ -289,6 +323,16 @@ const CredentialRotation = () => {
   };
 
   const renderKeyTable = (data, title) => {
+    if (data.length === 0) {
+      return (
+        <Tile style={{ padding: '2rem', textAlign: 'center' }}>
+          <CheckmarkFilled size={32} style={{ color: 'var(--cds-support-success)', marginBottom: '0.5rem' }} />
+          <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{title}</p>
+          <p style={{ color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>No users found.</p>
+        </Tile>
+      );
+    }
+
     const headers = [
       { key: 'username', header: 'Username' },
       { key: 'full_name', header: 'Full Name' },
@@ -304,9 +348,9 @@ const CredentialRotation = () => {
       username: item.username,
       full_name: item.full_name,
       email: item.email,
-      key_fingerprint: item.key_fingerprint?.substring(0, 16) + '...',
+      key_fingerprint: item.key_fingerprint ? item.key_fingerprint.substring(0, 16) + '...' : 'N/A',
       key_expires_at: formatDate(item.key_expires_at),
-      days_until_expiry: item.days_until_expiry,
+      days_until_expiry: item.days_until_expiry === -9999 ? 'Never registered' : item.days_until_expiry,
       status: getStatusTag(item.days_until_expiry)
     }));
 

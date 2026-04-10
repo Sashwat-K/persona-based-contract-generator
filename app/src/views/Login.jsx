@@ -107,6 +107,15 @@ const Login = ({ onLogin }) => {
       // Store auth in Zustand store
       setAuth(response.user, response.token);
 
+      // Persist auth to localStorage so App.jsx can read role/email on re-render
+      localStorage.setItem('auth_token', response.token);
+      const allRoles = response.user.roles || [];
+      const rolePriority = ['ADMIN', 'AUDITOR', 'ENV_OPERATOR', 'SOLUTION_PROVIDER', 'DATA_OWNER', 'VIEWER'];
+      const primaryRole = rolePriority.find(r => allRoles.includes(r)) || allRoles[0] || 'VIEWER';
+      localStorage.setItem('user_role', primaryRole);
+      localStorage.setItem('user_roles', JSON.stringify(allRoles));
+      localStorage.setItem('user_email', response.user.email);
+
       // Handle remember email
       if (rememberEmail) {
         localStorage.setItem('remembered_email', username);

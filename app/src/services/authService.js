@@ -10,13 +10,18 @@ class AuthService {
    */
   async login(email, password) {
     const response = await apiClient.post('/auth/login', { email, password });
-    const { token, user } = response.data;
+    const { token, user, requires_setup, setup_pending } = response.data;
+    const enrichedUser = {
+      ...user,
+      requires_setup: !!requires_setup,
+      setup_pending: setup_pending || []
+    };
 
     // Store auth in store
-    useAuthStore.getState().setAuth(user, token);
+    useAuthStore.getState().setAuth(enrichedUser, token);
     apiClient.setAuthToken(token);
 
-    return { token, user };
+    return { token, user: enrichedUser };
   }
 
   /**
@@ -42,12 +47,17 @@ class AuthService {
   async changePassword(oldPassword, newPassword) {
     const user = useAuthStore.getState().user;
     const response = await apiClient.patch(`/users/${user.id}/password`, {
-      old_password: oldPassword,
       new_password: newPassword
     });
 
-    // Update must_change_password flag
-    useAuthStore.getState().setMustChangePassword(false);
+    const store = useAuthStore.getState();
+    const pending = response.data?.setup_pending || [];
+    const requiresSetup = response.data?.requires_setup ?? (pending.length > 0);
+    const mustChangePassword = response.data?.must_change_password ?? pending.includes('password_change');
+
+    // Sync setup flags from backend response to avoid stale warning banners.
+    store.setMustChangePassword(!!mustChangePassword);
+    store.setSetupState({ requiresSetup, setupPending: pending });
 
     return response.data;
   }
@@ -65,11 +75,18 @@ class AuthService {
 
     const { fingerprint, created_at, expires_at } = response.data;
 
-    // Update auth store
-    useAuthStore.getState().updatePublicKey(
+    const store = useAuthStore.getState();
+    const pending = response.data?.setup_pending || [];
+    const requiresSetup = response.data?.requires_setup ?? (pending.length > 0);
+    const mustChangePassword = response.data?.must_change_password ?? pending.includes('password_change');
+
+    // Update auth store with key metadata and setup state.
+    store.updatePublicKey(
       fingerprint,
       expires_at || null
     );
+    store.setMustChangePassword(!!mustChangePassword);
+    store.setSetupState({ requiresSetup, setupPending: pending });
 
     return {
       fingerprint: fingerprint,
@@ -202,5 +219,3 @@ class AuthService {
 }
 
 export default new AuthService();
-
-

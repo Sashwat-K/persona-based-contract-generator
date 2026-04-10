@@ -63,7 +63,18 @@ contextBridge.exposeInMainWorld('electron', {
   contractCli: {
     encryptSection: (plainText, certContent) =>
       ipcRenderer.invoke('contractCli:encryptSection', plainText, certContent),
-    
+
+    encryptSectionStream: (plainText, certContent) =>
+      ipcRenderer.invoke('contractCli:encryptSectionStream', plainText, certContent),
+
+    onTerminalLine: (callback) => {
+      ipcRenderer.on('contractCli:terminalLine', (_event, data) => callback(data));
+    },
+
+    offTerminalLine: () => {
+      ipcRenderer.removeAllListeners('contractCli:terminalLine');
+    },
+
     assembleContract: (sections) =>
       ipcRenderer.invoke('contractCli:assembleContract', sections)
   },
@@ -80,6 +91,30 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('file:readFile', path)
   },
   
+  // Auditor operations
+  auditor: {
+    onTerminalLine: (callback) => {
+      ipcRenderer.on('auditor:terminalLine', (_event, data) => callback(data));
+    },
+    offTerminalLine: () => {
+      ipcRenderer.removeAllListeners('auditor:terminalLine');
+    },
+    generateSigningKey: (opts) =>
+      ipcRenderer.invoke('auditor:generateSigningKey', opts),
+    generateSigningCert: (opts) =>
+      ipcRenderer.invoke('auditor:generateSigningCert', opts),
+    generateAttestationKey: (opts) =>
+      ipcRenderer.invoke('auditor:generateAttestationKey', opts),
+    generateEncryptedEnv: (opts) =>
+      ipcRenderer.invoke('auditor:generateEncryptedEnv', opts),
+    encryptAttestationPublicKey: (opts) =>
+      ipcRenderer.invoke('auditor:encryptAttestationPublicKey', opts),
+    encryptEnvAndAttestation: (opts) =>
+      ipcRenderer.invoke('auditor:encryptEnvAndAttestation', opts),
+    signContract: (opts) =>
+      ipcRenderer.invoke('auditor:signContract', opts),
+  },
+
   // Directory selection
   selectDirectory: () =>
     ipcRenderer.invoke('file:selectDirectory'),

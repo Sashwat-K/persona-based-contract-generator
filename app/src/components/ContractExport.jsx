@@ -27,9 +27,9 @@ import verificationService from '../services/verificationService';
  * Handles contract export, preview, and download acknowledgment
  * Features: Export button, YAML preview, download with signature, verification
  */
-const ContractExport = ({ buildId }) => {
+const ContractExport = ({ buildId, buildStatus }) => {
   const { user } = useAuthStore();
-  const { getBuildExportData, isBuildComplete } = useBuildStore();
+  const { getBuildExportData } = useBuildStore();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -44,7 +44,8 @@ const ContractExport = ({ buildId }) => {
   const [verificationResult, setVerificationResult] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
-  const buildComplete = isBuildComplete(buildId);
+  // Export only available when build is FINALIZED (contract exists)
+  const buildComplete = buildStatus === 'FINALIZED';
 
   useEffect(() => {
     // Load cached export data if available
@@ -123,9 +124,12 @@ const ContractExport = ({ buildId }) => {
       setVerificationResult(result);
 
       if (result.valid) {
-        setSuccess('Contract verification passed ✓');
+        setSuccess('Contract verification passed');
       } else {
-        setError('Contract verification failed. See details below.');
+        const reason = (result.errors && result.errors.length > 0)
+          ? result.errors[0]
+          : (result.details || 'Contract integrity checks did not pass.');
+        setError(`Contract verification failed: ${reason}`);
       }
     } catch (err) {
       setError(`Verification failed: ${err.message}`);
@@ -138,7 +142,7 @@ const ContractExport = ({ buildId }) => {
     if (!buildComplete) {
       return {
         canExport: false,
-        message: 'Build incomplete. All sections must be submitted before export.',
+        message: `Build must be FINALIZED before export. Current status: ${buildStatus || 'unknown'}.`,
         severity: 'warning'
       };
     }
@@ -251,7 +255,11 @@ const ContractExport = ({ buildId }) => {
               title={verificationResult.valid ? 'Verification Passed' : 'Verification Failed'}
               subtitle={verificationResult.valid
                 ? 'Contract integrity verified successfully'
-                : `${verificationResult.errors?.length || 0} errors found`
+                : (
+                  (verificationResult.errors?.length || 0) > 0
+                    ? `${verificationResult.errors.length} error(s): ${verificationResult.errors.join('; ')}`
+                    : (verificationResult.details || 'Contract integrity checks did not pass.')
+                )
               }
               lowContrast
             />
@@ -518,4 +526,3 @@ const ContractExport = ({ buildId }) => {
 };
 
 export default ContractExport;
-

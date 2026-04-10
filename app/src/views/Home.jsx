@@ -21,9 +21,14 @@ import { useAuthStore } from '../store/authStore';
 
 const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   const authUser = useAuthStore((state) => state.user);
-  const publicKeyExpiry = useAuthStore((state) => state.publicKeyExpiry);
-  const isKeyExpired = useAuthStore((state) => state.isKeyExpired);
-  const isPasswordExpired = useAuthStore((state) => state.isPasswordExpired);
+  const publicKeyExpiry = useAuthStore((state) =>
+    state.publicKeyExpiry || state.user?.public_key_expires_at || null
+  );
+  const isKeyExpired = useAuthStore((state) => state.isKeyExpired());
+  const isPasswordExpired = useAuthStore((state) => state.isPasswordExpired());
+  const isSetupRequired = useAuthStore((state) => state.isSetupRequired());
+  const setupPending = useAuthStore((state) => state.getSetupPending());
+  const mustChangePassword = useAuthStore((state) => state.mustChangePassword);
 
   const [myBuilds, setMyBuilds] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,11 +39,9 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
     name: authUser?.full_name || authUser?.name || userEmail.split('@')[0],
     email: authUser?.email || userEmail,
     role: userRole,
-    keyStatus: isKeyExpired() ? 'Expired' : (publicKeyExpiry ? 'Active' : 'Unknown'),
-    keyExpiresAt: publicKeyExpiry
-      ? new Date(publicKeyExpiry).toLocaleDateString()
-      : 'N/A',
-    passwordExpired: isPasswordExpired()
+    keyStatus: !(publicKeyExpiry || authUser?.public_key_fingerprint) ? 'Not Registered' : (isKeyExpired ? 'Expired' : 'Active'),
+    keyExpiresAt: publicKeyExpiry || null,
+    passwordExpired: mustChangePassword || isPasswordExpired
   };
 
   // Load builds on mount
@@ -47,6 +50,12 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
       try {
         setLoading(true);
         setError(null);
+
+        if (isSetupRequired) {
+          setError(`Account setup is required (${setupPending.join(', ')}). Complete setup from Account Settings.`);
+          setMyBuilds([]);
+          return;
+        }
 
         // Load builds assigned to current user
         const builds = await buildService.getBuilds();
@@ -62,7 +71,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
     };
 
     loadBuilds();
-  }, []);
+  }, [isSetupRequired, setupPending.join(',')]);
 
   // Show loading state only for builds
   if (loading) {
@@ -104,7 +113,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
           type: 'warning',
           icon: Time,
           title: 'Key Expiring Soon',
-          description: `Your public key expires in ${daysUntilExpiry} days (${currentUser.keyExpiresAt}).`,
+          description: `Your public key expires in ${daysUntilExpiry} days (${new Date(currentUser.keyExpiresAt).toLocaleDateString()}).`,
           action: 'Rotate Keys',
           onClick: () => onNavigate('SETTINGS')
         });
@@ -139,8 +148,8 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
         buildActions.push({
           buildId: build.id,
           buildName: build.name,
-          title: 'Register Attestation Keys',
-          description: 'Generate and register attestation key pair locally.',
+          title: 'Sign & Add Attestation',
+          description: 'Generate signing and attestation artifacts, then confirm attestation readiness.',
           status: build.status
         });
       } else if (userRole === 'AUDITOR' && build.status === 'AUDITOR_KEYS_REGISTERED') {
@@ -174,6 +183,8 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
       return { color: 'green', icon: Checkmark, text: 'Active' };
     } else if (status === 'Expired') {
       return { color: 'red', icon: WarningAlt, text: 'Expired' };
+    } else if (status === 'Not Registered') {
+      return { color: 'gray', icon: Unlocked, text: 'Not Registered' };
     }
     return { color: 'gray', icon: Warning, text: status };
   };
@@ -239,7 +250,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                   {keyStatusDisplay.text}
                 </Tag>
                 <div style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
-                  Expires: {currentUser.keyExpiresAt}
+                  Expires: {currentUser.keyExpiresAt ? new Date(currentUser.keyExpiresAt).toLocaleDateString() : 'N/A'}
                 </div>
               </div>
             </div>
@@ -464,5 +475,3 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
 };
 
 export default Home;
-
-

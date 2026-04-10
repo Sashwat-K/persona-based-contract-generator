@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+const SETUP_PENDING_NONE = Object.freeze([]);
+const SETUP_PENDING_PASSWORD = Object.freeze(['password_change']);
+const SETUP_PENDING_PUBLIC_KEY = Object.freeze(['public_key_registration']);
+const SETUP_PENDING_BOTH = Object.freeze(['password_change', 'public_key_registration']);
+
 export const useAuthStore = create(
   persist(
     (set, get) => ({
@@ -12,6 +17,8 @@ export const useAuthStore = create(
       mustChangePassword: false,
       publicKeyExpiry: null,
       publicKeyFingerprint: null,
+      requiresSetup: false,
+      setupPending: [],
 
       // NEW: API Tokens
       apiTokens: [],
@@ -33,6 +40,8 @@ export const useAuthStore = create(
         mustChangePassword: user.must_change_password || false,
         publicKeyExpiry: user.public_key_expires_at,
         publicKeyFingerprint: user.public_key_fingerprint,
+        requiresSetup: user.requires_setup || false,
+        setupPending: user.setup_pending || [],
         lastPasswordChange: user.password_changed_at,
         sessionExpiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
       }),
@@ -45,6 +54,8 @@ export const useAuthStore = create(
         mustChangePassword: false,
         publicKeyExpiry: null,
         publicKeyFingerprint: null,
+        requiresSetup: false,
+        setupPending: [],
         apiTokens: [],
         keyExpiryWarning: false,
         passwordExpiryWarning: false,
@@ -56,17 +67,45 @@ export const useAuthStore = create(
         user: state.user ? { ...state.user, ...updates } : null
       })),
 
-      updatePublicKey: (fingerprint, expiresAt) => set((state) => ({
-        user: state.user ? {
-          ...state.user,
-          public_key_fingerprint: fingerprint,
-          public_key_expires_at: expiresAt
-        } : null,
-        publicKeyExpiry: expiresAt,
-        publicKeyFingerprint: fingerprint
-      })),
+      updatePublicKey: (fingerprint, expiresAt) => set((state) => {
+        const setupPending = (state.setupPending || []).filter(s => s !== 'public_key_registration');
+        return {
+          user: state.user ? {
+            ...state.user,
+            public_key_fingerprint: fingerprint,
+            public_key_expires_at: expiresAt
+          } : null,
+          publicKeyExpiry: expiresAt,
+          publicKeyFingerprint: fingerprint,
+          setupPending,
+          requiresSetup: setupPending.length > 0
+        };
+      }),
 
-      setMustChangePassword: (value) => set({ mustChangePassword: value }),
+      setMustChangePassword: (value) => set((state) => {
+        const setupPending = value
+          ? Array.from(new Set([...(state.setupPending || []), 'password_change']))
+          : (state.setupPending || []).filter(s => s !== 'password_change');
+        return {
+          mustChangePassword: value,
+          user: state.user ? { ...state.user, must_change_password: value } : state.user,
+          setupPending,
+          requiresSetup: setupPending.length > 0
+        };
+      }),
+
+      setSetupState: ({ requiresSetup, setupPending }) => {
+        const pending = setupPending || [];
+        set((state) => ({
+          requiresSetup: requiresSetup ?? (pending.length > 0),
+          setupPending: pending,
+          user: state.user ? {
+            ...state.user,
+            requires_setup: requiresSetup ?? (pending.length > 0),
+            setup_pending: pending
+          } : state.user
+        }));
+      },
 
       // NEW: API Token Actions
       setApiTokens: (tokens) => set({ apiTokens: tokens }),
@@ -114,13 +153,14 @@ export const useAuthStore = create(
       // Computed
       hasRole: (roleName) => {
         const state = get();
-        return state.roles.some(r => r.name === roleName);
+        return state.roles.some(r => (typeof r === 'string' ? r === roleName : r.name === roleName));
       },
 
       isKeyExpired: () => {
         const state = get();
-        if (!state.publicKeyExpiry) return true;
-        return new Date(state.publicKeyExpiry) < new Date();
+        const expiry = state.publicKeyExpiry || state.user?.public_key_expires_at;
+        if (!expiry) return true;
+        return new Date(expiry) < new Date();
       },
 
       daysUntilKeyExpiry: () => {
@@ -156,6 +196,27 @@ export const useAuthStore = create(
         return Date.now() >= state.sessionExpiresAt;
       },
 
+      getSetupPending: () => {
+        const state = get();
+        if (state.setupPending?.length) return state.setupPending;
+        const needsPasswordChange = !!(state.mustChangePassword || state.user?.must_change_password);
+        const hasFingerprint = !!(state.publicKeyFingerprint || state.user?.public_key_fingerprint);
+        const keyExpired = state.isKeyExpired();
+        const needsPublicKey = !hasFingerprint || keyExpired;
+
+        if (needsPasswordChange && needsPublicKey) return SETUP_PENDING_BOTH;
+        if (needsPasswordChange) return SETUP_PENDING_PASSWORD;
+        if (needsPublicKey) return SETUP_PENDING_PUBLIC_KEY;
+        return SETUP_PENDING_NONE;
+      },
+
+      isSetupRequired: () => {
+        const state = get();
+        if (state.setupPending?.length > 0) return true;
+        if (state.requiresSetup && state.setupPending?.length === 0) return false;
+        return state.getSetupPending().length > 0;
+      },
+
       // NEW: Get active API tokens count
       getActiveTokensCount: () => {
         const state = get();
@@ -169,10 +230,11 @@ export const useAuthStore = create(
       name: 'auth-storage',
       partialize: (state) => ({
         token: state.token,
-        user: state.user
+        user: state.user,
+        publicKeyExpiry: state.publicKeyExpiry,
+        publicKeyFingerprint: state.publicKeyFingerprint,
+        lastPasswordChange: state.lastPasswordChange,
       })
     }
   )
 );
-
-

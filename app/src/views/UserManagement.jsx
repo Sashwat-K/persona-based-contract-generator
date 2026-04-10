@@ -115,13 +115,14 @@ const UserManagement = () => {
       role: (
         <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', minHeight: '24px' }}>
           {u.roles && u.roles.length > 0 ? (
-            u.roles.map(r => (
-              <Tag type="blue" key={r.role_id || r.id || r.name || r}>
-                {r.role_name || r.name || r}
-              </Tag>
-            ))
-          ) : u.role ? (
-            <Tag type="blue">{typeof u.role === 'string' ? u.role : u.role.name || u.role}</Tag>
+            u.roles.map(r => {
+              const key = typeof r === 'string' ? r : (r.role_name || r.name || r);
+              return (
+                <Tag type="blue" key={key}>
+                  {ROLE_NAMES[key] || key}
+                </Tag>
+              );
+            })
           ) : (
             <Tag type="gray">None</Tag>
           )}

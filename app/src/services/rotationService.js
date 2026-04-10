@@ -141,13 +141,13 @@ class RotationService {
 
     const summary = {
       totalExpiredPasswords: expiredData.expired_passwords?.length || 0,
-      totalExpiredKeys: expiredData.expired_keys?.length || 0,
+      totalExpiredKeys: expiredData.expired_public_keys?.length || 0,
       totalAffectedUsers: new Set([
         ...(expiredData.expired_passwords?.map(u => u.user_id) || []),
-        ...(expiredData.expired_keys?.map(u => u.user_id) || [])
+        ...(expiredData.expired_public_keys?.map(u => u.user_id) || [])
       ]).size,
       expiredPasswords: expiredData.expired_passwords || [],
-      expiredKeys: expiredData.expired_keys || []
+      expiredKeys: expiredData.expired_public_keys || []
     };
 
     return summary;
@@ -164,39 +164,43 @@ class RotationService {
 
     const expiringSoon = [];
 
-    // Check passwords
+    // Expiring-soon passwords: must_change=false, password not yet expired, but within threshold
     if (expiredData.expired_passwords) {
       expiredData.expired_passwords.forEach(user => {
-        const changedAt = new Date(user.password_changed_at);
+        if (user.must_change) return; // already expired, belongs in expired tab not expiring-soon
+        const changedAt = new Date(user.last_changed);
         const expiryDate = new Date(changedAt.getTime() + (90 * 24 * 60 * 60 * 1000));
-
-        if (expiryDate.getTime() <= threshold) {
+        const daysUntilExpiry = Math.ceil((expiryDate - Date.now()) / (1000 * 60 * 60 * 24));
+        if (daysUntilExpiry > 0 && expiryDate.getTime() <= threshold) {
           expiringSoon.push({
-            userId: user.user_id,
-            userName: user.name,
-            email: user.email,
+            user_id: user.user_id,
+            username: user.user_name,
+            full_name: user.user_name,
+            email: user.user_email,
             type: 'password',
-            expiresAt: expiryDate.toISOString(),
-            daysUntilExpiry: Math.ceil((expiryDate - Date.now()) / (1000 * 60 * 60 * 24))
+            password_expires_at: expiryDate.toISOString(),
+            days_until_expiry: daysUntilExpiry
           });
         }
       });
     }
 
-    // Check keys
-    if (expiredData.expired_keys) {
-      expiredData.expired_keys.forEach(user => {
-        const expiresAt = new Date(user.public_key_expires_at);
-
-        if (expiresAt.getTime() <= threshold) {
+    // Expiring-soon keys: registered, not yet expired, but within threshold
+    if (expiredData.expired_public_keys) {
+      expiredData.expired_public_keys.forEach(user => {
+        if (!user.expires_at || user.expires_at.startsWith('0001-')) return; // never registered
+        const expiresAt = new Date(user.expires_at);
+        const daysUntilExpiry = Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24));
+        if (daysUntilExpiry > 0 && expiresAt.getTime() <= threshold) {
           expiringSoon.push({
-            userId: user.user_id,
-            userName: user.name,
-            email: user.email,
+            user_id: user.user_id,
+            username: user.user_name,
+            full_name: user.user_name,
+            email: user.user_email,
             type: 'key',
-            expiresAt: user.public_key_expires_at,
-            daysUntilExpiry: Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24)),
-            fingerprint: user.public_key_fingerprint
+            key_expires_at: user.expires_at,
+            key_fingerprint: null,
+            days_until_expiry: daysUntilExpiry
           });
         }
       });

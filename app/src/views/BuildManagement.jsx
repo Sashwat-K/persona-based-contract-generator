@@ -16,14 +16,20 @@ import {
   Tag,
   Stack
 } from '@carbon/react';
-import { Add, WarningAlt } from '@carbon/icons-react';
+import { Add, WarningAlt, Renew } from '@carbon/icons-react';
 import { BUILD_STATUS_CONFIG, ROLES, ROLE_NAMES } from '../utils/constants';
 import { formatDate } from '../utils/formatters';
 import userService from '../services/userService';
 import buildService from '../services/buildService';
-import LoadingSpinner from '../components/LoadingSpinner';
+import assignmentService from '../services/assignmentService';
+import { InlineLoader } from '../components/LoadingSpinner';
+import { useAuthStore } from '../store/authStore';
 
-const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
+const BuildManagement = ({ builds, onSelectBuild, userRole, userRoles = [], onBuildCreated }) => {
+  const allRoles = userRoles.length > 0 ? userRoles : [userRole];
+  const isAdmin = allRoles.includes('ADMIN');
+  const isSetupRequired = useAuthStore((state) => state.isSetupRequired());
+  const setupPending = useAuthStore((state) => state.getSetupPending());
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [buildName, setBuildName] = useState('');
   const [assignments, setAssignments] = useState({
@@ -35,6 +41,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Load users when modal opens
   useEffect(() => {
@@ -46,7 +53,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
   const loadUsers = async () => {
     try {
       setLoadingUsers(true);
-      const usersData = await userService.getUsers();
+      const usersData = await userService.listUsers();
       setUsers(usersData);
     } catch (err) {
       console.error('Failed to load users:', err);
@@ -72,31 +79,54 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
         {BUILD_STATUS_CONFIG[b.status]?.label || b.status}
       </Tag>
     ),
-    createdBy: b.createdBy || 'Admin',
-    createdAt: formatDate(b.createdAt),
+    createdBy: b.created_by || b.createdBy || 'Admin',
+    createdAt: formatDate(b.created_at || b.createdAt),
     action: <Button size="sm" onClick={() => onSelectBuild(b.id)}>View Details</Button>
   }));
 
   // Get users by role for assignment dropdowns
-  const getUsersByRole = (role) => {
-    return users.filter(u => u.role === role);
+  const isUserReady = (u) =>
+    u.is_active &&
+    !u.must_change_password &&
+    u.public_key_fingerprint != null;
+
+  // Show all ready users in every role dropdown — one person can cover multiple roles.
+  // The build assignment (not system role) controls access per build.
+  const getUsersByRole = (_role) => {
+    return users.filter(u => isUserReady(u));
+  };
+
+  const getNotReadyCountByRole = (_role) => {
+    return users.filter(u => u.is_active && !isUserReady(u)).length;
   };
 
   const handleCreateBuild = async () => {
+    if (creating) return;
+
+    if (isSetupRequired) {
+      alert(`Account setup is required before creating builds. Pending: ${setupPending.join(', ')}`);
+      return;
+    }
     try {
       setCreating(true);
-      
-      // Create build with assignments
-      await buildService.createBuild({
-        name: buildName,
-        assignments: {
-          solution_provider_id: assignments[ROLES.SOLUTION_PROVIDER],
-          data_owner_id: assignments[ROLES.DATA_OWNER],
-          auditor_id: assignments[ROLES.AUDITOR],
-          env_operator_id: assignments[ROLES.ENV_OPERATOR]
-        }
-      });
-      
+
+      // Step 1: Create the build (backend only accepts name)
+      const build = await buildService.createBuild(buildName);
+
+      // Step 2: Create assignments for each role
+      const roleAssignments = [
+        { role: ROLES.SOLUTION_PROVIDER, userId: assignments[ROLES.SOLUTION_PROVIDER] },
+        { role: ROLES.DATA_OWNER,        userId: assignments[ROLES.DATA_OWNER] },
+        { role: ROLES.AUDITOR,           userId: assignments[ROLES.AUDITOR] },
+        { role: ROLES.ENV_OPERATOR,      userId: assignments[ROLES.ENV_OPERATOR] }
+      ].filter(a => a.userId);
+
+      await Promise.all(
+        roleAssignments.map(a =>
+          assignmentService.createAssignment(build.id, a.userId, a.role)
+        )
+      );
+
       // Reset form
       setBuildName('');
       setAssignments({
@@ -106,10 +136,8 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
         [ROLES.ENV_OPERATOR]: ''
       });
       setCreateModalOpen(false);
-      
-      // Reload builds (parent component should handle this via callback)
-      window.location.reload(); // Temporary - should use callback
-      
+      if (onBuildCreated) await onBuildCreated();
+
     } catch (err) {
       console.error('Failed to create build:', err);
       alert(`Failed to create build: ${err.message}`);
@@ -130,15 +158,42 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <h1>Build Management</h1>
-        {userRole === 'ADMIN' && (
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
           <Button
-            renderIcon={Add}
-            onClick={() => setCreateModalOpen(true)}
+            kind="ghost"
+            renderIcon={Renew}
+            iconDescription="Refresh"
+            disabled={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              if (onBuildCreated) await onBuildCreated();
+              setRefreshing(false);
+            }}
           >
-            Create New Build
+            {refreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
-        )}
+          {isAdmin && (
+            <Button
+              renderIcon={Add}
+              disabled={isSetupRequired || creating}
+              onClick={() => setCreateModalOpen(true)}
+            >
+              {isSetupRequired ? 'Complete Setup First' : 'Create New Build'}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {isSetupRequired && (
+        <div style={{
+          marginBottom: '1rem',
+          padding: '0.75rem 1rem',
+          borderLeft: '4px solid var(--cds-support-warning)',
+          background: 'var(--cds-layer-01)'
+        }}>
+          Account setup is incomplete. Complete password change and public key registration in Account Settings before creating builds.
+        </div>
+      )}
 
       {builds.length === 0 ? (
         <div style={{
@@ -149,16 +204,17 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
         }}>
           <h3 style={{ marginBottom: '1rem' }}>No Builds Found</h3>
           <p style={{ color: 'var(--cds-text-secondary)', marginBottom: '2rem' }}>
-            {userRole === 'ADMIN'
+            {isAdmin
               ? 'Get started by creating your first build.'
               : 'No builds have been created yet. Contact your administrator.'}
           </p>
-          {userRole === 'ADMIN' && (
+          {isAdmin && (
             <Button
               renderIcon={Add}
+              disabled={isSetupRequired || creating}
               onClick={() => setCreateModalOpen(true)}
             >
-              Create First Build
+              {isSetupRequired ? 'Complete Setup First' : 'Create First Build'}
             </Button>
           )}
         </div>
@@ -172,21 +228,27 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
               <Table {...getTableProps()}>
                 <TableHead>
                   <TableRow>
-                    {headers.map((header) => (
-                      <TableHeader key={header.key} {...getHeaderProps({ header })}>
-                        {header.header}
-                      </TableHeader>
-                    ))}
+                    {headers.map((header) => {
+                      const { key, ...headerProps } = getHeaderProps({ header });
+                      return (
+                        <TableHeader key={header.key} {...headerProps}>
+                          {header.header}
+                        </TableHeader>
+                      );
+                    })}
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.map((row) => (
-                    <TableRow key={row.id} {...getRowProps({ row })}>
-                      {row.cells.map((cell) => (
-                        <TableCell key={cell.id}>{cell.value}</TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
+                  {rows.map((row) => {
+                    const { key, ...rowProps } = getRowProps({ row });
+                    return (
+                      <TableRow key={row.id} {...rowProps}>
+                        {row.cells.map((cell) => (
+                          <TableCell key={cell.id}>{cell.value}</TableCell>
+                        ))}
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -202,8 +264,16 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
         primaryButtonText={creating ? "Creating..." : "Create Build"}
         secondaryButtonText="Cancel"
         onRequestSubmit={handleCreateBuild}
-        onRequestClose={() => setCreateModalOpen(false)}
+        onRequestClose={() => {
+          if (!creating) setCreateModalOpen(false);
+        }}
+        onSecondarySubmit={() => {
+          if (!creating) setCreateModalOpen(false);
+        }}
         primaryButtonDisabled={!isFormValid() || creating || loadingUsers}
+        secondaryButtonDisabled={creating}
+        preventCloseOnClickOutside={creating}
+        preventCloseOnEscape={creating}
         size="lg"
       >
         <Stack gap={6}>
@@ -214,17 +284,18 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
             value={buildName}
             onChange={(e) => setBuildName(e.target.value)}
             helperText="Enter a unique name for this build"
+            disabled={creating}
           />
 
           <div style={{ marginTop: '1rem' }}>
             <h4 style={{ marginBottom: '1rem' }}>Assign Users to Roles</h4>
             <p style={{ marginBottom: '1rem', color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>
-              Each role must be assigned to a specific user for this build.
+              Each role must be assigned to a user. The same user can be assigned to multiple roles. Only users who have completed their initial login and registered a public key are eligible.
             </p>
 
             {loadingUsers ? (
               <div style={{ padding: '2rem', textAlign: 'center' }}>
-                <LoadingSpinner size="sm" message="Loading users..." />
+                <InlineLoader size="sm" message="Loading users..." />
               </div>
             ) : users.length === 0 ? (
               <div style={{
@@ -240,65 +311,37 @@ const BuildManagement = ({ builds, onSelectBuild, userRole }) => {
               </div>
             ) : (
               <Stack gap={5}>
-              <Select
-                id="solution-provider"
-                labelText="Solution Provider"
-                value={assignments[ROLES.SOLUTION_PROVIDER]}
-                onChange={(e) => setAssignments({
-                  ...assignments,
-                  [ROLES.SOLUTION_PROVIDER]: e.target.value
-                })}
-              >
-                <SelectItem value="" text="Select a user" />
-                {getUsersByRole(ROLES.SOLUTION_PROVIDER).map(user => (
-                  <SelectItem key={user.id} value={user.id} text={user.name} />
-                ))}
-              </Select>
+              {[
+                { role: ROLES.SOLUTION_PROVIDER, id: 'solution-provider', label: 'Solution Provider' },
+                { role: ROLES.DATA_OWNER,        id: 'data-owner',        label: 'Data Owner' },
+                { role: ROLES.AUDITOR,           id: 'auditor',           label: 'Auditor' },
+                { role: ROLES.ENV_OPERATOR,      id: 'env-operator',      label: 'Environment Operator' }
+              ].map(({ role, id, label }) => {
+                const readyUsers = getUsersByRole(role);
+                const notReadyCount = getNotReadyCountByRole(role);
+                const helperText = notReadyCount > 0
+                  ? `${notReadyCount} user(s) excluded — pending initial login or public key registration.`
+                  : readyUsers.length === 0
+                  ? 'No eligible users. Users must complete initial login and register a public key.'
+                  : undefined;
 
-              <Select
-                id="data-owner"
-                labelText="Data Owner"
-                value={assignments[ROLES.DATA_OWNER]}
-                onChange={(e) => setAssignments({
-                  ...assignments,
-                  [ROLES.DATA_OWNER]: e.target.value
-                })}
-              >
-                <SelectItem value="" text="Select a user" />
-                {getUsersByRole(ROLES.DATA_OWNER).map(user => (
-                  <SelectItem key={user.id} value={user.id} text={user.name} />
-                ))}
-              </Select>
-
-              <Select
-                id="auditor"
-                labelText="Auditor"
-                value={assignments[ROLES.AUDITOR]}
-                onChange={(e) => setAssignments({
-                  ...assignments,
-                  [ROLES.AUDITOR]: e.target.value
-                })}
-              >
-                <SelectItem value="" text="Select a user" />
-                {getUsersByRole(ROLES.AUDITOR).map(user => (
-                  <SelectItem key={user.id} value={user.id} text={user.name} />
-                ))}
-              </Select>
-
-              <Select
-                id="env-operator"
-                labelText="Environment Operator"
-                value={assignments[ROLES.ENV_OPERATOR]}
-                onChange={(e) => setAssignments({
-                  ...assignments,
-                  [ROLES.ENV_OPERATOR]: e.target.value
-                })}
-              >
-                <SelectItem value="" text="Select a user" />
-                {getUsersByRole(ROLES.ENV_OPERATOR).map(user => (
-                  <SelectItem key={user.id} value={user.id} text={user.name} />
-                ))}
-              </Select>
+                return (
+                  <Select
+                    key={role}
+                    id={id}
+                    labelText={label}
+                    value={assignments[role]}
+                    helperText={helperText}
+                    onChange={(e) => setAssignments({ ...assignments, [role]: e.target.value })}
+                    disabled={creating || loadingUsers}
+                  >
+                    <SelectItem value="" text="Select a user" />
+                    {readyUsers.map(user => (
+                      <SelectItem key={user.id} value={user.id} text={user.name} />
+                    ))}
+                  </Select>
+                );
+              })}
               </Stack>
             )}
           </div>

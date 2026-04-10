@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, InlineNotification } from '@carbon/react';
-import { Renew, WarningAlt } from '@carbon/icons-react';
+import { Renew, WarningAlt, Copy, Checkmark } from '@carbon/icons-react';
 
 /**
  * ErrorBoundary Component
@@ -49,7 +49,8 @@ class ErrorBoundary extends React.Component {
     this.setState({
       hasError: false,
       error: null,
-      errorInfo: null
+      errorInfo: null,
+      copied: false
     });
   };
 
@@ -57,9 +58,30 @@ class ErrorBoundary extends React.Component {
     window.location.reload();
   };
 
+  handleCopyError = () => {
+    const { error, errorInfo } = this.state;
+    const text = [
+      `Timestamp: ${new Date().toISOString()}`,
+      `URL: ${window.location.href}`,
+      ``,
+      `Error: ${error?.toString() || 'Unknown error'}`,
+      ``,
+      `Stack Trace:`,
+      error?.stack || 'N/A',
+      ``,
+      `Component Stack:`,
+      errorInfo?.componentStack || 'N/A'
+    ].join('\n');
+
+    navigator.clipboard.writeText(text).then(() => {
+      this.setState({ copied: true });
+      setTimeout(() => this.setState({ copied: false }), 2000);
+    });
+  };
+
   render() {
     if (this.state.hasError) {
-      const { error, errorInfo, errorCount } = this.state;
+      const { error, errorInfo, errorCount, copied } = this.state;
       const { fallback } = this.props;
 
       // If custom fallback provided, use it
@@ -104,7 +126,7 @@ class ErrorBoundary extends React.Component {
               style={{ marginBottom: '2rem' }}
             />
 
-            {process.env.NODE_ENV === 'development' && errorInfo && (
+            {errorInfo && (
               <details style={{
                 marginBottom: '2rem',
                 padding: '1rem',
@@ -130,7 +152,8 @@ class ErrorBoundary extends React.Component {
             <div style={{
               display: 'flex',
               gap: '1rem',
-              justifyContent: 'center'
+              justifyContent: 'center',
+              flexWrap: 'wrap'
             }}>
               <Button
                 kind="primary"
@@ -144,6 +167,13 @@ class ErrorBoundary extends React.Component {
                 onClick={this.handleReload}
               >
                 Reload Application
+              </Button>
+              <Button
+                kind="ghost"
+                renderIcon={copied ? Checkmark : Copy}
+                onClick={this.handleCopyError}
+              >
+                {copied ? 'Copied!' : 'Copy Error for Bug Report'}
               </Button>
             </div>
 

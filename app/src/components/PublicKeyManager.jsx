@@ -49,7 +49,6 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
   useEffect(() => {
     if (targetUserId) {
       loadKeyInfo();
-      checkKeyStatus();
     }
   }, [targetUserId]);
 
@@ -59,6 +58,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
         ? await authService.getMyPublicKey()
         : await authService.getPublicKey(targetUserId);
       setKeyInfo(info);
+      computeKeyStatus(info);
     } catch (err) {
       // Key not registered yet - this is expected for new users
       // Only log if it's not the "not registered" error
@@ -66,16 +66,29 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
         console.error('Error loading key info:', err);
       }
       setKeyInfo(null);
+      setKeyStatus({ isExpired: true, daysUntilExpiry: 0, expiresAt: null, fingerprint: null });
     }
   };
 
-  const checkKeyStatus = async () => {
-    try {
-      const status = await authService.checkKeyExpiry();
-      setKeyStatus(status);
-    } catch (err) {
-      console.error('Failed to check key status:', err);
+  const computeKeyStatus = (info) => {
+    if (!info || !info.expires_at) {
+      setKeyStatus({ isExpired: true, daysUntilExpiry: 0, expiresAt: null, fingerprint: null });
+      return;
     }
+    const expiresAt = new Date(info.expires_at);
+    const now = new Date();
+    const daysUntilExpiry = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+    setKeyStatus({
+      isExpired: daysUntilExpiry <= 0,
+      daysUntilExpiry,
+      expiresAt: info.expires_at,
+      fingerprint: info.fingerprint
+    });
+  };
+
+  const checkKeyStatus = async () => {
+    // Status is derived from keyInfo (API response), not the stale auth store.
+    // computeKeyStatus is called inside loadKeyInfo; this is a no-op kept for compatibility.
   };
 
   const handleGenerateKey = async () => {

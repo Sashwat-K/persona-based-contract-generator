@@ -262,11 +262,6 @@ const AdminAnalytics = () => {
                   }}>
                     <h3 style={{ color: '#fff' }}>Disabled Users</h3>
                     <h1 style={{ fontSize: '3rem', marginTop: '1rem', color: '#fff' }}>{disabledUsers}</h1>
-                    {disabledUsers > 0 && (
-                      <p style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
-                        {disabledUsers} user(s) are currently deactivated
-                      </p>
-                    )}
                   </Tile>
                 </Column>
               </Grid>

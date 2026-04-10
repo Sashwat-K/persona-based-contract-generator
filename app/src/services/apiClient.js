@@ -13,6 +13,23 @@ import signatureMiddleware from './signatureMiddleware';
  */
 
 class ApiClient {
+  forceLogout(reason = 'unauthorized') {
+    // Clear store + axios auth header
+    useAuthStore.getState().clearAuth();
+    this.clearAuthToken();
+
+    // Clear legacy localStorage keys used by App shell bootstrap
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('user_roles');
+    localStorage.removeItem('user_email');
+
+    // Notify UI shell to switch to login view immediately.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:forced-logout', { detail: { reason } }));
+    }
+  }
+
   constructor() {
     this.client = axios.create({
       timeout: 30000,
@@ -31,9 +48,9 @@ class ApiClient {
     // Request interceptor for auth token and signatures
     this.client.interceptors.request.use(
       async (config) => {
-        // Add auth token
+        // Add auth token (skip for login endpoint)
         const token = useAuthStore.getState().token;
-        if (token) {
+        if (token && !config.url?.endsWith('/auth/login')) {
           config.headers.Authorization = `Bearer ${token}`;
         }
         
@@ -46,8 +63,8 @@ class ApiClient {
           );
           Object.assign(config.headers, signatureHeaders);
         } catch (error) {
-          console.warn('Failed to sign request:', error);
-          // Continue without signature - backend will handle missing signature
+          console.error('Failed to sign request:', error);
+          return Promise.reject(this.normalizeError(error, error.message || 'Failed to sign request.'));
         }
         
         // Add request ID for tracking
@@ -94,14 +111,25 @@ class ApiClient {
           data: error.response?.data
         });
 
-        // Handle 401 Unauthorized
-        if (error.response?.status === 401) {
-          useAuthStore.getState().clearAuth();
+        // Handle 401 Unauthorized (skip for login endpoint — let it surface naturally)
+        if (error.response?.status === 401 && !error.config?.url?.endsWith('/auth/login')) {
+          this.forceLogout('401');
           return Promise.reject(this.normalizeError(error, 'Authentication failed. Please login again.'));
         }
 
         // Handle 403 Forbidden
         if (error.response?.status === 403) {
+          const errCode = error.response?.data?.error?.code;
+          if (errCode === 'ACCOUNT_SETUP_REQUIRED') {
+            const pending = error.response?.data?.error?.details?.setup_pending || [];
+            const stepLabels = pending.map((s) =>
+              s === 'password_change' ? 'change password' :
+              s === 'public_key_registration' ? 'register public key' :
+              s
+            );
+            const pendingText = stepLabels.length ? ` Pending: ${stepLabels.join(' and ')}.` : '';
+            return Promise.reject(this.normalizeError(error, `Account setup required.${pendingText} Open Account Settings to continue.`));
+          }
           return Promise.reject(this.normalizeError(error, 'You do not have permission to perform this action.'));
         }
 
@@ -122,7 +150,7 @@ class ApiClient {
         }
 
         // Retry logic for specific errors
-        if (this.shouldRetry(error) && !error.config._retry) {
+        if (this.shouldRetry(error) && !error.config?._retry) {
           return this.retryRequest(error);
         }
 
@@ -154,6 +182,12 @@ class ApiClient {
    * Determine if request should be retried
    */
   shouldRetry(error) {
+    const method = (error.config?.method || '').toUpperCase();
+    const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+    if (isMutating) {
+      return false;
+    }
+
     // Don't retry client errors (4xx) except 429
     if (error.response?.status >= 400 && error.response?.status < 500 && error.response?.status !== 429) {
       return false;

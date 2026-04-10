@@ -45,6 +45,32 @@ const AuditViewer = ({ buildId }) => {
   const [showSignatures, setShowSignatures] = useState(false);
   const [expandedEvents, setExpandedEvents] = useState(new Set());
 
+  const EVENT_META = {
+    BUILD_CREATED: { tagType: 'blue', tagLabel: 'Created', title: 'Build Created' },
+    WORKLOAD_SUBMITTED: { tagType: 'green', tagLabel: 'Workload', title: 'Workload Submitted' },
+    ENVIRONMENT_STAGED: { tagType: 'teal', tagLabel: 'Environment', title: 'Environment Staged' },
+    AUDITOR_KEYS_REGISTERED: { tagType: 'purple', tagLabel: 'Attestation', title: 'Auditor Keys Registered' },
+    CONTRACT_ASSEMBLED: { tagType: 'cyan', tagLabel: 'Assembly', title: 'Contract Assembled' },
+    BUILD_FINALIZED: { tagType: 'magenta', tagLabel: 'Finalized', title: 'Build Finalized' },
+    CONTRACT_DOWNLOADED: { tagType: 'gray', tagLabel: 'Downloaded', title: 'Contract Downloaded' },
+    BUILD_CANCELLED: { tagType: 'red', tagLabel: 'Cancelled', title: 'Build Cancelled' },
+    ROLE_ASSIGNED: { tagType: 'cyan', tagLabel: 'Assignment', title: 'Role Assigned' },
+  };
+
+  const EVENT_TYPES_REQUIRING_SIGNATURE = new Set([
+    'BUILD_FINALIZED',
+    'CONTRACT_DOWNLOADED',
+  ]);
+
+  const formatEventTitle = (eventType) => {
+    if (EVENT_META[eventType]?.title) return EVENT_META[eventType].title;
+    return (eventType || 'UNKNOWN')
+      .toLowerCase()
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  };
+
   useEffect(() => {
     loadAuditEvents();
 
@@ -74,13 +100,53 @@ const AuditViewer = ({ buildId }) => {
     setError(null);
 
     try {
-      const result = await verificationService.performCompleteVerification(buildId);
-      setVerificationResult(result);
+      const [auditResult, contractResult] = await Promise.all([
+        verificationService.verifyAuditChain(buildId),
+        verificationService.verifyContractIntegrity(buildId),
+      ]);
+      // Normalize backend response to display shape
+      const normalized = {
+        overall: {
+          valid: auditResult.is_valid && contractResult.valid,
+          errors: [
+            ...(auditResult.failed_events || []).map(e => e.details || e.failure_type),
+            ...(contractResult.valid ? [] : (contractResult.errors || [contractResult.details || 'Contract integrity verification failed']))
+          ]
+        },
+        auditChain: {
+          valid: auditResult.chain_intact,
+          totalEvents: auditResult.total_events,
+          verifiedEvents: auditResult.verified_events
+        },
+        contractIntegrity: {
+          valid: contractResult.valid,
+          details: contractResult.details,
+          hashMatches: contractResult.hash_matches,
+          signatureValid: contractResult.signature_valid
+        },
+        hashChain: {
+          valid: auditResult.chain_intact,
+          totalEvents: auditResult.total_events,
+          verifiedEvents: auditResult.verified_events,
+          errors: (auditResult.failed_events || []).map(e => ({
+            ...e,
+            sequence: e.sequence_no
+          }))
+        },
+        signatures: auditResult.signatures_valid
+          ? [{ valid: true }]
+          : (auditResult.failed_events || [])
+              .filter(e => e.failure_type === 'signature_invalid' || e.failure_type === 'missing_signature')
+              .map(e => ({ valid: false, details: e.details }))
+      };
+      setVerificationResult(normalized);
 
-      if (result.overall.valid) {
-        // Success notification handled by result display
-      } else {
-        setError(`Verification failed: ${result.overall.errors.join(', ')}`);
+      if (!normalized.overall.valid) {
+        const errMsgs = [
+          ...(auditResult.failed_events || []).map(e => `#${e.sequence_no}: ${e.failure_type}`),
+          ...(contractResult.valid ? [] : [`contract: ${contractResult.details || 'integrity check failed'}`]),
+        ];
+        setError(`Verification failed: ${errMsgs.join(', ')}`);
       }
     } catch (err) {
       setError(`Verification failed: ${err.message}`);
@@ -102,17 +168,9 @@ const AuditViewer = ({ buildId }) => {
   };
 
   const getEventTypeTag = (eventType) => {
-    const typeConfig = {
-      build_created: { type: 'blue', label: 'Created' },
-      assignment_created: { type: 'cyan', label: 'Assignment' },
-      section_submitted: { type: 'green', label: 'Section' },
-      status_changed: { type: 'purple', label: 'Status' },
-      contract_exported: { type: 'teal', label: 'Export' },
-      contract_downloaded: { type: 'magenta', label: 'Download' },
-      verification_performed: { type: 'gray', label: 'Verification' }
-    };
-
-    const config = typeConfig[eventType] || { type: 'gray', label: eventType };
+    const config = EVENT_META[eventType]
+      ? { type: EVENT_META[eventType].tagType, label: EVENT_META[eventType].tagLabel }
+      : { type: 'gray', label: formatEventTitle(eventType) };
     return <Tag type={config.type}>{config.label}</Tag>;
   };
 
@@ -143,7 +201,7 @@ const AuditViewer = ({ buildId }) => {
         <div className="chain-container">
           <div className="chain-item genesis">
             <div className="chain-node">
-              <span className="node-label">Genesis</span>
+                  <span className="node-label">Start</span>
               <CodeSnippet type="inline" feedback="Copied">
                 {formatHash(auditEvents[0]?.previous_event_hash || 'N/A')}
               </CodeSnippet>
@@ -157,7 +215,9 @@ const AuditViewer = ({ buildId }) => {
               </div>
               <div className="chain-item">
                 <div className="chain-node">
-                  <span className="node-label">Event {event.sequence_no}</span>
+                  <span className="node-label" style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)' }}>
+                    #{event.sequence_no} · {formatEventTitle(event.event_type)}
+                  </span>
                   <CodeSnippet type="inline" feedback="Copied">
                     {formatHash(event.event_hash)}
                   </CodeSnippet>
@@ -279,12 +339,28 @@ const AuditViewer = ({ buildId }) => {
           </div>
         )}
 
-        {showSignatures && event.signature && (
+        {showSignatures && (
           <div className="detail-section">
             <h6>Cryptographic Signature</h6>
-            <CodeSnippet type="multi" feedback="Copied">
-              {event.signature}
-            </CodeSnippet>
+            {event.signature ? (
+              <CodeSnippet type="multi" feedback="Copied">
+                {event.signature}
+              </CodeSnippet>
+            ) : (
+              EVENT_TYPES_REQUIRING_SIGNATURE.has(event.event_type) ? (
+                <InlineNotification
+                  kind="warning"
+                  title="Missing Signature"
+                  subtitle={`Event type "${formatEventTitle(event.event_type)}" should be signed, but signature is missing.`}
+                  lowContrast
+                  hideCloseButton
+                />
+              ) : (
+                <span style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+                  Not signed. This event type is administrative and does not require a cryptographic signature.
+                </span>
+              )
+            )}
           </div>
         )}
 
@@ -344,7 +420,9 @@ const AuditViewer = ({ buildId }) => {
               size="sm"
               renderIcon={CheckmarkFilled}
               onClick={handleVerify}
-              disabled={isVerifying || auditEvents.length === 0}
+              disabled={isVerifying || !auditEvents.some(e =>
+                ['WORKLOAD_SUBMITTED', 'ENVIRONMENT_STAGED', 'AUDITOR_KEYS_REGISTERED', 'BUILD_FINALIZED'].includes(e.event_type)
+              )}
             >
               {isVerifying ? 'Verifying...' : 'Verify'}
             </Button>
@@ -372,6 +450,7 @@ const AuditViewer = ({ buildId }) => {
                 <div className="event-title">
                   {getEventTypeTag(event.event_type)}
                   <span className="event-sequence">#{event.sequence_no}</span>
+                  <span className="event-title-text">{formatEventTitle(event.event_type)}</span>
                   <span className="event-actor">{event.actor_name}</span>
                   <span className="event-time">
                     {new Date(event.created_at).toLocaleString()}
@@ -434,7 +513,7 @@ const AuditViewer = ({ buildId }) => {
         
         .chain-item.genesis .chain-node {
           background: var(--cds-support-success);
-          color: white;
+          color: var(--cds-text-inverse);
         }
         
         .chain-node {
@@ -588,4 +667,3 @@ const AuditViewer = ({ buildId }) => {
 };
 
 export default AuditViewer;
-

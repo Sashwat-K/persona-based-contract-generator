@@ -23,7 +23,21 @@ class VerificationService {
    */
   async verifyContractIntegrity(buildId) {
     const response = await apiClient.get(`/builds/${buildId}/verify-contract`);
-    return response.data;
+    const data = response.data || {};
+    const valid = typeof data.valid === 'boolean'
+      ? data.valid
+      : !!data.is_valid;
+
+    const errors = Array.isArray(data.errors)
+      ? data.errors
+      : (valid ? [] : (data.details ? [data.details] : []));
+
+    return {
+      ...data,
+      valid,
+      errors,
+      details: data.details || ''
+    };
   }
 
   /**
@@ -311,13 +325,13 @@ class VerificationService {
     let text = `Verification Report for Build ${summary.buildId}\n`;
     text += `Generated: ${summary.timestamp}\n`;
     text += `\n`;
-    text += `Overall Status: ${summary.overallValid ? 'VALID ✓' : 'INVALID ✗'}\n`;
+    text += `Overall Status: ${summary.overallValid ? 'VALID ' : 'INVALID '}\n`;
     text += `\n`;
     text += `Checks:\n`;
-    text += `  Audit Chain: ${summary.checks.auditChain ? 'PASS ✓' : 'FAIL ✗'}\n`;
-    text += `  Contract Integrity: ${summary.checks.contractIntegrity ? 'PASS ✓' : 'FAIL ✗'}\n`;
-    text += `  Hash Chain: ${summary.checks.hashChain ? 'PASS ✓' : 'FAIL ✗'}\n`;
-    text += `  Signatures: ${summary.checks.signatures ? 'PASS ✓' : 'FAIL ✗'}\n`;
+    text += `  Audit Chain: ${summary.checks.auditChain ? 'PASS ' : 'FAIL '}\n`;
+    text += `  Contract Integrity: ${summary.checks.contractIntegrity ? 'PASS ' : 'FAIL '}\n`;
+    text += `  Hash Chain: ${summary.checks.hashChain ? 'PASS ' : 'FAIL '}\n`;
+    text += `  Signatures: ${summary.checks.signatures ? 'PASS ' : 'FAIL '}\n`;
     text += `\n`;
     text += `Statistics:\n`;
     text += `  Total Events: ${summary.statistics.totalEvents}\n`;
@@ -339,4 +353,3 @@ class VerificationService {
 }
 
 export default new VerificationService();
-

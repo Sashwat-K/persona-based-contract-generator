@@ -43,12 +43,8 @@ class BuildService {
    * @param {string} signature - Admin's signature
    * @returns {Promise<Object>}
    */
-  async createBuild(name, assignments, signature) {
-    const response = await apiClient.post('/builds', {
-      name,
-      assignments,
-      signature
-    });
+  async createBuild(name) {
+    const response = await apiClient.post('/builds', { name });
 
     const build = response.data;
 
@@ -64,10 +60,8 @@ class BuildService {
    * @returns {Promise<void>}
    */
   async cancelBuild(buildId) {
-    await apiClient.delete(`/builds/${buildId}`);
-
-    // Remove from store
-    useBuildStore.getState().removeBuild(buildId);
+    await apiClient.post(`/builds/${buildId}/cancel`);
+    useBuildStore.getState().updateBuildStatus(buildId, 'CANCELLED');
   }
 
   /**
@@ -108,7 +102,10 @@ class BuildService {
    * @returns {Promise<Object>}
    */
   async submitWorkload(buildId, data) {
-    const response = await apiClient.post(`/builds/${buildId}/workload`, data);
+    const response = await apiClient.post(`/builds/${buildId}/sections`, {
+      ...data,
+      persona_role: 'SOLUTION_PROVIDER'
+    });
 
     // Update build status
     useBuildStore.getState().updateBuildStatus(buildId, 'WORKLOAD_SUBMITTED');
@@ -123,7 +120,10 @@ class BuildService {
    * @returns {Promise<Object>}
    */
   async submitEnvironment(buildId, data) {
-    const response = await apiClient.post(`/builds/${buildId}/environment`, data);
+    const response = await apiClient.post(`/builds/${buildId}/sections`, {
+      ...data,
+      persona_role: 'DATA_OWNER'
+    });
 
     // Update build status
     useBuildStore.getState().updateBuildStatus(buildId, 'ENVIRONMENT_STAGED');
@@ -189,7 +189,7 @@ class BuildService {
    */
   async getAuditEvents(buildId) {
     const response = await apiClient.get(`/builds/${buildId}/audit`);
-    return response.data.events || [];
+    return response.data.audit_events || response.data.events || [];
   }
 
   /**
@@ -286,8 +286,9 @@ class BuildService {
    * @returns {Promise<Array>}
    */
   async getAuditTrail(buildId) {
-    const response = await apiClient.get(`/builds/${buildId}/audit-trail`);
-    return response.data.events || [];
+    const response = await apiClient.get(`/builds/${buildId}/audit`);
+    // Backend returns {audit_events: [...]}
+    return response.data.audit_events || response.data.events || [];
   }
 
   /**
@@ -313,14 +314,14 @@ class BuildService {
       auditEventCount: auditEvents.length,
       isComplete: sections.length === 3, // workload, environment, attestation
       assignments: {
-        workload_owner: assignments.filter(a => a.persona_role === 'workload_owner').length,
-        data_owner: assignments.filter(a => a.persona_role === 'data_owner').length,
-        auditor: assignments.filter(a => a.persona_role === 'auditor').length
+        SOLUTION_PROVIDER: assignments.filter(a => a.role_name === 'SOLUTION_PROVIDER').length,
+        DATA_OWNER: assignments.filter(a => a.role_name === 'DATA_OWNER').length,
+        AUDITOR: assignments.filter(a => a.role_name === 'AUDITOR').length
       },
       sections: {
-        workload_owner: sections.some(s => s.persona_role === 'workload_owner'),
-        data_owner: sections.some(s => s.persona_role === 'data_owner'),
-        auditor: sections.some(s => s.persona_role === 'auditor')
+        SOLUTION_PROVIDER: sections.some(s => s.persona_role === 'SOLUTION_PROVIDER'),
+        DATA_OWNER: sections.some(s => s.persona_role === 'DATA_OWNER'),
+        AUDITOR: sections.some(s => s.persona_role === 'AUDITOR')
       }
     };
   }
@@ -334,13 +335,13 @@ class BuildService {
     const sections = await this.getSections(buildId);
     const missing = [];
 
-    const hasWorkload = sections.some(s => s.persona_role === 'workload_owner');
-    const hasEnvironment = sections.some(s => s.persona_role === 'data_owner');
-    const hasAttestation = sections.some(s => s.persona_role === 'auditor');
+    const hasWorkload = sections.some(s => s.persona_role === 'SOLUTION_PROVIDER');
+    const hasEnvironment = sections.some(s => s.persona_role === 'DATA_OWNER');
+    const hasAttestation = sections.some(s => s.persona_role === 'AUDITOR');
 
-    if (!hasWorkload) missing.push('workload_owner section');
-    if (!hasEnvironment) missing.push('data_owner section');
-    if (!hasAttestation) missing.push('auditor section');
+    if (!hasWorkload) missing.push('SOLUTION_PROVIDER section');
+    if (!hasEnvironment) missing.push('DATA_OWNER section');
+    if (!hasAttestation) missing.push('AUDITOR section');
 
     return {
       ready: missing.length === 0,
@@ -350,5 +351,3 @@ class BuildService {
 }
 
 export default new BuildService();
-
-

@@ -17,12 +17,12 @@ import {
 } from '@carbon/react';
 import { Download, Filter } from '@carbon/icons-react';
 import systemLogService from '../services/systemLogService';
+import userService from '../services/userService';
 import { FullPageLoader } from '../components/LoadingSpinner';
-// Live logs will be fetched securely.
 
 const headers = [
   { key: 'timestamp', header: 'Timestamp' },
-  { key: 'actor_email', header: 'Actor' },
+  { key: 'actor_name', header: 'Actor' },
   { key: 'action', header: 'Action' },
   { key: 'resource', header: 'Resource' },
   { key: 'ip_address', header: 'IP Address' },
@@ -53,11 +53,21 @@ const SystemLogs = () => {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const data = await systemLogService.getSystemLogs(200, 0);
-        // Format the ISO timestamps to localized strings for display
+        const [data, users] = await Promise.all([
+          systemLogService.getSystemLogs(200, 0),
+          userService.listUsers().catch(() => [])
+        ]);
+
+        // Build email → full name lookup from the users list
+        const emailToName = {};
+        (users || []).forEach(u => {
+          if (u.email) emailToName[u.email] = u.name || u.email;
+        });
+
         const formattedData = data.map(log => ({
           ...log,
-          timestamp: new Date(log.timestamp).toLocaleString()
+          timestamp: new Date(log.timestamp).toLocaleString(),
+          actor_name: emailToName[log.actor_email] || log.actor_email
         }));
         setLogs(formattedData);
       } catch (error) {

@@ -33,7 +33,7 @@ import {
 } from '@carbon/icons-react';
 import HyperProtectIcon from './HyperProtectIcon';
 
-const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userEmail, children }) => {
+const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [], userEmail, children }) => {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isSideNavExpanded, setIsSideNavExpanded] = useState(true);
   
@@ -47,11 +47,14 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userEmail, chil
   };
   
   // Define which navigation items each role can see
-  const canViewAnalytics = userRole === 'ADMIN';
-  const canViewUsers = userRole === 'ADMIN';
-  const canViewLogs = userRole === 'ADMIN' || userRole === 'AUDITOR';
+  const allRoles = userRoles.length > 0 ? userRoles : [userRole];
+  const isAdmin = allRoles.includes('ADMIN');
+  const isAuditor = allRoles.includes('AUDITOR');
+  const canViewAnalytics = isAdmin;
+  const canViewUsers = isAdmin;
+  const canViewLogs = isAdmin || isAuditor;
   const canViewBuilds = true; // All users can view builds
-  
+
   const hasAdminOperations = canViewAnalytics || canViewUsers || canViewLogs;
   
   // Format role name for display
@@ -244,7 +247,7 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userEmail, chil
                   {getUsername(userEmail)}
                 </span>
                 <span style={{ fontSize: '0.75rem' }}>
-                  {getRoleName(userRole)}
+                  {(userRoles.length > 1 ? userRoles : [userRole]).map(r => getRoleName(r)).join(', ')}
                 </span>
               </div>
             </div>
@@ -259,8 +262,8 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userEmail, chil
           style={{ height: 'calc(100vh - 3rem - 40px)', top: 'calc(3rem + 40px)' }}
         >
           <SideNavItems style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            {/* Home - visible to all users except VIEWER */}
-            {userRole !== 'VIEWER' && (
+            {/* Home - visible to all users except pure VIEWERs */}
+            {!(allRoles.length === 1 && allRoles[0] === 'VIEWER') && (
               <SideNavMenuItem
                 isActive={activeNav === 'HOME'}
                 onClick={() => setActiveNav('HOME')}

@@ -2,6 +2,7 @@ import apiClient from './apiClient';
 import cryptoService from './cryptoService';
 import assignmentService from './assignmentService';
 import { useAuthStore } from '../store/authStore';
+import roleService from './roleService';
 
 /**
  * Section Service - Section submission with encryption and signatures
@@ -19,6 +20,8 @@ class SectionService {
   async submitSection(buildId, personaRole, plaintext, certContent) {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('User not authenticated');
+    const normalizedRole = roleService.normalizeRoleName(personaRole);
+    const roleId = await roleService.getRoleId(normalizedRole);
 
     // Get existing sections to validate
     const existingSections = await this.getSections(buildId);
@@ -26,7 +29,7 @@ class SectionService {
     // Validate assignment and check if section already submitted
     const validation = await assignmentService.canSubmitSection(
       buildId,
-      personaRole,
+      normalizedRole,
       existingSections
     );
 
@@ -51,12 +54,53 @@ class SectionService {
 
     // Submit to backend
     const response = await apiClient.post(`/builds/${buildId}/sections`, {
-      persona_role: personaRole,
+      persona_role: normalizedRole,
+      role_id: roleId,
       encrypted_payload: encryptedPayload,
       section_hash: sectionHash,
       signature: signature
     });
 
+    return response.data;
+  }
+
+  /**
+   * Submit a section using an already-encrypted payload (skips re-encryption).
+   * Use this when encryption was performed externally (e.g. via contract-cli streaming).
+   * @param {string} buildId - Build ID
+   * @param {string} personaRole - Persona role
+   * @param {string} encryptedPayload - Already-encrypted payload (hyper-protect-basic.xxx.yyy)
+   * @returns {Promise<Object>}
+   */
+  async submitEncryptedSection(buildId, personaRole, encryptedPayload, wrappedSymmetricKey = null) {
+    const user = useAuthStore.getState().user;
+    if (!user) throw new Error('User not authenticated');
+    const normalizedRole = roleService.normalizeRoleName(personaRole);
+    const roleId = await roleService.getRoleId(normalizedRole);
+
+    // Validate assignment
+    const existingSections = await this.getSections(buildId);
+    const validation = await assignmentService.canSubmitSection(buildId, normalizedRole, existingSections);
+    if (!validation.canSubmit) throw new Error(validation.reason);
+
+    // Hash the encrypted payload
+    const sectionHash = await cryptoService.hash(encryptedPayload);
+
+    // Sign the hash
+    const privateKey = await cryptoService.getPrivateKey(user.id);
+    if (!privateKey) throw new Error('Private key not found. Please register your public key first.');
+    const signature = await cryptoService.sign(sectionHash, privateKey);
+
+    const body = {
+      persona_role: normalizedRole,
+      role_id: roleId,
+      encrypted_payload: encryptedPayload,
+      section_hash: sectionHash,
+      signature: signature,
+    };
+    if (wrappedSymmetricKey) body.encrypted_symmetric_key = wrappedSymmetricKey;
+
+    const response = await apiClient.post(`/builds/${buildId}/sections`, body);
     return response.data;
   }
 
@@ -78,7 +122,8 @@ class SectionService {
    */
   async getSection(buildId, personaRole) {
     const sections = await this.getSections(buildId);
-    return sections.find(s => s.persona_role === personaRole) || null;
+    const normalizedRole = roleService.normalizeRoleName(personaRole);
+    return sections.find(s => s.persona_role === normalizedRole) || null;
   }
 
   /**
@@ -158,9 +203,9 @@ class SectionService {
     const sections = await this.getSections(buildId);
 
     const status = {
-      workload_owner: false,
-      data_owner: false,
-      auditor: false,
+      SOLUTION_PROVIDER: false,
+      DATA_OWNER: false,
+      AUDITOR: false,
       complete: false,
       sections: []
     };
@@ -175,7 +220,7 @@ class SectionService {
       });
     });
 
-    status.complete = status.workload_owner && status.data_owner && status.auditor;
+    status.complete = status.SOLUTION_PROVIDER && status.DATA_OWNER && status.AUDITOR;
 
     return status;
   }
@@ -209,12 +254,13 @@ class SectionService {
     }
 
     // Role-specific validation
-    if (personaRole === 'workload_owner') {
+    const normalizedRole = roleService.normalizeRoleName(personaRole);
+    if (normalizedRole === 'SOLUTION_PROVIDER') {
       // Validate workload section structure
       if (!plaintext.includes('workload:')) {
         errors.push('Workload section must contain "workload:" key');
       }
-    } else if (personaRole === 'data_owner') {
+    } else if (normalizedRole === 'DATA_OWNER') {
       // Validate environment section structure
       if (!plaintext.includes('env:')) {
         errors.push('Environment section must contain "env:" key');
@@ -229,4 +275,3 @@ class SectionService {
 }
 
 export default new SectionService();
-

@@ -1,5 +1,6 @@
 import apiClient from './apiClient';
 import { useAuthStore } from '../store/authStore';
+import roleService from './roleService';
 
 /**
  * Assignment Service - Build assignment management
@@ -14,9 +15,10 @@ class AssignmentService {
    * @returns {Promise<Object>}
    */
   async createAssignment(buildId, userId, personaRole) {
+    const roleId = await roleService.getRoleId(personaRole);
     const response = await apiClient.post(`/builds/${buildId}/assignments`, {
       user_id: userId,
-      persona_role: personaRole
+      role_id: roleId
     });
 
     return response.data;
@@ -29,7 +31,8 @@ class AssignmentService {
    */
   async getBuildAssignments(buildId) {
     const response = await apiClient.get(`/builds/${buildId}/assignments`);
-    return response.data.assignments || [];
+    // Backend returns array directly (not wrapped in {assignments: []})
+    return Array.isArray(response.data) ? response.data : (response.data.assignments || []);
   }
 
   /**
@@ -89,10 +92,11 @@ class AssignmentService {
    * @returns {Promise<boolean>}
    */
   async validateUserAssignment(buildId, userId, personaRole) {
+    const normalizedRole = roleService.normalizeRoleName(personaRole);
     try {
       const assignments = await this.getBuildAssignments(buildId);
       return assignments.some(a =>
-        a.user_id === userId && a.persona_role === personaRole
+        a.user_id === userId && (a.role_name === normalizedRole || a.persona_role === normalizedRole)
       );
     } catch (error) {
       console.error('Failed to validate assignment:', error);
@@ -157,23 +161,26 @@ class AssignmentService {
     const assignments = await this.getBuildAssignments(buildId);
 
     const byRole = {
-      workload_owner: [],
-      data_owner: [],
-      auditor: []
+      SOLUTION_PROVIDER: [],
+      DATA_OWNER: [],
+      AUDITOR: [],
+      ENV_OPERATOR: []
     };
 
     assignments.forEach(assignment => {
-      if (byRole[assignment.persona_role]) {
-        byRole[assignment.persona_role].push(assignment);
+      const roleName = assignment.role_name || assignment.persona_role;
+      if (byRole[roleName]) {
+        byRole[roleName].push(assignment);
       }
     });
 
     return {
       total: assignments.length,
       byRole,
-      workloadOwnerCount: byRole.workload_owner.length,
-      dataOwnerCount: byRole.data_owner.length,
-      auditorCount: byRole.auditor.length
+      workloadOwnerCount: byRole.SOLUTION_PROVIDER.length,
+      dataOwnerCount: byRole.DATA_OWNER.length,
+      auditorCount: byRole.AUDITOR.length,
+      envOperatorCount: byRole.ENV_OPERATOR.length
     };
   }
 
@@ -186,16 +193,33 @@ class AssignmentService {
     const summary = await this.getAssignmentSummary(buildId);
     const missing = [];
 
-    if (summary.workloadOwnerCount === 0) missing.push('workload_owner');
-    if (summary.dataOwnerCount === 0) missing.push('data_owner');
-    if (summary.auditorCount === 0) missing.push('auditor');
+    if (summary.workloadOwnerCount === 0) missing.push('SOLUTION_PROVIDER');
+    if (summary.dataOwnerCount === 0) missing.push('DATA_OWNER');
+    if (summary.auditorCount === 0) missing.push('AUDITOR');
+    if (summary.envOperatorCount === 0) missing.push('ENV_OPERATOR');
 
     return {
       complete: missing.length === 0,
       missing
     };
   }
+
+  /**
+   * Get the registered public key of the AUDITOR assigned to a build.
+   * DATA_OWNER needs this to wrap the symmetric key before submitting the env section.
+   * @param {string} buildId
+   * @returns {Promise<string>} PEM public key
+   */
+  async getAuditorPublicKey(buildId) {
+    const assignments = await this.getBuildAssignments(buildId);
+    const auditorAssignment = assignments.find(a => a.role_name === 'AUDITOR');
+    if (!auditorAssignment) throw new Error('No Auditor is assigned to this build yet.');
+
+    const response = await apiClient.get(`/users/${auditorAssignment.user_id}/public-key`);
+    const pubKey = response.data?.public_key;
+    if (!pubKey) throw new Error('Auditor has not registered a public key yet.');
+    return pubKey;
+  }
 }
 
 export default new AssignmentService();
-

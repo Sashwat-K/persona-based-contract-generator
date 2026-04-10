@@ -16,31 +16,31 @@ import {
   ComboBox,
   InlineNotification,
   Tag,
-  OverflowMenu,
-  OverflowMenuItem
 } from '@carbon/react';
 import {
   Add,
-  TrashCan,
   UserMultiple,
   CheckmarkFilled,
-  WarningAlt
+  WarningAlt,
+  Renew
 } from '@carbon/icons-react';
-import { useBuildStore } from '../store/buildStore';
 import { useAuthStore } from '../store/authStore';
 import assignmentService from '../services/assignmentService';
+import sectionService from '../services/sectionService';
 import userService from '../services/userService';
+import buildService from '../services/buildService';
 
 /**
  * BuildAssignments Component
  * Manages user-to-build-to-role assignments for two-layer access control
  * Features: Assignment table, creation dialog, deletion, validation
  */
-const BuildAssignments = ({ buildId }) => {
+const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
   const { user } = useAuthStore();
-  const { getBuildAssignments } = useBuildStore();
 
   const [assignments, setAssignments] = useState([]);
+  const [sections, setSections] = useState([]);
+  const [auditEvents, setAuditEvents] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -54,21 +54,19 @@ const BuildAssignments = ({ buildId }) => {
   // Search state
   const [searchValue, setSearchValue] = useState('');
 
-  const isAdmin = userService.isAdmin();
-  const isArchitect = userService.isArchitect();
-  const canManageAssignments = isAdmin || isArchitect;
+  const isAdmin = userRole === 'ADMIN' || user?.roles?.includes('ADMIN');
+  const canManageAssignments = isAdmin;
 
   const personaRoles = [
-    { id: 'workload_owner', label: 'Workload Owner', description: 'Submits workload section' },
-    { id: 'data_owner', label: 'Data Owner', description: 'Submits environment section' },
-    { id: 'auditor', label: 'Auditor', description: 'Submits attestation section' }
+    { id: 'SOLUTION_PROVIDER', label: 'Solution Provider', description: 'Submits workload section' },
+    { id: 'DATA_OWNER', label: 'Data Owner', description: 'Submits environment section' },
+    { id: 'AUDITOR', label: 'Auditor', description: 'Submits attestation section' },
+    { id: 'ENV_OPERATOR', label: 'Environment Operator', description: 'Manages environment configuration' }
   ];
 
   useEffect(() => {
     loadAssignments();
-    if (canManageAssignments) {
-      loadUsers();
-    }
+    loadUsers();
   }, [buildId]);
 
   const loadAssignments = async () => {
@@ -76,8 +74,14 @@ const BuildAssignments = ({ buildId }) => {
     setError(null);
 
     try {
-      const data = await assignmentService.getBuildAssignments(buildId);
+      const [data, sectionData, eventData] = await Promise.all([
+        assignmentService.getBuildAssignments(buildId),
+        sectionService.getSections(buildId).catch(() => []),
+        buildService.getAuditEvents(buildId).catch(() => []),
+      ]);
       setAssignments(data);
+      setSections(sectionData);
+      setAuditEvents(Array.isArray(eventData) ? eventData : []);
     } catch (err) {
       setError(`Failed to load assignments: ${err.message}`);
     } finally {
@@ -123,30 +127,6 @@ const BuildAssignments = ({ buildId }) => {
     }
   };
 
-  const handleDeleteAssignment = async (userId, personaRole) => {
-    if (!confirm(`Are you sure you want to remove this assignment?`)) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      await assignmentService.deleteAssignment(buildId, userId, personaRole);
-      setSuccess('Assignment removed successfully');
-
-      // Reload assignments
-      await loadAssignments();
-
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err) {
-      setError(`Failed to delete assignment: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const resetModal = () => {
     setSelectedUser(null);
     setSelectedRole(null);
@@ -164,9 +144,11 @@ const BuildAssignments = ({ buildId }) => {
 
   const getRoleTag = (role) => {
     const roleConfig = {
-      workload_owner: { type: 'blue', label: 'Workload Owner' },
-      data_owner: { type: 'green', label: 'Data Owner' },
-      auditor: { type: 'purple', label: 'Auditor' }
+      SOLUTION_PROVIDER: { type: 'blue', label: 'Solution Provider' },
+      DATA_OWNER: { type: 'green', label: 'Data Owner' },
+      AUDITOR: { type: 'purple', label: 'Auditor' },
+      ENV_OPERATOR: { type: 'teal', label: 'Environment Operator' },
+      ADMIN: { type: 'red', label: 'Administrator' }
     };
 
     const config = roleConfig[role] || { type: 'gray', label: role };
@@ -174,15 +156,37 @@ const BuildAssignments = ({ buildId }) => {
   };
 
   const getAssignmentStatus = (assignment) => {
-    // Check if section already submitted
-    const sections = useBuildStore.getState().sections[buildId] || [];
-    const hasSubmitted = sections.some(s => s.persona_role === assignment.persona_role);
+    const role = assignment.role_name;
+    const hasSubmittedSection = sections.some(s => s.persona_role === role);
 
-    if (hasSubmitted) {
-      return <Tag type="green" renderIcon={CheckmarkFilled}>Submitted</Tag>;
-    } else {
+    if (role === 'SOLUTION_PROVIDER' || role === 'DATA_OWNER') {
+      if (hasSubmittedSection) {
+        return <Tag type="green" renderIcon={CheckmarkFilled}>Submitted</Tag>;
+      }
       return <Tag type="gray" renderIcon={WarningAlt}>Pending</Tag>;
     }
+
+    if (role === 'AUDITOR') {
+      const auditorComplete =
+        hasSubmittedSection ||
+        ['AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED'].includes(buildStatus);
+      if (auditorComplete) {
+        return <Tag type="green" renderIcon={CheckmarkFilled}>Completed</Tag>;
+      }
+      return <Tag type="gray" renderIcon={WarningAlt}>Pending</Tag>;
+    }
+
+    if (role === 'ENV_OPERATOR') {
+      const downloadedByAssignee = auditEvents.some(
+        (e) => e.event_type === 'CONTRACT_DOWNLOADED' && e.actor_user_id === assignment.user_id
+      );
+      if (downloadedByAssignee) {
+        return <Tag type="green" renderIcon={CheckmarkFilled}>Downloaded</Tag>;
+      }
+      return <Tag type="teal">Assigned</Tag>;
+    }
+
+    return <Tag type="gray">Assigned</Tag>;
   };
 
   const getUserOptions = () => {
@@ -208,20 +212,22 @@ const BuildAssignments = ({ buildId }) => {
     return assignments.filter(a =>
       a.user_name?.toLowerCase().includes(search) ||
       a.user_email?.toLowerCase().includes(search) ||
-      a.persona_role?.toLowerCase().includes(search)
+      a.role_name?.toLowerCase().includes(search)
     );
   };
 
   const getAssignmentSummary = () => {
     const summary = {
-      workload_owner: 0,
-      data_owner: 0,
-      auditor: 0
+      SOLUTION_PROVIDER: 0,
+      DATA_OWNER: 0,
+      AUDITOR: 0,
+      ENV_OPERATOR: 0
     };
 
     assignments.forEach(a => {
-      if (summary.hasOwnProperty(a.persona_role)) {
-        summary[a.persona_role]++;
+      const role = a.role_name;
+      if (summary.hasOwnProperty(role)) {
+        summary[role]++;
       }
     });
 
@@ -233,26 +239,25 @@ const BuildAssignments = ({ buildId }) => {
     { key: 'user_email', header: 'Email' },
     { key: 'persona_role', header: 'Role' },
     { key: 'status', header: 'Status' },
-    { key: 'assigned_at', header: 'Assigned At' },
-    { key: 'actions', header: 'Actions' }
+    { key: 'assigned_at', header: 'Assigned At' }
   ];
 
-  const rows = getFilteredAssignments().map((assignment, index) => ({
-    id: `${assignment.user_id}-${assignment.persona_role}`,
+  const roleOrder = ['SOLUTION_PROVIDER', 'DATA_OWNER', 'AUDITOR', 'ENV_OPERATOR'];
+
+  const rows = getFilteredAssignments()
+    .slice()
+    .sort((a, b) => {
+      const ai = roleOrder.indexOf(a.role_name);
+      const bi = roleOrder.indexOf(b.role_name);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    })
+    .map((assignment, index) => ({
+    id: `${assignment.user_id}-${assignment.role_name}-${index}`,
     user_name: assignment.user_name,
     user_email: assignment.user_email,
-    persona_role: getRoleTag(assignment.persona_role),
+    persona_role: getRoleTag(assignment.role_name),
     status: getAssignmentStatus(assignment),
-    assigned_at: new Date(assignment.assigned_at).toLocaleDateString(),
-    actions: canManageAssignments ? (
-      <OverflowMenu size="sm" flipped>
-        <OverflowMenuItem
-          itemText="Remove Assignment"
-          onClick={() => handleDeleteAssignment(assignment.user_id, assignment.persona_role)}
-          isDelete
-        />
-      </OverflowMenu>
-    ) : null
+    assigned_at: assignment.assigned_at ? new Date(assignment.assigned_at).toLocaleDateString() : 'N/A'
   }));
 
   const summary = getAssignmentSummary();
@@ -279,6 +284,7 @@ const BuildAssignments = ({ buildId }) => {
         />
       )}
 
+
       <div className="assignment-summary">
         <div className="summary-item">
           <UserMultiple size={20} />
@@ -286,16 +292,20 @@ const BuildAssignments = ({ buildId }) => {
           <span className="summary-value">{assignments.length}</span>
         </div>
         <div className="summary-item">
-          <span className="summary-label">Workload Owners:</span>
-          <span className="summary-value">{summary.workload_owner}</span>
+          <span className="summary-label">Solution Providers:</span>
+          <span className="summary-value">{summary.SOLUTION_PROVIDER}</span>
         </div>
         <div className="summary-item">
           <span className="summary-label">Data Owners:</span>
-          <span className="summary-value">{summary.data_owner}</span>
+          <span className="summary-value">{summary.DATA_OWNER}</span>
         </div>
         <div className="summary-item">
           <span className="summary-label">Auditors:</span>
-          <span className="summary-value">{summary.auditor}</span>
+          <span className="summary-value">{summary.AUDITOR}</span>
+        </div>
+        <div className="summary-item">
+          <span className="summary-label">Env Operators:</span>
+          <span className="summary-value">{summary.ENV_OPERATOR}</span>
         </div>
       </div>
 
@@ -308,6 +318,14 @@ const BuildAssignments = ({ buildId }) => {
                   onChange={(e) => setSearchValue(e.target.value)}
                   placeholder="Search assignments..."
                 />
+                <Button
+                  kind="tertiary"
+                  renderIcon={Renew}
+                  onClick={loadAssignments}
+                  disabled={loading}
+                >
+                  Refresh
+                </Button>
                 {canManageAssignments && (
                   <Button
                     kind="primary"
@@ -473,4 +491,3 @@ const BuildAssignments = ({ buildId }) => {
 };
 
 export default BuildAssignments;
-

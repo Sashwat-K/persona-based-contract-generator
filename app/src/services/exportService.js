@@ -8,6 +8,36 @@ import { useAuthStore } from '../store/authStore';
  */
 class ExportService {
   /**
+   * Decode contract YAML when backend returns base64, or return as-is when already raw YAML.
+   * Supports mixed deployments during migration.
+   * @param {string} contractYaml
+   * @returns {string}
+   */
+  decodeContractYaml(contractYaml) {
+    if (typeof contractYaml !== 'string') return '';
+
+    const value = contractYaml.trim();
+    if (!value) return '';
+
+    // Raw YAML fast-path
+    if (value.includes('\n') || value.includes('workload:') || value.includes('env:')) {
+      return contractYaml;
+    }
+
+    // Likely base64 payload
+    const base64Regex = /^[A-Za-z0-9+/]+={0,2}$/;
+    if (!base64Regex.test(value) || (value.length % 4 !== 0)) {
+      return contractYaml;
+    }
+
+    try {
+      return atob(value);
+    } catch (_) {
+      return contractYaml;
+    }
+  }
+
+  /**
    * Export build data (complete contract with all sections)
    * @param {string} buildId - Build ID
    * @returns {Promise<Object>} - {contract_yaml, contract_hash, sections, metadata}
@@ -48,7 +78,7 @@ class ExportService {
 
     // Submit acknowledgment
     const response = await apiClient.post(`/builds/${buildId}/acknowledge-download`, {
-      downloaded_at: new Date().toISOString(),
+      contract_hash: contractHash,
       signature: signature
     });
 
@@ -66,19 +96,15 @@ class ExportService {
     const defaultFilename = filename || `contract-${buildId}-${Date.now()}.yaml`;
 
     try {
-      const result = await window.electron.fs.saveFile({
-        filename: defaultFilename,
-        content: contractYaml,
-        filters: [
-          { name: 'YAML Files', extensions: ['yaml', 'yml'] },
-          { name: 'All Files', extensions: ['*'] }
-        ]
-      });
+      const resultPath = await window.electron.file.saveFile(defaultFilename, contractYaml);
+      if (!resultPath) {
+        throw new Error('Save cancelled');
+      }
 
       return {
         success: true,
-        path: result.filePath,
-        filename: result.filename
+        path: resultPath,
+        filename: defaultFilename
       };
     } catch (error) {
       console.error('Failed to save contract:', error);
@@ -92,17 +118,21 @@ class ExportService {
    */
   async loadLocalContract() {
     try {
-      const result = await window.electron.fs.readFile({
+      const selected = await window.electron.file.selectFile({
         filters: [
           { name: 'YAML Files', extensions: ['yaml', 'yml'] },
           { name: 'All Files', extensions: ['*'] }
         ]
       });
+      if (!selected) {
+        throw new Error('No file selected');
+      }
+      const content = await window.electron.file.readFile(selected.path);
 
       return {
-        content: result.content,
-        path: result.filePath,
-        filename: result.filename
+        content,
+        path: selected.path,
+        filename: selected.name
       };
     } catch (error) {
       console.error('Failed to load contract:', error);
@@ -149,9 +179,10 @@ class ExportService {
     const exportData = await this.exportContract(buildId);
 
     // Save to filesystem
+    const decodedYaml = this.decodeContractYaml(exportData.contract_yaml);
     const saveResult = await this.saveContractLocally(
       buildId,
-      exportData.contract_yaml,
+      decodedYaml,
       filename
     );
 
@@ -174,7 +205,7 @@ class ExportService {
   async getExportHistory(buildId) {
     // This would come from audit events
     const response = await apiClient.get(`/builds/${buildId}/audit`);
-    const events = response.data.events || [];
+    const events = response.data.audit_events || response.data.events || [];
 
     // Filter for export-related events
     return events.filter(e =>
@@ -248,4 +279,3 @@ class ExportService {
 }
 
 export default new ExportService();
-

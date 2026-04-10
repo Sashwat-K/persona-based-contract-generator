@@ -28,9 +28,12 @@ class Signer {
    * @returns {string} - Signature in base64
    */
   sign(hash, privateKeyPem) {
+    // RSA-SHA256 semantics: sign the hash string bytes (not raw digest bytes).
+    // Backend verifier accepts this mode.
     const sign = crypto.createSign('RSA-SHA256');
     sign.update(hash);
-    
+    sign.end();
+
     return sign.sign(
       {
         key: privateKeyPem,
@@ -51,7 +54,8 @@ class Signer {
   verify(hash, signature, publicKeyPem) {
     const verify = crypto.createVerify('RSA-SHA256');
     verify.update(hash);
-    
+    verify.end();
+
     return verify.verify(
       {
         key: publicKeyPem,
@@ -65,5 +69,3 @@ class Signer {
 }
 
 module.exports = new Signer();
-
-
