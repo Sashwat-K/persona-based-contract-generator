@@ -3,7 +3,7 @@
 ## Document Information
 - **Project**:IBM Confidential Computing Contract Generator - Desktop Application
 - **Version**: 1.0
-- **Date**: April 6, 2026
+- **Date**: April 10, 2026
 - **Author**: Senior Software Architect
 - **Status**: Implementation Complete
 
@@ -32,7 +32,7 @@
 TheIBM Confidential Computing Contract Generator Desktop Application is an Electron-based enterprise application designed for secure contract management with cryptographic operations. The application provides role-based access control, comprehensive audit logging, and client-side cryptography for maximum security.
 
 ### Key Features
-- **Multi-Role Support**: Service Provider, Data Owner, Auditor, Encryption Officer, Admin
+- **Multi-Role Support**: Solution Provider, Data Owner, Auditor, Environment Operator, Admin, Viewer
 - **Client-Side Cryptography**: RSA-4096, AES-256-GCM, SHA-256, RSA-PSS
 - **Secure Key Management**: Local encrypted key storage with fingerprint verification
 - **Build Management**: Complete contract lifecycle from creation to signing
@@ -274,15 +274,16 @@ app/
 
 **`src/views/BuildManagement.jsx`** (500+ lines)
 - Build list with filtering and sorting
-- Create build modal with user assignment
+- Create build modal
 - Status tracking and updates
 - Role-based action buttons
 
 **`src/views/BuildDetails.jsx`** (600+ lines)
-- Section-by-section contract display
-- Signing workflow with crypto operations
-- Approval tracking
-- Export functionality
+- Tabbed workflow per build
+- Section submission and status progression
+- Assignments management and refresh
+- Audit viewer and verification
+- Contract export and download acknowledgment
 
 **`src/views/UserManagement.jsx`** (550+ lines)
 - User CRUD operations
@@ -302,11 +303,25 @@ app/
 - Key generation and registration
 - Key rotation workflow
 
+**Build Detail Components (Current)**
+- `src/components/SectionSubmit.jsx`
+- `src/components/AuditorSection.jsx` (Sign & Add Attestation)
+- `src/components/FinaliseContract.jsx`
+- `src/components/BuildAssignments.jsx`
+- `src/components/AuditViewer.jsx`
+- `src/components/ContractExport.jsx`
+
 **`src/views/ServerConfigSettings.jsx`** (350+ lines)
 - Server URL configuration
 - Connection testing
 - HTTPS validation
 - Persistent storage
+
+**Service Layer (Current)**
+- `apiClient.js` (auth, retries, forced logout on 401)
+- `signatureMiddleware.js` (mutating request signing headers)
+- `authService.js`, `buildService.js`, `assignmentService.js`, `sectionService.js`
+- `verificationService.js`, `exportService.js`, `roleService.js`
 
 ---
 
@@ -643,9 +658,11 @@ const wrappedKey = crypto.publicEncrypt(
 **Signature**: RSA-PSS with SHA-256
 
 ```javascript
-const hash = crypto.createHash('sha256').update(data).digest();
-
-const signature = crypto.sign('sha256', hash, {
+const hashHex = crypto.createHash('sha256').update(data).digest('hex');
+const signer = crypto.createSign('RSA-SHA256');
+signer.update(hashHex);
+signer.end();
+const signature = signer.sign({
   key: privateKey,
   padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
   saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
@@ -655,14 +672,11 @@ const signature = crypto.sign('sha256', hash, {
 ### 8.4 Verification
 
 ```javascript
-const isValid = crypto.verify(
-  'sha256',
-  hash,
-  {
-    key: publicKey,
-    padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-    saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
-  },
+const verifier = crypto.createVerify('RSA-SHA256');
+verifier.update(hashHex);
+verifier.end();
+const isValid = verifier.verify(
+  { key: publicKey, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST },
   signature
 );
 ```
@@ -706,33 +720,30 @@ apiClient.interceptors.response.use(
 ### 9.2 API Endpoints
 
 #### Authentication
-- `POST /api/v1/auth/login` - User login
-- `POST /api/v1/auth/logout` - User logout
-- `POST /api/v1/auth/change-password` - Change password
-- `POST /api/v1/auth/register-public-key` - Register public key
+- `POST /auth/login` - User login
+- `POST /auth/logout` - User logout
 
 #### Users
-- `GET /api/v1/users` - List users (Admin only)
-- `POST /api/v1/users` - Create user (Admin only)
-- `GET /api/v1/users/:id` - Get user details
-- `PUT /api/v1/users/:id` - Update user
-- `DELETE /api/v1/users/:id` - Delete user (Admin only)
-- `POST /api/v1/users/:id/force-password-reset` - Force password reset
-- `POST /api/v1/users/:id/force-key-rotation` - Force key rotation
+- `GET /users`, `POST /users`, `PATCH /users/{id}`, `PATCH /users/{id}/roles`
+- `PUT /users/{id}/public-key`, `GET /users/{id}/public-key`
+- `PATCH /users/{id}/password`, `PATCH /users/{id}/reset-password`
+- `GET /users/{id}/tokens`, `POST /users/{id}/tokens`, `DELETE /users/{id}/tokens/{token_id}`
+- `GET /users/{id}/assignments`
 
-#### Builds
-- `GET /api/v1/builds` - List builds
-- `POST /api/v1/builds` - Create build
-- `GET /api/v1/builds/:id` - Get build details
-- `PUT /api/v1/builds/:id` - Update build
-- `DELETE /api/v1/builds/:id` - Delete build
-- `POST /api/v1/builds/:id/sections/:sectionId/sign` - Sign section
-- `POST /api/v1/builds/:id/export` - Export contract
+#### Builds & Sections
+- `GET /builds`, `POST /builds`, `GET /builds/{id}`
+- `PATCH /builds/{id}/status`, `POST /builds/{id}/attestation`, `POST /builds/{id}/finalize`, `POST /builds/{id}/cancel`
+- `GET /builds/{id}/assignments`, `POST /builds/{id}/assignments`
+- `POST /builds/{id}/sections`, `GET /builds/{id}/sections`
 
-#### Analytics (Admin only)
-- `GET /api/v1/analytics/diagnostics` - System diagnostics
-- `GET /api/v1/analytics/builds` - Build statistics
-- `GET /api/v1/analytics/users` - User statistics
+#### Audit / Verification / Export
+- `GET /builds/{id}/audit`
+- `GET /builds/{id}/verify`, `GET /builds/{id}/verify-contract`
+- `GET /builds/{id}/export`, `GET /builds/{id}/userdata`, `POST /builds/{id}/acknowledge-download`
+
+#### Rotation / Logs
+- `GET /rotation/expired`, `POST /rotation/force-password-change/{user_id}`, `POST /rotation/revoke-key/{user_id}`
+- `GET /system-logs`
 
 ---
 
@@ -864,10 +875,10 @@ $body-long-02: 16px / 24px (400)
 #### ✅ Core Features
 1. **Authentication System**
    - Multi-persona login with 6 roles (Admin, Solution Provider, Data Owner, Auditor, Environment Operator, Viewer)
-   - Credential validation against mock user database
-   - JWT token management (localStorage)
+   - Backend-issued bearer token management (localStorage + auth store)
    - Session persistence with session ID tracking
    - Auto-logout on token expiry
+   - Forced logout on backend `401` responses
    - Role-based access control
    - Welcome modal on fresh login
 
@@ -887,11 +898,11 @@ $body-long-02: 16px / 24px (400)
    - Role-specific default navigation (VIEWER → Builds, others → Home)
 
 3. **Build Management**
-   - Create, read, update, delete builds
+   - Create, read, and cancel builds
    - User assignment for all roles (SP, DO, Auditor, EO)
    - Status tracking and updates
-   - Section-by-section signing
-   - Export functionality
+   - Section submission workflow via `/builds/{id}/sections`
+   - Export/download acknowledgment flow for ENV_OPERATOR
    - Build filtering and search
 
 4. **User Management**

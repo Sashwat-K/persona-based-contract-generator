@@ -313,7 +313,7 @@ CREATE TABLE builds (
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT now(),
     finalized_at            TIMESTAMPTZ,
     contract_hash           TEXT,
-    contract_yaml           TEXT,           -- stored as base64-encoded string
+    contract_yaml           TEXT,           -- raw YAML in current flow (legacy rows may be base64)
     is_immutable            BOOLEAN         NOT NULL DEFAULT false
 );
 
@@ -321,7 +321,7 @@ CREATE INDEX idx_builds_status ON builds (status);
 CREATE INDEX idx_builds_created_by ON builds (created_by);
 ```
 
-> **Note:** `contract_yaml` is stored as a base64-encoded string; the Flutter desktop app decodes it to produce the raw YAML file for deployment. Attestation keys and signing certificates are embedded (encrypted) within the final contract — the backend does not store them.
+> **Note:** `contract_yaml` is stored as raw YAML in the current flow; verification/export paths remain backward compatible with legacy base64 rows. The Electron desktop app handles both shapes and writes raw YAML for deployment. Attestation keys and signing certificates are embedded (encrypted) within the final contract — the backend does not store them.
 
 ### 2.7 Build Assignments Table
 
@@ -416,10 +416,11 @@ erDiagram
 
 | Current State | Action | Next State | Required Role | Assignment Required | Validations |
 |---|---|---|---|---|---|
-| `CREATED` | Submit workload | `WORKLOAD_SUBMITTED` | `SOLUTION_PROVIDER` | Yes | Payload non-empty, hash matches payload, valid signature against registered key, encryption cert valid PEM |
-| `WORKLOAD_SUBMITTED` | Stage environment | `ENVIRONMENT_STAGED` | `DATA_OWNER` | Yes | Payload non-empty, wrapped key present, hash matches, valid signature against registered key |
+| `CREATED` | Submit workload | `WORKLOAD_SUBMITTED` | `SOLUTION_PROVIDER` | Yes | Payload fields present, role assignment valid, request signature middleware passes |
+| `WORKLOAD_SUBMITTED` | Stage environment | `ENVIRONMENT_STAGED` | `DATA_OWNER` | Yes | Payload fields present, encrypted symmetric key present, role assignment valid, request signature middleware passes |
 | `ENVIRONMENT_STAGED` | Confirm attestation readiness | `AUDITOR_KEYS_REGISTERED` | `AUDITOR` | Yes | Auditor confirms keys are generated locally (no payload) |
-| `AUDITOR_KEYS_REGISTERED` | Finalize contract | `FINALIZED` | `AUDITOR` | Yes | Contract YAML (base64) present, hash matches decoded content, valid signature against registered public key, set `is_immutable = true` |
+| `AUDITOR_KEYS_REGISTERED` | Assemble contract marker | `CONTRACT_ASSEMBLED` | `AUDITOR` | Yes | Transition marker (used by UI finalize flow) |
+| `CONTRACT_ASSEMBLED` | Finalize contract | `FINALIZED` | `AUDITOR` | Yes | Contract YAML present, hash matches payload bytes, valid signature against registered public key, set `is_immutable = true` |
 | Any (pre-FINALIZED) | Cancel | `CANCELLED` | `ADMIN` | No | Build not already FINALIZED or CANCELLED |
 
 ### 3.2 Implementation (Go)
@@ -434,6 +435,7 @@ const (
     StatusWorkloadSubmitted    BuildStatus = "WORKLOAD_SUBMITTED"
     StatusEnvironmentStaged    BuildStatus = "ENVIRONMENT_STAGED"
     StatusAuditorKeysRegistered BuildStatus = "AUDITOR_KEYS_REGISTERED"
+    StatusContractAssembled    BuildStatus = "CONTRACT_ASSEMBLED"
     StatusFinalized            BuildStatus = "FINALIZED"
     StatusCancelled            BuildStatus = "CANCELLED"
 )
@@ -443,7 +445,8 @@ var ValidTransitions = map[BuildStatus]BuildStatus{
     StatusCreated:               StatusWorkloadSubmitted,
     StatusWorkloadSubmitted:     StatusEnvironmentStaged,
     StatusEnvironmentStaged:     StatusAuditorKeysRegistered,
-    StatusAuditorKeysRegistered: StatusFinalized,
+    StatusAuditorKeysRegistered: StatusContractAssembled,
+    StatusContractAssembled:     StatusFinalized,
 }
 
 func (s BuildStatus) CanTransitionTo(next BuildStatus) bool {
@@ -459,17 +462,19 @@ func (s BuildStatus) CanTransitionTo(next BuildStatus) bool {
 
 ```mermaid
 flowchart TD
-    A[CREATED] -->|"POST /builds/{id}/workload<br/>Role: SOLUTION_PROVIDER<br/>+ Build Assignment"| B[WORKLOAD_SUBMITTED]
-    B -->|"POST /builds/{id}/environment<br/>Role: DATA_OWNER<br/>+ Build Assignment"| C[ENVIRONMENT_STAGED]
+    A[CREATED] -->|"POST /builds/{id}/sections (role_id=SP)<br/>Role: SOLUTION_PROVIDER<br/>+ Build Assignment"| B[WORKLOAD_SUBMITTED]
+    B -->|"POST /builds/{id}/sections (role_id=DO)<br/>Role: DATA_OWNER<br/>+ Build Assignment"| C[ENVIRONMENT_STAGED]
     C -->|"POST /builds/{id}/attestation<br/>Role: AUDITOR<br/>+ Build Assignment"| D[AUDITOR_KEYS_REGISTERED]
-    D -->|"POST /builds/{id}/finalize<br/>Role: AUDITOR<br/>+ Build Assignment"| E[FINALIZED]
+    D -->|"PATCH /builds/{id}/status -> CONTRACT_ASSEMBLED"| E[CONTRACT_ASSEMBLED]
+    E -->|"POST /builds/{id}/finalize<br/>Role: AUDITOR<br/>+ Build Assignment"| G[FINALIZED]
 
-    A -->|"DELETE /builds/{id}<br/>Role: ADMIN"| F[CANCELLED]
+    A -->|"POST /builds/{id}/cancel<br/>Role: ADMIN"| F[CANCELLED]
     B --> F
     C --> F
     D --> F
+    E --> F
 
-    style E fill:#2d6a4f,color:#fff
+    style G fill:#2d6a4f,color:#fff
     style F fill:#d00000,color:#fff
 ```
 
@@ -477,7 +482,15 @@ flowchart TD
 
 ## 4. API Contracts (Detailed)
 
-> **Convention:** All endpoints except `POST /auth/login` require the header `Authorization: Bearer <token>`. All request/response bodies use `Content-Type: application/json`. Roles are referenced by `role_id` (UUID) — use `GET /roles` to resolve names to IDs.
+> **Convention:** All endpoints except `POST /auth/login` require `Authorization: Bearer <token>`. All request/response bodies use `Content-Type: application/json`. Roles are referenced by `role_id` (UUID) — use `GET /roles` to resolve names to IDs.
+>
+> **Signed mutating requests:** Authenticated mutating requests (`POST/PUT/PATCH/DELETE`) must include:
+> - `X-Signature`
+> - `X-Signature-Hash`
+> - `X-Timestamp` (unix millis, ±5 minute window)
+> - `X-Key-Fingerprint` (optional but validated if present)
+>
+> Exemptions: `POST /auth/logout`, `PATCH /users/{id}/password`, `PUT /users/{id}/public-key`.
 
 ### 4.1 Roles (Reference Data)
 
@@ -735,18 +748,11 @@ flowchart TD
 **Request:**
 ```json
 {
-    "name": "production-deploy-v2.1",
-    "assignments": [
-        { "role_id": "uuid-sp", "user_id": "alice-user-uuid" },
-        { "role_id": "uuid-do", "user_id": "bob-user-uuid" },
-        { "role_id": "uuid-aud", "user_id": "charlie-user-uuid" },
-        { "role_id": "uuid-eo", "user_id": "dave-user-uuid" }
-    ],
-    "signature": "base64-encoded-signature-of-metadata-hash"
+    "name": "production-deploy-v2.1"
 }
 ```
 
-> **Signing:** The Admin computes `SHA256(canonical_json({"name": ..., "assignments": [...]}))` locally and signs it with their registered identity private key.
+> **Signing:** The desktop client signs the mutating request envelope and sends it in `X-Signature`/`X-Signature-Hash` headers.
 
 **Response (201):**
 ```json
@@ -756,36 +762,26 @@ flowchart TD
     "status": "CREATED",
     "created_by": "admin-uuid",
     "created_at": "2026-04-05T10:00:00Z",
-    "is_immutable": false,
-    "assignments": [
-        { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER", "user_id": "alice-uuid", "user_name": "Alice", "has_public_key": true },
-        { "role_id": "uuid-do", "role_name": "DATA_OWNER", "user_id": "bob-uuid", "user_name": "Bob", "has_public_key": true },
-        { "role_id": "uuid-aud", "role_name": "AUDITOR", "user_id": "charlie-uuid", "user_name": "Charlie", "has_public_key": true },
-        { "role_id": "uuid-eo", "role_name": "ENV_OPERATOR", "user_id": "dave-uuid", "user_name": "Dave", "has_public_key": true }
-    ]
+    "is_immutable": false
 }
 ```
 
 **Backend Validations:**
-1. All assigned users exist, are active, and have the corresponding role.
-2. All assigned users (`SOLUTION_PROVIDER`, `DATA_OWNER`, `AUDITOR`, `ENV_OPERATOR`) must have a registered, non-expired public key.
-3. Signature is valid against the Admin's **registered public key**.
-4. Create build + assignment records in a transaction.
-5. Emit `BUILD_CREATED` audit event with Admin's signature and key fingerprint.
+1. Build name is present.
+2. Request signature headers are valid and verified against the Admin's registered public key.
+3. Create build row.
+4. Emit `BUILD_CREATED` audit event (includes request signature/request hash metadata when present).
 
 #### `GET /builds`
 
-**Query Parameters:** `?status=CREATED&page=1&per_page=20`
+**Query Parameters:** `?status=CREATED&limit=50&offset=0`
 
 **Response (200):**
 ```json
 {
     "builds": [ ... ],
-    "pagination": {
-        "page": 1,
-        "per_page": 20,
-        "total": 42
-    }
+    "limit": 50,
+    "offset": 0
 }
 ```
 
@@ -810,88 +806,63 @@ flowchart TD
 
 > **Note:** This endpoint is how the Data Owner retrieves the Auditor's public key for symmetric key wrapping.
 
-#### `DELETE /builds/{id}`
+#### `POST /builds/{id}/cancel`
 
 **Required Role:** `ADMIN`  
 **Constraint:** Build must not be `FINALIZED`.  
-**Response:** `204 No Content`  
+**Response:** `200 OK` (`{"status":"CANCELLED"}`)  
 **Backend:** Sets status to `CANCELLED`, emits audit event.
 
 ---
 
 ### 4.5 Section Submissions
 
-#### `POST /builds/{id}/workload`
+#### `POST /builds/{id}/sections`
 
-**Required Role:** `SOLUTION_PROVIDER` (assigned to this build)  
-**Required Build Status:** `CREATED`
+**Required Role:** Assigned persona role for this build (`SOLUTION_PROVIDER`, `DATA_OWNER`, or `AUDITOR`)  
+**Required Build Status:** Role-specific:
+- `SOLUTION_PROVIDER` -> `CREATED`
+- `DATA_OWNER` -> `WORKLOAD_SUBMITTED`
+- `AUDITOR` -> `ENVIRONMENT_STAGED`
 
-**Request:**
+**Request (common shape):**
 ```json
 {
-    "encrypted_payload": "base64-encoded-encrypted-workload",
-    "encryption_certificate": "PEM-encoded-HPCR-encryption-cert",
+    "role_id": "uuid-role",
+    "encrypted_payload": "base64-encoded-encrypted-section",
+    "encrypted_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-key-or-null",
     "section_hash": "sha256-hex-of-encrypted-payload",
     "signature": "base64-encoded-signature-of-section-hash"
 }
 ```
 
-**Response (200):**
+**Role-specific notes:**
+- `SOLUTION_PROVIDER`: `encrypted_symmetric_key` omitted; payload is encrypted workload.
+- `DATA_OWNER`: `encrypted_symmetric_key` is required (stored as `wrapped_symmetric_key` in database/section responses).
+- `AUDITOR`: used only for encrypted attestation-related section payloads (when applicable in flow).
+
+**Response (201):**
 ```json
 {
-    "build_id": "uuid",
-    "status": "WORKLOAD_SUBMITTED",
-    "section": {
-        "id": "uuid",
-        "role_id": "uuid-sp",
-        "role_name": "SOLUTION_PROVIDER",
-        "section_hash": "sha256-hex",
-        "submitted_at": "2026-04-05T10:05:00Z"
-    }
+    "id": "section-uuid",
+    "build_id": "build-uuid",
+    "role_id": "role-uuid",
+    "persona_role": "SOLUTION_PROVIDER",
+    "section_hash": "sha256-hex",
+    "submitted_at": "2026-04-05T10:05:00Z"
 }
 ```
 
 **Backend Validations:**
-1. Build exists and is in `CREATED` state.
-2. User is the assigned `SOLUTION_PROVIDER` for this build.
-3. `section_hash == SHA256(base64_decode(encrypted_payload))`.
-4. Signature is valid against the user's **registered public key**.
-5. Encryption certificate is valid PEM format.
-6. Store section + encryption certificate on the build.
-7. Transition build to `WORKLOAD_SUBMITTED`.
-8. Emit audit event (includes `actor_key_fingerprint`).
-
----
-
-#### `POST /builds/{id}/environment`
-
-**Required Role:** `DATA_OWNER` (assigned to this build)  
-**Required Build Status:** `WORKLOAD_SUBMITTED`
-
-**Request:**
-```json
-{
-    "encrypted_payload": "base64-encoded-AES-encrypted-environment",
-    "wrapped_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-AES-key",
-    "section_hash": "sha256-hex-of-encrypted-payload",
-    "signature": "base64-encoded-signature-of-section-hash"
-}
-```
-
-**Response (200):** Build status updated to `ENVIRONMENT_STAGED`.
-
-**Backend Validations:**
-1. Build is in `WORKLOAD_SUBMITTED` state.
-2. User is the assigned `DATA_OWNER` for this build.
-3. `section_hash == SHA256(base64_decode(encrypted_payload))`.
-4. Signature is valid against the user's **registered public key**.
-5. `wrapped_symmetric_key` is present and non-empty.
-6. Store both `encrypted_payload` and `wrapped_symmetric_key`.
-7. Transition to `ENVIRONMENT_STAGED`.
-8. Emit audit event.
+1. Build exists and is at the required status for the submitted role.
+2. User has the global role and explicit build assignment.
+3. `section_hash`/`signature` are required section fields and are persisted as provided.
+4. `DATA_OWNER` submissions must include `encrypted_symmetric_key`.
+5. One section per role per build (`UNIQUE (build_id, role_id)`).
+6. Store section payload and transition status (`CREATED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED`) via service mapping.
 
 > [!IMPORTANT]
-> The backend cannot validate the contents of `wrapped_symmetric_key` since it is encrypted with the Auditor's RSA public key. Only the assigned Auditor can unwrap it.
+> The backend cannot validate/decrypt `encrypted_symmetric_key` contents; only the assigned Auditor can unwrap and decrypt environment data.
 
 ---
 
@@ -902,13 +873,20 @@ flowchart TD
 
 **Request:** Empty body (no payload required).
 
-**Response (200):** Build status updated to `AUDITOR_KEYS_REGISTERED`.
+**Response (200):**
+```json
+{
+    "status": "AUDITOR_KEYS_REGISTERED",
+    "already_registered": false
+}
+```
 
 **Backend Validations:**
 1. Build is in `ENVIRONMENT_STAGED` state.
 2. User is the assigned `AUDITOR` for this build.
 3. Transition to `AUDITOR_KEYS_REGISTERED`.
 4. Emit audit event.
+5. Endpoint is idempotent: if already in `AUDITOR_KEYS_REGISTERED`, `CONTRACT_ASSEMBLED`, or `FINALIZED`, it returns success with `already_registered: true`.
 
 > **Note:** This is a state-transition confirmation only. The Auditor generates attestation keys and signing certificates **locally** and embeds them (encrypted) within the final contract YAML. The backend does not store any key material for this step.
 
@@ -922,29 +900,21 @@ flowchart TD
 **Request:**
 ```json
 {
-    "contract_yaml": "base64-encoded-final-contract-yaml",
+    "contract_yaml": "final-contract-yaml-string",
     "contract_hash": "sha256-hex-of-contract-yaml",
-    "signature": "base64-encoded-signature-of-contract-hash"
+    "signature": "base64-encoded-signature-of-contract-hash",
+    "public_key": "actor-public-key-pem"
 }
 ```
 
-**Response (200):**
-```json
-{
-    "build_id": "uuid",
-    "status": "FINALIZED",
-    "contract_hash": "sha256-hex",
-    "finalized_at": "2026-04-05T11:00:00Z",
-    "is_immutable": true
-}
-```
+**Response (200):** `{ "status": "FINALIZED" }`
 
 **Backend Validations:**
-1. Build is in `AUDITOR_KEYS_REGISTERED` state.
+1. Build is in `CONTRACT_ASSEMBLED` state (UI transitions to this marker before finalize).
 2. User is the assigned `AUDITOR` for this build.
-3. `contract_hash == SHA256(base64_decode(contract_yaml))`.
+3. `contract_hash == SHA256(contract_yaml_bytes)` (raw YAML path; legacy data support remains in verification/export).
 4. Signature is valid against the Auditor's **registered public key** (the identity key pair registered at account setup).
-5. Store `contract_yaml` (base64-encoded) and `contract_hash`.
+5. Store `contract_yaml` and `contract_hash`.
 6. Set `is_immutable = true`, `finalized_at = now()`.
 7. Transition to `FINALIZED`.
 8. Emit audit event.
@@ -953,26 +923,24 @@ flowchart TD
 
 #### `GET /builds/{id}/sections`
 
-**Required Role:** Assigned `AUDITOR` for this build, or `ADMIN`  
-**Required Build Status:** `ENVIRONMENT_STAGED` or later
+**Required Role:** Any authenticated user  
+**Required Build Status:** None (current handler returns sections regardless of build status)
 
 **Response (200):**
 ```json
 {
-    "build_id": "uuid",
-    "encryption_certificate": "PEM-encoded-HPCR-cert",
     "sections": [
         {
-            "role_name": "SOLUTION_PROVIDER",
+            "persona_role": "SOLUTION_PROVIDER",
             "encrypted_payload": "base64-encoded-encrypted-workload",
             "section_hash": "sha256-hex",
             "submitted_by": "alice-uuid",
             "submitted_at": "2026-04-05T10:05:00Z"
         },
         {
-            "role_name": "DATA_OWNER",
+            "persona_role": "DATA_OWNER",
             "encrypted_payload": "base64-encoded-AES-encrypted-env",
-            "wrapped_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-key",
+            "wrapped_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-key-or-null",
             "section_hash": "sha256-hex",
             "submitted_by": "bob-uuid",
             "submitted_at": "2026-04-05T10:10:00Z"
@@ -981,7 +949,7 @@ flowchart TD
 }
 ```
 
-> **Note:** This endpoint is used by the Auditor to download all encrypted artifacts for local assembly. The `wrapped_symmetric_key` can only be unwrapped by the assigned Auditor's private key.
+> **Note:** This endpoint is used by the Auditor to download all encrypted artifacts for local assembly. `wrapped_symmetric_key` is the persisted form of submitted `encrypted_symmetric_key`, and can only be unwrapped by the assigned Auditor's private key.
 
 ---
 
@@ -991,22 +959,19 @@ flowchart TD
 
 **Response (200):**
 ```json
-{
-    "build_id": "uuid",
-    "events": [
-        {
-            "sequence_no": 0,
-            "event_type": "BUILD_CREATED",
-            "actor_user_id": "uuid",
-            "actor_key_fingerprint": "sha256-hex",
-            "event_data": { ... },
-            "event_hash": "sha256-hex",
-            "previous_event_hash": "sha256-hex",
-            "signature": "base64-signature",
-            "created_at": "2026-04-05T10:00:00Z"
-        }
-    ]
-}
+[
+  {
+    "sequence_no": 1,
+    "event_type": "BUILD_CREATED",
+    "actor_user_id": "uuid",
+    "actor_key_fingerprint": "sha256-hex",
+    "event_data": { "...": "..." },
+    "event_hash": "sha256-hex",
+    "previous_event_hash": "sha256-hex",
+    "signature": "base64-signature-or-null",
+    "created_at": "2026-04-05T10:00:00Z"
+  }
+]
 ```
 
 #### `GET /builds/{id}/verify`
@@ -1014,26 +979,29 @@ flowchart TD
 **Response (200):**
 ```json
 {
-    "build_id": "uuid",
-    "chain_valid": true,
-    "signatures_valid": true,
-    "contract_hash_valid": true,
-    "events_verified": 5,
-    "errors": []
+    "is_valid": true,
+    "total_events": 5,
+    "verified_events": 5,
+    "failed_events": [],
+    "genesis_hash": "sha256-hex",
+    "chain_intact": true,
+    "signatures_valid": true
 }
 ```
 
 **Response (200 with errors):**
 ```json
 {
-    "build_id": "uuid",
-    "chain_valid": false,
+    "is_valid": false,
+    "chain_intact": false,
     "signatures_valid": false,
-    "contract_hash_valid": true,
-    "events_verified": 5,
-    "errors": [
-        "Event #3: hash mismatch (expected abc..., got def...)",
-        "Event #4: invalid signature for key fingerprint abc123..."
+    "verified_events": 3,
+    "failed_events": [
+        {
+            "sequence_no": 4,
+            "failure_type": "signature_invalid",
+            "details": "signature verification failed"
+        }
     ]
 }
 ```
@@ -1041,21 +1009,21 @@ flowchart TD
 #### `GET /builds/{id}/export`
 
 **Required Build Status:** `FINALIZED`  
-**Required Role:** `ADMIN`, `AUDITOR` (assigned), or `ENV_OPERATOR` (assigned)  
+**Required Role:** Assigned `ENV_OPERATOR` only  
 **Response:** `200 OK` with `Content-Type: application/json`  
-Returns the base64-encoded `contract_yaml` string. The Flutter desktop app decodes this to produce the raw YAML.
+Returns `contract_yaml` as stored (raw YAML in current builds, legacy base64 supported by client fallback).
 
 #### `GET /builds/{id}/userdata`
 
 **Required Build Status:** `FINALIZED`  
-**Required Role:** `ADMIN` or `ENV_OPERATOR` (assigned)  
+**Required Role:** Assigned `ENV_OPERATOR` only  
 **Response:** `200 OK` with `Content-Type: application/json`  
-Returns the base64-encoded contract. The Flutter desktop app **decodes the base64** and saves the resulting YAML file for deployment to the HPCR instance.
+Returns decoded raw YAML (`contract_yaml`) for deployment.
 
 > [!IMPORTANT]
-> The backend always returns `contract_yaml` as base64. Decoding to raw YAML is the responsibility of the Flutter desktop client.
+> Compatibility note: verification/export paths support both raw and base64 `contract_yaml` values so legacy builds remain downloadable/verifiable.
 
-#### `POST /builds/{id}/acknowledge`
+#### `POST /builds/{id}/acknowledge-download`
 
 **Required Role:** `ENV_OPERATOR` (assigned to this build)  
 **Required Build Status:** `FINALIZED`
@@ -1068,14 +1036,7 @@ Returns the base64-encoded contract. The Flutter desktop app **decodes the base6
 }
 ```
 
-**Response (200):**
-```json
-{
-    "build_id": "uuid",
-    "acknowledged_at": "2026-04-05T12:00:00Z",
-    "acknowledged_by": "dave-uuid"
-}
-```
+**Response (204):** `No Content`
 
 **Backend Validations:**
 1. Build is in `FINALIZED` state.
@@ -1084,7 +1045,7 @@ Returns the base64-encoded contract. The Flutter desktop app **decodes the base6
 4. Signature is valid against the Env Operator's **registered public key**.
 5. Emit `CONTRACT_DOWNLOADED` audit event with Env Operator's signature and key fingerprint.
 
-> **Note:** This endpoint provides cryptographic proof-of-receipt. The Env Operator confirms they downloaded and verified the correct contract. This closes the audit chain — every persona has now signed at least one event.
+> **Note:** This endpoint provides cryptographic proof-of-receipt. The Env Operator confirms they downloaded and verified the correct contract.
 
 ---
 
@@ -1106,7 +1067,7 @@ type AuditEventData struct {
 ```
 
 > [!IMPORTANT]
-> Canonical JSON must follow **RFC 8785 (JSON Canonicalization Scheme)**. Do NOT rely on Go's `json.Marshal` for deterministic output — use a dedicated JCS library (e.g., `github.com/cyberphone/json-canonicalization`).
+> Current implementation canonicalizes event JSON using Go `encoding/json` normalization (unmarshal + marshal with sorted map keys) before hash recomputation. This is deterministic for current payloads and fixes JSONB representation drift. Full RFC 8785 JCS can be adopted later as an enhancement.
 
 ### 5.2 Hash Chain Computation
 
@@ -1149,7 +1110,7 @@ func (s *VerificationService) VerifyBuildChain(ctx context.Context, buildID uuid
             result.ChainValid = false
         }
 
-        // 2. Recompute and verify event hash
+        // 2. Recompute and verify event hash (canonicalized event JSON)
         recomputed := ComputeEventHash(event.EventData, event.PreviousEventHash)
         if recomputed != event.EventHash {
             result.Errors = append(result.Errors,
@@ -1158,17 +1119,26 @@ func (s *VerificationService) VerifyBuildChain(ctx context.Context, buildID uuid
         }
 
         // 3. Verify signature against REGISTERED public key
+        // Signature hash target is event-specific:
+        // - BUILD_FINALIZED / CONTRACT_DOWNLOADED: event_data.contract_hash
+        // - BUILD_CREATED / ROLE_ASSIGNED: event_data.request_signature_hash (if present)
+        // - otherwise: event.EventHash
         if event.Signature != "" {
+            hashToVerify := signatureHashForEvent(event.EventType, event.EventData, event.EventHash)
             pubKey, err := s.repo.GetUserPublicKeyByFingerprint(ctx, event.ActorKeyFingerprint)
             if err != nil {
                 result.Errors = append(result.Errors,
                     fmt.Sprintf("Event #%d: cannot resolve public key for fingerprint %s", i, event.ActorKeyFingerprint))
                 result.SignaturesValid = false
-            } else if err := VerifyRSAPSSSignature(pubKey, event.EventHash, event.Signature); err != nil {
+            } else if err := VerifyRSAPSSSignature(pubKey, hashToVerify, event.Signature); err != nil {
                 result.Errors = append(result.Errors,
                     fmt.Sprintf("Event #%d: invalid signature for key %s", i, event.ActorKeyFingerprint))
                 result.SignaturesValid = false
             }
+        } else if requiresSignature(event.EventType) {
+            result.Errors = append(result.Errors,
+                fmt.Sprintf("Event #%d: missing signature for %s", i, event.EventType))
+            result.SignaturesValid = false
         }
 
         expectedPrevHash = event.EventHash
@@ -1281,17 +1251,19 @@ func RequireAssignment(role model.PersonaRole) func(http.Handler) http.Handler {
 | `POST /builds` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
 | `GET /builds/{id}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `GET /builds/{id}/assignments` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `DELETE /builds/{id}` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
-| `POST .../workload` | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ SP |
-| `POST .../environment` | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ DO |
+| `POST /builds/{id}/assignments` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
+| `POST /builds/{id}/cancel` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
+| `POST .../sections` (SP role) | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ SP |
+| `POST .../sections` (DO role) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ DO |
 | `POST .../attestation` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
+| `PATCH .../status` (to `CONTRACT_ASSEMBLED`) | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
 | `POST .../finalize` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
-| `GET .../sections` | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
+| `GET .../sections` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `GET .../audit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `GET .../verify` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `GET .../export` | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ AUD/EO |
-| `GET .../userdata` | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
-| `POST .../acknowledge` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
+| `GET .../export` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
+| `GET .../userdata` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
+| `POST .../acknowledge-download` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
 
 > ¹ ADMIN can access any user; other roles can only access their own (`user_id` must match authenticated user).
 
@@ -1320,6 +1292,7 @@ func RequireAssignment(role model.PersonaRole) func(http.Handler) http.Handler {
 |---|---|---|
 | `400` | `INVALID_REQUEST` | Malformed request body or missing fields |
 | `400` | `HASH_MISMATCH` | Computed hash does not match submitted hash |
+| `400` | `INVALID_SIGNATURE_HEADERS` | Missing/invalid request signature headers |
 | `400` | `INVALID_SIGNATURE` | Signature verification failed against registered public key |
 | `400` | `INVALID_CERTIFICATE` | PEM certificate is malformed or expired |
 | `400` | `INVALID_PUBLIC_KEY` | Public key is not valid RSA-4096 PEM |
@@ -1731,7 +1704,7 @@ sequenceDiagram
     SP->>SP: Encrypt workload via contract-cli (Node.js)
     SP->>SP: SHA256(workload.enc) → hash
     SP->>SP: Sign(hash, sp_private_key) → signature
-    SP->>BE: POST /builds/{id}/workload (+ encryption_cert)
+    SP->>BE: POST /builds/{id}/sections (role_id=SP)
 
     Note over DO: Retrieve Auditor's registered public key
     DO->>BE: GET /builds/{id}/assignments
@@ -1741,10 +1714,10 @@ sequenceDiagram
     DO->>DO: RSA-OAEP wrap AES key with Auditor's public key
     DO->>DO: SHA256(encrypted_env) → hash
     DO->>DO: Sign(hash, do_private_key) → signature
-    DO->>BE: POST /builds/{id}/environment
+    DO->>BE: POST /builds/{id}/sections (role_id=DO, encrypted_symmetric_key)
 
-    Note over AU: Generate attestation + signing keys
-    AU->>BE: POST /builds/{id}/attestation (public keys)
+    Note over AU: Generate signing + attestation keys
+    AU->>BE: POST /builds/{id}/attestation (readiness confirmation)
     AU->>BE: GET /builds/{id}/sections (download encrypted artifacts)
     AU->>AU: RSA-OAEP unwrap AES key with own private key
     AU->>AU: AES-256-GCM decrypt env section
@@ -1752,10 +1725,12 @@ sequenceDiagram
     AU->>AU: Encrypt env via contract-cli (HPCR cert)
     AU->>AU: Assemble contract.yaml
     AU->>AU: SHA256(contract.yaml) → hash
-    AU->>AU: Sign(hash, signing_key) → signature
+    AU->>AU: PATCH /builds/{id}/status -> CONTRACT_ASSEMBLED
+    AU->>AU: Sign(hash, auditor_identity_key) → signature
     AU->>BE: POST /builds/{id}/finalize
 
     EO->>BE: GET /builds/{id}/userdata
+    EO->>BE: POST /builds/{id}/acknowledge-download
     Note over EO: Deploy to HPCR instance
 ```
 
@@ -1891,8 +1866,8 @@ migrate -path ./migrations -database "$DATABASE_URL" down 1
 | Unit (handlers) | `httptest` | Request parsing, response codes, error handling, RBAC + assignment enforcement |
 | Integration | `testcontainers-go` (PostgreSQL) | Full DB round-trip, migration tests |
 | API (E2E) | `httptest` + test fixtures | Complete build lifecycle flow with assignments |
-| Flutter unit | `flutter_test` | Crypto operations, key wrapping, model serialization |
-| Flutter integration | `integration_test` | Full persona workflow (mock backend) |
+| Electron UI unit | Vitest/Jest | Service adapters, request signing, view state logic |
+| Electron integration | Playwright/Cypress (or equivalent) | Full persona workflow against local backend |
 
 ### Key Test Scenarios
 
@@ -1909,7 +1884,7 @@ migrate -path ./migrations -database "$DATABASE_URL" down 1
 11. **Cancellation:** Admin cancels at each pre-finalized state.
 12. **Key wrapping:** Verify only the assigned Auditor can unwrap the symmetric key.
 13. **Public key registration:** Register, update, verify fingerprint computation.
-14. **Build creation validation:** Attempt to create a build assigning users without public keys.
+14. **Request-signature enforcement:** Mutating request without signature headers must fail.
 
 ---
 

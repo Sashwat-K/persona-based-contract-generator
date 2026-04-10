@@ -1,22 +1,7 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # IBM Confidential Computing Contract Generator - API Documentation
 
 > **Version:** 1.0  
-> **Date:** 2026-04-08  
+> **Date:** 2026-04-10  
 > **Status:** Production Ready  
 > **Backend Version:** Go 1.21+  
 > **Database:** PostgreSQL 16
@@ -65,7 +50,7 @@ The IBM Confidential Computing Contract Generator provides a RESTful API for col
 ### Base URL
 
 ```
-https://<your-domain>/api/v1
+https://<your-domain>
 ```
 
 ### Content Type
@@ -82,7 +67,7 @@ Authorization: Bearer <token>
 
 ### API Versioning
 
-The API uses URL-based versioning (`/api/v1`). Breaking changes will increment the major version.
+Current deployment is unversioned (no `/api/v1` prefix). Versioned routing can be introduced later.
 
 ### Supported HTTP Methods
 
@@ -99,7 +84,7 @@ The API uses URL-based versioning (`/api/v1`). Breaking changes will increment t
 ### Authentication Flow
 
 1. **Login**: User provides email and password to `POST /auth/login`
-2. **Token Issuance**: Backend returns JWT bearer token with expiry
+2. **Token Issuance**: Backend returns opaque bearer token with expiry
 3. **Token Usage**: Client includes token in `Authorization` header for all subsequent requests
 4. **Token Validation**: Backend validates token on each request
 5. **Logout**: Client calls `POST /auth/logout` to revoke token
@@ -123,9 +108,9 @@ All other endpoints return `403 ACCOUNT_SETUP_REQUIRED`.
 
 | Role | Description | Permissions |
 |------|-------------|-------------|
-| `SOLUTION_PROVIDER` | Provides workload definition and HPCR encryption certificate | Submit workload section |
+| `SOLUTION_PROVIDER` | Provides workload section payload | Submit workload section |
 | `DATA_OWNER` | Provides environment configuration | Submit environment section |
-| `AUDITOR` | Performs final contract assembly and signing | Register attestation keys, finalize contract |
+| `AUDITOR` | Performs sign + attestation flow and finalization | Register attestation state, finalize contract |
 | `ENV_OPERATOR` | Downloads and deploys finalized contracts | Download contract, acknowledge receipt |
 | `ADMIN` | System administration | Create users, manage roles, create builds, cancel builds |
 | `VIEWER` | Read-only access | View builds and audit logs |
@@ -150,36 +135,37 @@ X-Timestamp: <unix-timestamp-milliseconds>
 X-Key-Fingerprint: <sha256-hex-of-public-key-der>
 ```
 
-**Signing Process:**
-1. Canonicalize request payload (RFC 8785)
-2. Compute `SHA256(canonical_json)`
-3. Sign hash with RSA-PSS (SHA-256) using registered private key
-4. Base64-encode signature
+**Signing Process (current implementation):**
+1. Build payload as JSON: `{"method","path","data","timestamp"}`
+2. Compute `SHA256(payload_json_string)` => `X-Signature-Hash`
+3. Sign that hash with RSA-PSS (RSA-SHA256 semantics) using local private key
+4. Base64-encode signature => `X-Signature`
 
 **Backend Verification:**
-1. Retrieve user's registered public key via fingerprint
+1. Retrieve authenticated user's registered public key
 2. Verify signature against registered key
 3. Check timestamp for replay attack prevention (±5 minutes tolerance)
 4. Validate hash matches request payload
 
+**Signature Header Exemptions:**
+- `POST /auth/logout`
+- `PATCH /users/{id}/password`
+- `PUT /users/{id}/public-key`
+
 ### Pagination
 
-List endpoints support pagination:
+List endpoints support limit/offset pagination:
 
 ```
-GET /builds?page=1&per_page=20
+GET /builds?limit=50&offset=0
 ```
 
 **Response:**
 ```json
 {
-  "data": [...],
-  "pagination": {
-    "page": 1,
-    "per_page": 20,
-    "total": 42,
-    "total_pages": 3
-  }
+  "builds": [...],
+  "limit": 50,
+  "offset": 0
 }
 ```
 
@@ -482,21 +468,14 @@ Revoke API token.
 
 #### POST /builds
 
-Create build with assignments.
+Create build.
 
 **Auth:** Required | **Role:** ADMIN
 
 **Request:**
 ```json
 {
-  "name": "production-v2.1",
-  "assignments": [
-    {"role_id": "sp-uuid", "user_id": "alice-uuid"},
-    {"role_id": "do-uuid", "user_id": "bob-uuid"},
-    {"role_id": "aud-uuid", "user_id": "charlie-uuid"},
-    {"role_id": "eo-uuid", "user_id": "dave-uuid"}
-  ],
-  "signature": "base64-signature"
+  "name": "production-v2.1"
 }
 ```
 
@@ -507,12 +486,11 @@ Create build with assignments.
   "name": "production-v2.1",
   "status": "CREATED",
   "created_by": "admin-uuid",
-  "is_immutable": false,
-  "assignments": [
-    {"role_name": "SOLUTION_PROVIDER", "user_name": "Alice", "has_public_key": true}
-  ]
+  "is_immutable": false
 }
 ```
+
+Assignment creation is handled via `POST /builds/{id}/assignments`.
 
 ---
 
@@ -522,7 +500,7 @@ List builds.
 
 **Auth:** Required | **Role:** Any
 
-**Query:** `?status=CREATED&page=1&per_page=20&sort=created_at&order=desc`
+**Query:** `?status=CREATED&limit=50&offset=0`
 
 **Response (200):**
 ```json
@@ -534,7 +512,8 @@ List builds.
     "created_at": "2026-04-08T09:13:52Z",
     "is_immutable": false
   }],
-  "pagination": {"page": 1, "per_page": 20, "total": 15}
+  "limit": 50,
+  "offset": 0
 }
 ```
 
@@ -550,13 +529,19 @@ Get build details.
 
 ---
 
-#### DELETE /builds/{id}
+#### POST /builds/{id}/cancel
 
 Cancel build (pre-finalization only).
 
 **Auth:** Required | **Role:** ADMIN
 
-**Response:** `204 No Content`
+**Response:** `200 OK`
+
+```json
+{
+  "status": "CANCELLED"
+}
+```
 
 **Error:** `400` Build is finalized (immutable)
 
@@ -566,87 +551,72 @@ Cancel build (pre-finalization only).
 
 #### GET /builds/{id}/assignments
 
-Get assignments with public keys.
+Get build assignments.
 
 **Auth:** Required | **Role:** Any
 
-**Response (200):**
+**Response (200):** Array of assignment rows.
+
+```json
+[
+  {
+    "role_id": "role-uuid",
+    "role_name": "AUDITOR",
+    "user_id": "user-uuid",
+    "user_name": "Charlie",
+    "user_email": "charlie@example.com",
+    "assigned_at": "2026-04-08T09:13:52Z"
+  }
+]
+```
+
+**Use Case:** Data Owner resolves assigned Auditor `user_id`, then retrieves the key via `GET /users/{id}/public-key`.
+
+---
+
+#### POST /builds/{id}/assignments
+
+Create assignment for a build.
+
+**Auth:** Required | **Role:** ADMIN
+
+**Request:**
 ```json
 {
-  "build_id": "uuid",
-  "assignments": [{
-    "role_name": "AUDITOR",
-    "user_name": "Charlie",
-    "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
-    "public_key_fingerprint": "sha256-hex"
-  }]
+  "role_id": "role-uuid",
+  "user_id": "user-uuid"
 }
 ```
 
-**Use Case:** Data Owner retrieves Auditor's public key for key wrapping.
+**Response (201):** Created assignment row.
 
 ---
 
 ### 5.6 Section Submissions
 
-#### POST /builds/{id}/workload
+#### POST /builds/{id}/sections
 
-Submit workload (Solution Provider).
+Submit role-specific section payload.
 
-**Auth:** Required | **Role:** SOLUTION_PROVIDER (assigned)  
-**Build Status:** CREATED
+**Auth:** Required | **Role:** Assigned role for the build  
+**Build Status:** Depends on role (`SOLUTION_PROVIDER` -> `CREATED`, `DATA_OWNER` -> `WORKLOAD_SUBMITTED`, `AUDITOR` -> `ENVIRONMENT_STAGED`)
 
 **Request:**
 ```json
 {
-  "encrypted_payload": "base64-encrypted-workload",
-  "encryption_certificate": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+  "role_id": "role-uuid",
+  "encrypted_payload": "base64-encrypted-section",
+  "encrypted_symmetric_key": "base64-RSA-OAEP-wrapped-key",
   "section_hash": "sha256-hex",
   "signature": "base64-signature"
 }
 ```
 
-**Response (200):**
-```json
-{
-  "build_id": "uuid",
-  "status": "WORKLOAD_SUBMITTED",
-  "section": {
-    "role_name": "SOLUTION_PROVIDER",
-    "section_hash": "sha256-hex",
-    "submitted_at": "2026-04-08T09:15:00Z"
-  }
-}
-```
+**Notes:**
+- `encrypted_symmetric_key` is required for `DATA_OWNER` submissions.
+- `persona_role` is still accepted as backward-compatible fallback when `role_id` is absent.
 
----
-
-#### POST /builds/{id}/environment
-
-Submit environment (Data Owner).
-
-**Auth:** Required | **Role:** DATA_OWNER (assigned)  
-**Build Status:** WORKLOAD_SUBMITTED
-
-**Request:**
-```json
-{
-  "encrypted_payload": "base64-AES-encrypted-env",
-  "wrapped_symmetric_key": "base64-RSA-OAEP-wrapped-key",
-  "section_hash": "sha256-hex",
-  "signature": "base64-signature"
-}
-```
-
-**Response (200):**
-```json
-{
-  "build_id": "uuid",
-  "status": "ENVIRONMENT_STAGED"
-}
-```
-
-**⚠️ Note:** Backend cannot validate `wrapped_symmetric_key` (encrypted for Auditor).
+**Response (201):** Created section row.
 
 ---
 
@@ -662,12 +632,12 @@ Register attestation keys (Auditor).
 **Response (200):**
 ```json
 {
-  "build_id": "uuid",
-  "status": "AUDITOR_KEYS_REGISTERED"
+  "status": "AUDITOR_KEYS_REGISTERED",
+  "already_registered": false
 }
 ```
 
-**Note:** State transition only. Keys generated locally.
+**Note:** State transition only. Keys generated locally. Endpoint is idempotent when already registered/progressed.
 
 ---
 
@@ -676,25 +646,22 @@ Register attestation keys (Auditor).
 Finalize contract (Auditor).
 
 **Auth:** Required | **Role:** AUDITOR (assigned)  
-**Build Status:** AUDITOR_KEYS_REGISTERED
+**Build Status:** `CONTRACT_ASSEMBLED` (frontend transitions via `PATCH /builds/{id}/status`)
 
 **Request:**
 ```json
 {
-  "contract_yaml": "base64-final-contract",
+  "contract_yaml": "final-contract-yaml-string",
   "contract_hash": "sha256-hex",
-  "signature": "base64-signature"
+  "signature": "base64-signature",
+  "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 }
 ```
 
 **Response (200):**
 ```json
 {
-  "build_id": "uuid",
-  "status": "FINALIZED",
-  "contract_hash": "sha256-hex",
-  "finalized_at": "2026-04-08T09:30:00Z",
-  "is_immutable": true
+  "status": "FINALIZED"
 }
 ```
 
@@ -702,24 +669,21 @@ Finalize contract (Auditor).
 
 #### GET /builds/{id}/sections
 
-Get all sections (Auditor/Admin).
+Get all sections.
 
-**Auth:** Required | **Role:** AUDITOR (assigned) or ADMIN  
-**Build Status:** ENVIRONMENT_STAGED or later
+**Auth:** Required | **Role:** Any
 
 **Response (200):**
 ```json
 {
-  "build_id": "uuid",
-  "encryption_certificate": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
   "sections": [
     {
-      "role_name": "SOLUTION_PROVIDER",
+      "persona_role": "SOLUTION_PROVIDER",
       "encrypted_payload": "base64-encrypted-workload",
       "section_hash": "sha256-hex"
     },
     {
-      "role_name": "DATA_OWNER",
+      "persona_role": "DATA_OWNER",
       "encrypted_payload": "base64-AES-encrypted-env",
       "wrapped_symmetric_key": "base64-RSA-OAEP-wrapped-key",
       "section_hash": "sha256-hex"
@@ -727,6 +691,8 @@ Get all sections (Auditor/Admin).
   ]
 }
 ```
+
+`wrapped_symmetric_key` is the persisted/response field name for submitted `encrypted_symmetric_key`.
 
 ---
 
@@ -741,8 +707,7 @@ Get audit trail.
 **Response (200):**
 ```json
 {
-  "build_id": "uuid",
-  "events": [{
+  "audit_events": [{
     "sequence_no": 0,
     "event_type": "BUILD_CREATED",
     "actor_user_name": "Admin",
@@ -767,25 +732,52 @@ Verify audit chain integrity.
 **Response (200 - Valid):**
 ```json
 {
-  "build_id": "uuid",
-  "chain_valid": true,
+  "is_valid": true,
+  "total_events": 5,
+  "verified_events": 5,
+  "chain_intact": true,
+  "genesis_hash": "sha256-hex",
   "signatures_valid": true,
-  "contract_hash_valid": true,
-  "events_verified": 5,
-  "errors": []
+  "failed_events": []
 }
 ```
 
 **Response (200 - Invalid):**
 ```json
 {
-  "build_id": "uuid",
-  "chain_valid": false,
+  "is_valid": false,
+  "chain_intact": false,
   "signatures_valid": false,
-  "errors": [
-    "Event #3: hash mismatch",
-    "Event #4: invalid signature"
+  "failed_events": [
+    {
+      "sequence_no": 3,
+      "failure_type": "hash_mismatch",
+      "details": "computed hash does not match stored hash"
+    }
   ]
+}
+```
+
+---
+
+#### GET /builds/{id}/verify-contract
+
+Verify finalized contract integrity.
+
+**Auth:** Required | **Role:** Any
+
+**Response (200):**
+```json
+{
+  "build_id": "uuid",
+  "is_valid": true,
+  "is_finalized": true,
+  "is_immutable": true,
+  "contract_hash": "sha256-hex",
+  "computed_hash": "sha256-hex",
+  "hash_matches": true,
+  "signature_valid": true,
+  "details": "contract integrity verified"
 }
 ```
 
@@ -797,14 +789,14 @@ Verify audit chain integrity.
 
 Export finalized contract.
 
-**Auth:** Required | **Role:** ADMIN, AUDITOR (assigned), or ENV_OPERATOR (assigned)  
+**Auth:** Required | **Role:** ENV_OPERATOR (assigned)  
 **Build Status:** FINALIZED
 
 **Response (200):**
 ```json
 {
   "build_id": "uuid",
-  "contract_yaml": "base64-encoded",
+  "contract_yaml": "raw-yaml-or-legacy-base64",
   "contract_hash": "sha256-hex",
   "finalized_at": "2026-04-08T09:30:00Z"
 }
@@ -816,21 +808,21 @@ Export finalized contract.
 
 Download for HPCR deployment.
 
-**Auth:** Required | **Role:** ADMIN or ENV_OPERATOR (assigned)  
+**Auth:** Required | **Role:** ENV_OPERATOR (assigned)  
 **Build Status:** FINALIZED
 
 **Response (200):**
 ```json
 {
   "build_id": "uuid",
-  "contract_yaml": "base64-encoded",
+  "contract_yaml": "raw-yaml",
   "contract_hash": "sha256-hex"
 }
 ```
 
 ---
 
-#### POST /builds/{id}/acknowledge
+#### POST /builds/{id}/acknowledge-download
 
 Acknowledge download (Env Operator).
 
@@ -845,14 +837,7 @@ Acknowledge download (Env Operator).
 }
 ```
 
-**Response (200):**
-```json
-{
-  "build_id": "uuid",
-  "acknowledged_at": "2026-04-08T09:35:00Z",
-  "acknowledged_by": "dave-uuid"
-}
-```
+**Response:** `204 No Content`
 
 **Purpose:** Cryptographic proof-of-receipt in audit chain.
 
@@ -894,20 +879,13 @@ Force password change (Admin).
 
 ---
 
-#### GET /rotation/my-status
+#### POST /rotation/revoke-key/{user_id}
 
-Check own credential status.
+Revoke expired key (Admin).
 
-**Auth:** Required | **Role:** Any
+**Auth:** Required | **Role:** ADMIN
 
-**Response (200):**
-```json
-{
-  "password_expires_in_days": 15,
-  "public_key_expires_in_days": 7,
-  "warnings": ["Public key expires in 7 days"]
-}
-```
+**Response:** `204 No Content`
 
 ---
 
@@ -943,7 +921,7 @@ See [User Management](#53-user-management) section for token endpoints:
 |------|---------|-------|
 | `200` | OK | Successful GET/POST/PATCH |
 | `201` | Created | Successful resource creation |
-| `204` | No Content | Successful DELETE |
+| `204` | No Content | Successful no-body operation |
 | `400` | Bad Request | Invalid input, validation error |
 | `401` | Unauthorized | Missing/invalid token |
 | `403` | Forbidden | Insufficient permissions |
@@ -961,7 +939,8 @@ See [User Management](#53-user-management) section for token endpoints:
 | `INVALID_CREDENTIALS` | Email or password incorrect |
 | `INVALID_STATE_TRANSITION` | Build not in required state |
 | `NOT_ASSIGNED` | User not assigned to this build |
-| `SIGNATURE_INVALID` | Signature verification failed |
+| `INVALID_SIGNATURE` | Signature verification failed |
+| `INVALID_SIGNATURE_HEADERS` | Missing/invalid signature headers |
 | `KEY_EXPIRED` | Public key has expired |
 | `HASH_MISMATCH` | Computed hash doesn't match provided hash |
 | `BUILD_IMMUTABLE` | Cannot modify finalized build |
@@ -999,7 +978,7 @@ See [User Management](#53-user-management) section for token endpoints:
 
 - **Genesis hash**: `SHA256("IBM_CC:" + build_id)`
 - **Event hash**: `SHA256(canonical_json(event_data) + previous_event_hash)`
-- **Signatures**: Each event signed by actor's registered private key
+- **Signatures**: Required for `BUILD_FINALIZED` and `CONTRACT_DOWNLOADED`; request-signature metadata may be captured for `BUILD_CREATED` and `ROLE_ASSIGNED`
 - **Verification**: Backend verifies signatures against registered public keys
 
 ### Data Protection
@@ -1052,8 +1031,8 @@ X-RateLimit-Reset: 1712566432
 ### A. Build State Machine
 
 ```
-CREATED → WORKLOAD_SUBMITTED → ENVIRONMENT_STAGED → 
-AUDITOR_KEYS_REGISTERED → FINALIZED
+CREATED → WORKLOAD_SUBMITTED → ENVIRONMENT_STAGED →
+AUDITOR_KEYS_REGISTERED → CONTRACT_ASSEMBLED → FINALIZED
 
 Any pre-FINALIZED state → CANCELLED (Admin only)
 ```
@@ -1062,13 +1041,14 @@ Any pre-FINALIZED state → CANCELLED (Admin only)
 
 | Persona | Action | Endpoint | Cryptographic Operation |
 |---------|--------|----------|------------------------|
-| Admin | Create build | `POST /builds` | Sign build metadata |
-| Solution Provider | Submit workload | `POST /builds/{id}/workload` | Encrypt with HPCR cert, sign hash |
-| Data Owner | Submit environment | `POST /builds/{id}/environment` | Encrypt with AES, wrap key with Auditor's RSA key, sign hash |
-| Auditor | Register keys | `POST /builds/{id}/attestation` | Generate keys locally (not uploaded) |
-| Auditor | Finalize contract | `POST /builds/{id}/finalize` | Assemble contract, sign hash |
+| Admin | Create build | `POST /builds` | Sign mutating request (`X-Signature*`) |
+| Admin | Assign role | `POST /builds/{id}/assignments` | Sign mutating request (`X-Signature*`) |
+| Solution Provider | Submit workload | `POST /builds/{id}/sections` | Encrypt workload, provide section hash/signature |
+| Data Owner | Submit environment | `POST /builds/{id}/sections` | Encrypt with AES, wrap key with Auditor's RSA key, provide section hash/signature |
+| Auditor | Confirm attestation step | `POST /builds/{id}/attestation` | Local key generation (not uploaded) |
+| Auditor | Finalize contract | `PATCH /builds/{id}/status` + `POST /builds/{id}/finalize` | Assemble contract, sign contract hash |
 | Env Operator | Download contract | `GET /builds/{id}/userdata` | Verify hash |
-| Env Operator | Acknowledge | `POST /builds/{id}/acknowledge` | Sign contract hash |
+| Env Operator | Acknowledge | `POST /builds/{id}/acknowledge-download` | Sign contract hash |
 
 ### C. Environment Variables
 
@@ -1076,7 +1056,7 @@ Any pre-FINALIZED state → CANCELLED (Admin only)
 |----------|---------|-------------|
 | `PORT` | `8080` | Backend server port |
 | `DATABASE_URL` | - | PostgreSQL connection string |
-| `JWT_SECRET` | - | JWT signing secret |
+| `BCRYPT_COST` | `12` | Password hash work factor |
 | `PASSWORD_ROTATION_DAYS` | `90` | Password expiry interval |
 | `PUBLIC_KEY_EXPIRY_DAYS` | `90` | Public key expiry interval |
 | `TOKEN_EXPIRY_HOURS` | `24` | Bearer token expiry |
@@ -1087,8 +1067,6 @@ Any pre-FINALIZED state → CANCELLED (Admin only)
 - [High-Level Design](./1-high-level-design.md)
 - [Low-Level Design](./2-low-level-design.md)
 - [Desktop App Design](./3-desktop-app-design.md)
-- [Integration Plan](./5-Electron-Backend-Integration-Plan.md)
-- [Testing Plan](./4-E2E-Manual-testing.md)
 
 ---
 

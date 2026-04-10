@@ -190,15 +190,14 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 
 | | |
 |---|---|
-| **Provides** | Workload definition, HPCR encryption certificate |
+| **Provides** | Workload section payload |
 | **Local Actions** | Encrypt workload using `contract-cli` (via `contract-go`), Compute SHA256 hash of encrypted workload, Sign hash with private key |
-| **Uploads** | `workload.enc`, `encryption_certificate`, `section_hash`, `signature` |
+| **Uploads** | `role_id`, `encrypted_payload`, `section_hash`, `signature` (via `POST /builds/{id}/sections`) |
 
 **Notes:**
 
-- The encryption certificate is the HPCR instance's public certificate.
-- The backend stores the encryption certificate with the build for later use by the Auditor.
-- Signature is verified against the Solution Provider's **registered** public key.
+- Section `signature`/`section_hash` are persisted with the section row.
+- Mutating request signature headers (`X-Signature*`) are verified against the actor's registered public key.
 
 ---
 
@@ -218,41 +217,41 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 6. Compute SHA256 hash of the encrypted env payload.
 7. Sign hash with private key.
 
-**Uploads:** `encrypted_env_payload`, `wrapped_symmetric_key`, `section_hash`, `signature`
+**Uploads:** `role_id`, `encrypted_payload`, `encrypted_symmetric_key`, `section_hash`, `signature` (via `POST /builds/{id}/sections`)
 
 **Result:** Environment section is securely staged. **Only the assigned Auditor** can unwrap the symmetric key and read the environment — the backend cannot.
 
 ---
 
-### Auditor
+### Auditor (Sign & Add Attestation)
 
 | | |
 |---|---|
 | **Provides** | Attestation public key, Signing key/cert, Final assembled contract |
 
-**Local Actions:**
+**Local Actions (Sign & Add Attestation tab + Finalise Contract tab):**
 
-1. Generate attestation key pair locally.
-2. Generate signing key/cert locally.
-3. Confirm readiness with backend (state-transition only — no key material uploaded).
-4. Download: `workload.enc`, `encrypted_env_payload`, `wrapped_symmetric_key`, `encryption_certificate`.
-5. Unwrap symmetric key using own RSA private key (RSA-OAEP decrypt).
-6. Decrypt environment section using symmetric key (AES-256-GCM decrypt).
-7. Inject signing certificate into environment section.
-8. Encrypt environment section & attestation public key using HPCR encryption certificate via `contract-cli`.
+1. Generate signing key/cert locally.
+2. Generate attestation key pair locally.
+3. Download: `workload.enc`, `encrypted_env_payload`, `wrapped_symmetric_key` (returned as `wrapped_symmetric_key` in section data).
+4. Unwrap symmetric key using own RSA private key (RSA-OAEP decrypt).
+5. Decrypt environment section using symmetric key (AES-256-GCM decrypt).
+6. Inject signing certificate/public key into environment section.
+7. Generate encrypted environment preview and encrypt attestation public key using HPCR encryption certificate via `contract-cli`.
+8. Confirm readiness with backend via `POST /builds/{id}/attestation` (idempotent state confirmation; no key material uploaded).
 9. Assemble final YAML contract:
    - Encrypted workload
    - Encrypted environment (with signing key/cert embedded)
    - Encrypted Attestation public key
 10. Compute: `contract_hash = SHA256(contract.yaml)`
 11. Sign `contract_hash` with the Auditor's **registered identity private key** (RSA-PSS with SHA-256). This is the same key pair registered during account setup, ensuring the backend can verify the signature against the Auditor's registered public key.
-12. Upload: `contract.yaml` (base64-encoded), `contract_hash`, `signature`
+12. Upload: `contract_yaml`, `contract_hash`, `signature`, `public_key`
 
 **Backend Actions:**
 
 - Verifies the Auditor is the assigned user for this build.
 - Verifies signature against the Auditor's **registered public key**.
-- Stores `contract.yaml` (base64-encoded).
+- Stores `contract_yaml` (raw YAML in current flow; backward compatible with older base64-stored rows during verification/export).
 - Marks build as **FINALIZED** with `is_immutable = true`.
 - Emits audit event.
 
@@ -266,8 +265,8 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 
 **Local Actions:**
 
-1. Download finalized YAML contract (base64-encoded from backend).
-2. Electron desktop app **decodes the base64** to produce the raw YAML file.
+1. Download finalized YAML contract from backend (`/export` or `/userdata`).
+2. Electron desktop app handles both raw YAML and legacy base64 values (for backward compatibility) and writes raw YAML locally.
 3. Compute `SHA256(contract.yaml)` locally and verify it matches the build's `contract_hash`.
 4. Sign the `contract_hash` with the Env Operator's **registered identity private key**.
 5. Upload signed acknowledgment to backend.
@@ -324,11 +323,13 @@ stateDiagram-v2
     CREATED --> WORKLOAD_SUBMITTED
     WORKLOAD_SUBMITTED --> ENVIRONMENT_STAGED
     ENVIRONMENT_STAGED --> AUDITOR_KEYS_REGISTERED
-    AUDITOR_KEYS_REGISTERED --> FINALIZED
+    AUDITOR_KEYS_REGISTERED --> CONTRACT_ASSEMBLED
+    CONTRACT_ASSEMBLED --> FINALIZED
     CREATED --> CANCELLED : Admin only
     WORKLOAD_SUBMITTED --> CANCELLED : Admin only
     ENVIRONMENT_STAGED --> CANCELLED : Admin only
     AUDITOR_KEYS_REGISTERED --> CANCELLED : Admin only
+    CONTRACT_ASSEMBLED --> CANCELLED : Admin only
 ```
 
 ### Invariants
@@ -371,7 +372,7 @@ erDiagram
 - **User** — A person using the system. Carries their identity (password, public key) and links to everything they do.
 - **Role** — A reference table of persona types (seeded at deployment). Not an ENUM — it's a first-class table so all other tables reference it via foreign key.
 - **User Role** — Junction table: "User X has role Y, assigned by Admin Z." A user can have multiple roles.
-- **Build** — A contract being collaboratively constructed. Tracks the current status, stores the encryption certificate (from SP), and eventually holds the final base64-encoded contract YAML.
+- **Build** — A contract being collaboratively constructed. Tracks the current status, stores the encryption certificate (from SP), and eventually holds the final contract YAML (raw YAML in current flow; legacy rows may be base64).
 - **Build Assignment** — "For Build B, role Y is performed by User X." This is how the Admin binds specific users to specific builds. One user per role per build.
 - **Build Section** — Encrypted data submitted by a persona during the build. Only 2 sections per build: workload (from SP) and environment (from DO). Contains the encrypted payload, the hash, and the user's signature.
 - **Audit Event** — A tamper-evident log entry. Each event hashes its data together with the previous event's hash, forming an unbreakable chain. Signed by the actor's registered key.
@@ -429,7 +430,7 @@ erDiagram
 | `created_at` | timestamp |
 | `finalized_at` | timestamp |
 | `contract_hash` | string |
-| `contract_yaml` | text (base64-encoded) |
+| `contract_yaml` | text (raw YAML in current flow; backward compatible with legacy base64 rows) |
 | `is_immutable` | bool |
 
 ### Build Assignment
@@ -452,7 +453,7 @@ erDiagram
 | `role_id` | reference → Role |
 | `submitted_by` | reference → User |
 | `encrypted_payload` | text |
-| `wrapped_symmetric_key` | text (nullable) |
+| `wrapped_symmetric_key` | text (nullable, request field alias in UI/API: `encrypted_symmetric_key`) |
 | `section_hash` | string |
 | `signature` | string |
 | `submitted_at` | timestamp |
@@ -513,17 +514,21 @@ Every significant action in the system (build creation, section submission, fina
 
 ### Who Signs What?
 
-Every persona in the build lifecycle signs their audit events using their **registered identity private key**. This means the audit chain contains cryptographic proof of exactly who performed each action:
+The current implementation carries signatures in two places:
 
+1. **Audit event signatures (always required):**
 | Event | Persona | Signed By |
 |---|---|---|
-| `BUILD_CREATED` | Admin | Admin's registered private key |
-| `WORKLOAD_SUBMITTED` | Solution Provider | SP's registered private key |
-| `ENVIRONMENT_STAGED` | Data Owner | DO's registered private key |
-| `AUDITOR_KEYS_REGISTERED` | Auditor | Auditor's registered private key |
 | `BUILD_FINALIZED` | Auditor | Auditor's registered private key |
-| `CONTRACT_DOWNLOADED` | Env Operator | EO's registered private key |
-| `BUILD_CANCELLED` | Admin | Admin's registered private key |
+| `CONTRACT_DOWNLOADED` | Env Operator | Env Operator's registered private key |
+
+2. **Request-signature derived audit signatures (captured when present):**
+| Event | Persona | Source |
+|---|---|---|
+| `BUILD_CREATED` | Admin | `X-Signature` on signed mutating request |
+| `ROLE_ASSIGNED` | Admin | `X-Signature` on signed mutating request |
+
+Section submissions (`WORKLOAD_SUBMITTED`, `ENVIRONMENT_STAGED`) still carry cryptographic signatures on section payloads (`section_hash` + `signature`) in `build_sections`; these are separate from audit-event signature fields.
 
 ### How the Chain Works
 
@@ -580,7 +585,7 @@ Event 1 (WORKLOAD_SUBMITTED):
 - **Tamper detection:** If anyone modifies an event's data, its hash changes, which breaks the chain from that point forward.
 - **Non-repudiation:** Each event is signed by the actor's registered private key. The actor cannot deny performing the action.
 - **Accountability:** Every persona's contribution is cryptographically bound to their identity.
-- **No loose ends:** Admin (build creation), SP (workload), DO (environment), Auditor (attestation + finalize), and Env Operator (download) — all sign their respective audit events.
+- **No loose ends:** Admin signs mutating requests (captured on `BUILD_CREATED`/`ROLE_ASSIGNED`), SP/DO sign section payloads, Auditor signs finalization, and Env Operator signs download acknowledgment.
 
 ### Verification
 
@@ -631,15 +636,15 @@ The `GET /builds/{id}/verify` endpoint:
 | `GET` | `/builds` |
 | `POST` | `/builds` |
 | `GET` | `/builds/{id}` |
-| `DELETE` | `/builds/{id}` |
+| `POST` | `/builds/{id}/cancel` |
 | `GET` | `/builds/{id}/assignments` |
+| `POST` | `/builds/{id}/assignments` |
 
 ### Sections
 
 | Method | Endpoint |
 |---|---|
-| `POST` | `/builds/{id}/workload` |
-| `POST` | `/builds/{id}/environment` |
+| `POST` | `/builds/{id}/sections` |
 | `POST` | `/builds/{id}/attestation` |
 | `POST` | `/builds/{id}/finalize` |
 | `GET` | `/builds/{id}/sections` |
@@ -652,7 +657,7 @@ The `GET /builds/{id}/verify` endpoint:
 | `GET` | `/builds/{id}/verify` |
 | `GET` | `/builds/{id}/export` |
 | `GET` | `/builds/{id}/userdata` |
-| `POST` | `/builds/{id}/acknowledge` |
+| `POST` | `/builds/{id}/acknowledge-download` |
 
 ---
 
@@ -693,6 +698,7 @@ The `GET /builds/{id}/verify` endpoint:
 | **Transport Security** | TLS 1.3 via nginx |
 | **Authentication** | Bearer tokens (stored hashed, with expiry) |
 | **Authorization** | Strict server-side RBAC + per-build assignment checks |
+| **Mutating Request Signing** | All authenticated mutating endpoints require `X-Signature`, `X-Signature-Hash`, `X-Timestamp` (+ optional `X-Key-Fingerprint`) except setup/logout exemptions; backend verifies against registered user public key |
 | **Cryptographic Identity** | All users register RSA-4096 public keys; signatures verified against registered keys; keys expire after 90 days (configurable) |
 | **Private Key Isolation** | All private keys generated and stored locally; never transmitted |
 | **Credential Rotation** | Passwords and public keys rotate every 90 days (configurable). Backend forces setup flow on expiry |
@@ -731,7 +737,7 @@ The `GET /builds/{id}/verify` endpoint:
 - **Build assignments:** Admin assigns specific users to persona roles per build. RBAC is now two-layered (role + assignment).
 - **Identity-bound signature verification:** Backend verifies all signatures against registered public keys, not request-supplied keys.
 - **Secure environment staging via key wrapping:** Data Owner wraps the AES symmetric key with the Auditor's registered RSA public key (RSA-OAEP). Backend never sees the unwrapped key. Only the assigned Auditor can decrypt.
-- **Removed `CONTRACT_ASSEMBLED` state:** Finalize endpoint transitions directly from `AUDITOR_KEYS_REGISTERED` → `FINALIZED`.
+- **`CONTRACT_ASSEMBLED` retained in current backend state machine:** `AUDITOR_KEYS_REGISTERED` → `CONTRACT_ASSEMBLED` → `FINALIZED`.
 - **Added cryptographic standards section (§7):** RSA-4096, RSA-PSS/SHA-256, AES-256-GCM, RSA-OAEP, RFC 8785.
 - **Token expiry:** API tokens now have an `expires_at` field.
 - **New API endpoints:** Public key management, build assignments, section downloads, password change.
@@ -741,7 +747,10 @@ The `GET /builds/{id}/verify` endpoint:
 - **Credential rotation:** Passwords and public keys expire every 90 days (configurable). Expired credentials force the user into setup flow.
 - **Public key expiry:** Keys have a configurable `public_key_expires_at` timestamp. Expired keys block build participation.
 - **Admin signs build creation:** Build creation requests include the Admin's signature, providing cryptographic proof of who authorized the build and its assignments.
+- **Request-signature metadata captured in audit chain:** `BUILD_CREATED` and `ROLE_ASSIGNED` persist `request_signature_hash` and associated request signature.
 - **Env Operator download acknowledgment:** Env Operator signs the contract hash upon download, providing cryptographic proof of receipt in the audit chain.
+- **Attestation confirmation is idempotent:** Re-running `POST /builds/{id}/attestation` returns success when already registered/finalized.
+- **Contract storage compatibility:** Verification/export logic supports both raw YAML and legacy base64 contract rows.
 - **Expanded audit hash chain documentation (§8):** Detailed walkthrough with diagrams and examples for clarity.
 
 ---
