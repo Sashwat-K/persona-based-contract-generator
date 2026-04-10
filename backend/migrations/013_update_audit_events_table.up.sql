@@ -14,4 +14,4 @@ ALTER TABLE audit_events ALTER COLUMN build_id DROP NOT NULL;
 COMMENT ON COLUMN audit_events.actor_key_fingerprint IS 'SHA-256 fingerprint of the actor public key used for signature verification';
 COMMENT ON COLUMN audit_events.build_id IS 'Build ID (nullable for system-level events like user creation)';
 
--- Made with Bob
+

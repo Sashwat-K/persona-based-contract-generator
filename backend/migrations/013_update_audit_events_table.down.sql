@@ -10,4 +10,4 @@ DROP INDEX IF EXISTS idx_audit_events_actor_fingerprint;
 -- Remove actor_key_fingerprint column
 ALTER TABLE audit_events DROP COLUMN IF EXISTS actor_key_fingerprint;
 
--- Made with Bob
+

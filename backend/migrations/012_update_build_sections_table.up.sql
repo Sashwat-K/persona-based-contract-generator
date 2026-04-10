@@ -13,4 +13,4 @@ CREATE INDEX IF NOT EXISTS idx_build_sections_role_id ON build_sections (role_id
 COMMENT ON COLUMN build_sections.role_id IS 'Reference to the persona role that submitted this section';
 COMMENT ON COLUMN build_sections.wrapped_symmetric_key IS 'AES-256 symmetric key wrapped with Auditor public key (RSA-OAEP) - only for DATA_OWNER sections';
 
--- Made with Bob
+

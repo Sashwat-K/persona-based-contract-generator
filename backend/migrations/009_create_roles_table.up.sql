@@ -25,4 +25,4 @@ CREATE INDEX IF NOT EXISTS idx_roles_name ON roles (name);
 COMMENT ON TABLE roles IS 'Reference table for persona roles in the system';
 COMMENT ON COLUMN roles.name IS 'Unique role identifier (matches persona_role ENUM values)';
 
--- Made with Bob
+

@@ -14,4 +14,4 @@ ALTER TABLE users DROP COLUMN IF EXISTS public_key_registered_at;
 ALTER TABLE users DROP COLUMN IF EXISTS public_key_fingerprint;
 ALTER TABLE users DROP COLUMN IF EXISTS public_key;
 
--- Made with Bob
+

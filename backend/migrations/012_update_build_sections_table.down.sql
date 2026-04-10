@@ -10,4 +10,4 @@ ALTER TABLE build_sections RENAME COLUMN wrapped_symmetric_key TO encrypted_symm
 -- Remove role_id column
 ALTER TABLE build_sections DROP COLUMN IF EXISTS role_id;
 
--- Made with Bob
+

@@ -6,4 +6,4 @@ ALTER TABLE builds ADD COLUMN IF NOT EXISTS encryption_certificate TEXT;
 
 COMMENT ON COLUMN builds.encryption_certificate IS 'HPCR encryption certificate (PEM format) provided by Solution Provider';
 
--- Made with Bob
+

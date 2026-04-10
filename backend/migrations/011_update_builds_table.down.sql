@@ -3,4 +3,4 @@
 
 ALTER TABLE builds DROP COLUMN IF EXISTS encryption_certificate;
 
--- Made with Bob
+

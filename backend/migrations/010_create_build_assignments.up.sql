@@ -25,4 +25,4 @@ COMMENT ON COLUMN build_assignments.role_id IS 'The persona role being assigned'
 COMMENT ON COLUMN build_assignments.user_id IS 'The user assigned to perform this role';
 COMMENT ON COLUMN build_assignments.assigned_by IS 'The admin who created this assignment';
 
--- Made with Bob
+

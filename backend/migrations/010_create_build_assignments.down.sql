@@ -6,4 +6,4 @@ DROP INDEX IF EXISTS idx_build_assignments_user_id;
 DROP INDEX IF EXISTS idx_build_assignments_build_id;
 DROP TABLE IF EXISTS build_assignments CASCADE;
 
--- Made with Bob
+

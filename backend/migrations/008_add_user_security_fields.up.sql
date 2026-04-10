@@ -21,4 +21,4 @@ COMMENT ON COLUMN users.public_key_expires_at IS 'Public key expiry timestamp (d
 COMMENT ON COLUMN users.must_change_password IS 'Forces password change on next login';
 COMMENT ON COLUMN users.password_changed_at IS 'Timestamp of last password change';
 
--- Made with Bob
+
