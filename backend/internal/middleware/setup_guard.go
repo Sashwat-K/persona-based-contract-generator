@@ -23,12 +23,22 @@ func SetupGuard() func(http.Handler) http.Handler {
 				return
 			}
 
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
 			pending := GetSetupPending(r.Context())
 			if len(pending) == 0 {
 				pending = []string{"password_change", "public_key_registration"}
 			}
+			emitSystemLog(
+				r.Context(),
+				actorEmailFromContext(r, "unknown"),
+				"ACCOUNT_SETUP_BLOCKED",
+				"Setup Guard",
+				requestIP(r),
+				"FAILED",
+				"Blocked endpoint until setup completion",
+			)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
 			writeSetupRequired(w, pending)
 		})
 	}

@@ -14,12 +14,14 @@ import (
 // AssignmentHandler handles HTTP requests for build assignments.
 type AssignmentHandler struct {
 	assignmentService *service.AssignmentService
+	systemLogService  *service.SystemLogService
 }
 
 // NewAssignmentHandler creates a new AssignmentHandler.
-func NewAssignmentHandler(assignmentService *service.AssignmentService) *AssignmentHandler {
+func NewAssignmentHandler(assignmentService *service.AssignmentService, systemLogService *service.SystemLogService) *AssignmentHandler {
 	return &AssignmentHandler{
 		assignmentService: assignmentService,
+		systemLogService:  systemLogService,
 	}
 }
 
@@ -80,7 +82,7 @@ func (h *AssignmentHandler) CreateAssignment(w http.ResponseWriter, r *http.Requ
 	}
 	requestSignature := middleware.GetRequestSignature(ctx)
 	requestSignatureHash := middleware.GetRequestSignatureHash(ctx)
-	ip := r.RemoteAddr
+	ip := requestIP(r)
 
 	var sigPtr *string
 	var sigHashPtr *string
@@ -103,6 +105,15 @@ func (h *AssignmentHandler) CreateAssignment(w http.ResponseWriter, r *http.Requ
 		SigHash:    sigHashPtr,
 	})
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"ASSIGNMENT_CREATED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to create assignment: "+err.Error(),
+		)
 		// Check if it's an AppError
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
@@ -111,6 +122,16 @@ func (h *AssignmentHandler) CreateAssignment(w http.ResponseWriter, r *http.Requ
 		}
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"ASSIGNMENT_CREATED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Created assignment for user "+req.UserID.String(),
+	)
 
 	writeJSON(w, http.StatusCreated, assignment)
 }
@@ -206,11 +227,20 @@ func (h *AssignmentHandler) DeleteBuildAssignments(w http.ResponseWriter, r *htt
 		writeError(w, model.ErrUnauthorized())
 		return
 	}
-	ip := r.RemoteAddr
+	ip := requestIP(r)
 
 	// Delete assignments
 	err = h.assignmentService.DeleteBuildAssignments(ctx, buildID, userID, ip)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"ASSIGNMENTS_CLEARED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to clear assignments: "+err.Error(),
+		)
 		// Check if it's an AppError
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
@@ -219,6 +249,16 @@ func (h *AssignmentHandler) DeleteBuildAssignments(w http.ResponseWriter, r *htt
 		}
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"ASSIGNMENTS_CLEARED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Cleared all assignments for build",
+	)
 
 	w.WriteHeader(http.StatusNoContent)
 }

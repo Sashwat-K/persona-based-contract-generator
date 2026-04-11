@@ -85,6 +85,15 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Roles:    req.Roles,
 	}, assignedBy)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			req.Email,
+			"USER_CREATED",
+			"User Management",
+			"FAILED",
+			"Failed to create user: "+err.Error(),
+		)
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
 			writeError(w, model.ErrDuplicateEmail(req.Email))
 			return
@@ -93,12 +102,15 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ipAddress := r.RemoteAddr
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		ipAddress = forwarded
-	}
-
-	h.systemLogService.LogEvent(r.Context(), req.Email, "USER_CREATED", "User Management", ipAddress, "SUCCESS", "Created new user account")
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		req.Email,
+		"USER_CREATED",
+		"User Management",
+		"SUCCESS",
+		"Created new user account",
+	)
 
 	writeJSON(w, http.StatusCreated, user)
 }
@@ -135,6 +147,15 @@ func (h *UserHandler) UpdateUserProfile(w http.ResponseWriter, r *http.Request) 
 
 	user, err := h.userService.UpdateUserProfile(r.Context(), userID, req.Name, req.Email)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"USER_PROFILE_UPDATED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to update profile: "+err.Error(),
+		)
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
 			writeError(w, model.ErrDuplicateEmail(req.Email))
 			return
@@ -146,6 +167,16 @@ func (h *UserHandler) UpdateUserProfile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, model.ErrInternal("Failed to update user profile."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"USER_PROFILE_UPDATED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Updated user profile",
+	)
 
 	writeJSON(w, http.StatusOK, user)
 }
@@ -160,18 +191,28 @@ func (h *UserHandler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 
 	err = h.userService.DeactivateUser(r.Context(), userID)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"USER_DEACTIVATED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to deactivate user: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to deactivate user."))
 		return
 	}
 
-	ipAddress := r.RemoteAddr
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		ipAddress = forwarded
-	}
-
-	// Default to system or caller email if available. User ID is known.
-	actorEmail := "admin@hpcr" // Can fetch properly from token if needed, keeping simple.
-	h.systemLogService.LogEvent(r.Context(), actorEmail, "USER_DEACTIVATED", "User: "+userID.String(), ipAddress, "SUCCESS", "Deactivated user account")
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"USER_DEACTIVATED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Deactivated user account",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "User deactivated successfully."})
 }
@@ -203,6 +244,15 @@ func (h *UserHandler) UpdateRoles(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.userService.UpdateRoles(r.Context(), userID, req.Roles, assignedBy)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"USER_ROLES_UPDATED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to update roles: "+err.Error(),
+		)
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, model.ErrUserNotFound(userID.String()))
 			return
@@ -210,6 +260,16 @@ func (h *UserHandler) UpdateRoles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, model.ErrInternal("Failed to update roles."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"USER_ROLES_UPDATED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Updated user roles",
+	)
 
 	writeJSON(w, http.StatusOK, user)
 }
@@ -257,9 +317,28 @@ func (h *UserHandler) CreateToken(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.userService.CreateToken(r.Context(), userID, req.Name)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"API_TOKEN_CREATED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to create API token: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to create token."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"API_TOKEN_CREATED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Created API token",
+	)
 
 	writeJSON(w, http.StatusCreated, result)
 }
@@ -279,9 +358,28 @@ func (h *UserHandler) RevokeToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.RevokeToken(r.Context(), userID, tokenID); err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"API_TOKEN_REVOKED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to revoke API token: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to revoke token."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"API_TOKEN_REVOKED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Revoked API token",
+	)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -312,6 +410,15 @@ func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) 
 
 	_, err = h.userService.RegisterPublicKey(r.Context(), userID, req.PublicKey)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"PUBLIC_KEY_REGISTERED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to register public key: "+err.Error(),
+		)
 		if strings.Contains(err.Error(), "invalid public key") {
 			writeError(w, model.ErrInvalidRequest(err.Error()))
 			return
@@ -319,6 +426,16 @@ func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) 
 		writeError(w, model.ErrInternal("Failed to register public key."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"PUBLIC_KEY_REGISTERED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Registered public key",
+	)
 
 	// Fetch the newly updated keys to get the registered and expiry dates assigned by the database layer.
 	_, fingerprintStr, registeredAt, expiresAt, _ := h.userService.GetPublicKey(r.Context(), userID)
@@ -410,9 +527,28 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.ChangePassword(r.Context(), userID, req.NewPassword); err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"PASSWORD_CHANGED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to change password: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to change password."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"PASSWORD_CHANGED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Changed password",
+	)
 
 	setupState, _ := h.userService.GetSetupState(r.Context(), userID)
 
@@ -437,6 +573,15 @@ func (h *UserHandler) ReactivateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.ReactivateUser(r.Context(), userID); err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"USER_REACTIVATED",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to reactivate user: "+err.Error(),
+		)
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, model.ErrUserNotFound(userID.String()))
 			return
@@ -445,12 +590,15 @@ func (h *UserHandler) ReactivateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ipAddress := r.RemoteAddr
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		ipAddress = forwarded
-	}
-
-	h.systemLogService.LogEvent(r.Context(), "admin", "USER_REACTIVATED", "User: "+userID.String(), ipAddress, "SUCCESS", "Reactivated user account")
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"USER_REACTIVATED",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Reactivated user account",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "User reactivated successfully.",
@@ -487,6 +635,15 @@ func (h *UserHandler) AdminResetPassword(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.userService.AdminResetPassword(r.Context(), userID, req.NewPassword); err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"ADMIN_PASSWORD_RESET",
+			"User: "+userID.String(),
+			"FAILED",
+			"Failed to reset password: "+err.Error(),
+		)
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, model.ErrUserNotFound(userID.String()))
 			return
@@ -495,12 +652,15 @@ func (h *UserHandler) AdminResetPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ipAddress := r.RemoteAddr
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		ipAddress = forwarded
-	}
-
-	h.systemLogService.LogEvent(r.Context(), "admin", "ADMIN_PASSWORD_RESET", "User: "+userID.String(), ipAddress, "SUCCESS", "Admin reset user password")
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"ADMIN_PASSWORD_RESET",
+		"User: "+userID.String(),
+		"SUCCESS",
+		"Admin reset user password",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Password reset successfully. User must change password on next login.",

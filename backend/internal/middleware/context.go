@@ -11,6 +11,7 @@ type contextKey string
 
 const (
 	userIDKey       contextKey = "user_id"
+	userEmailKey    contextKey = "user_email"
 	userRolesKey    contextKey = "user_roles"
 	tokenHashKey    contextKey = "token_hash"
 	setupNeededKey  contextKey = "setup_needed"
@@ -26,8 +27,9 @@ type AuthenticatedUser struct {
 }
 
 // SetAuthContext stores authentication information in the request context.
-func SetAuthContext(ctx context.Context, userID uuid.UUID, roles []string, tokenHash string, setupNeeded bool, setupPending []string) context.Context {
+func SetAuthContext(ctx context.Context, userID uuid.UUID, userEmail string, roles []string, tokenHash string, setupNeeded bool, setupPending []string) context.Context {
 	ctx = context.WithValue(ctx, userIDKey, userID)
+	ctx = context.WithValue(ctx, userEmailKey, userEmail)
 	ctx = context.WithValue(ctx, userRolesKey, roles)
 	ctx = context.WithValue(ctx, tokenHashKey, tokenHash)
 	ctx = context.WithValue(ctx, setupNeededKey, setupNeeded)
@@ -39,6 +41,15 @@ func SetAuthContext(ctx context.Context, userID uuid.UUID, roles []string, token
 func GetUserID(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(userIDKey).(uuid.UUID)
 	return id, ok
+}
+
+// GetUserEmail retrieves the authenticated user's email from the context.
+func GetUserEmail(ctx context.Context) string {
+	email, ok := ctx.Value(userEmailKey).(string)
+	if !ok {
+		return ""
+	}
+	return email
 }
 
 // GetUserRoles retrieves the authenticated user's roles from the context.

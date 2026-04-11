@@ -10,13 +10,15 @@ import (
 
 // RotationHandler handles credential rotation endpoints
 type RotationHandler struct {
-	rotationService *service.RotationService
+	rotationService  *service.RotationService
+	systemLogService *service.SystemLogService
 }
 
 // NewRotationHandler creates a new rotation handler
-func NewRotationHandler(rotationService *service.RotationService) *RotationHandler {
+func NewRotationHandler(rotationService *service.RotationService, systemLogService *service.SystemLogService) *RotationHandler {
 	return &RotationHandler{
-		rotationService: rotationService,
+		rotationService:  rotationService,
+		systemLogService: systemLogService,
 	}
 }
 
@@ -25,9 +27,28 @@ func NewRotationHandler(rotationService *service.RotationService) *RotationHandl
 func (h *RotationHandler) GetExpiredCredentials(w http.ResponseWriter, r *http.Request) {
 	report, err := h.rotationService.CheckExpiredCredentials(r.Context())
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"CREDENTIAL_ROTATION_CHECKED",
+			"Rotation",
+			"FAILED",
+			"Failed to check expired credentials: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to check expired credentials"))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"CREDENTIAL_ROTATION_CHECKED",
+		"Rotation",
+		"SUCCESS",
+		"Checked expired credentials",
+	)
 
 	writeJSON(w, http.StatusOK, report)
 }
@@ -43,9 +64,28 @@ func (h *RotationHandler) ForcePasswordChange(w http.ResponseWriter, r *http.Req
 
 	err := h.rotationService.ForcePasswordChange(r.Context(), userID)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"FORCE_PASSWORD_CHANGE",
+			"User: "+userID,
+			"FAILED",
+			"Failed to force password change: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to force password change"))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"FORCE_PASSWORD_CHANGE",
+		"User: "+userID,
+		"SUCCESS",
+		"Forced password change",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Password change forced successfully",
@@ -63,9 +103,28 @@ func (h *RotationHandler) RevokeExpiredPublicKey(w http.ResponseWriter, r *http.
 
 	err := h.rotationService.RevokeExpiredPublicKey(r.Context(), userID)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"PUBLIC_KEY_REVOKED",
+			"User: "+userID,
+			"FAILED",
+			"Failed to revoke public key: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to revoke public key"))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"PUBLIC_KEY_REVOKED",
+		"User: "+userID,
+		"SUCCESS",
+		"Revoked public key",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Public key revoked successfully",

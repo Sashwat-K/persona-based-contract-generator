@@ -16,14 +16,16 @@ type ExportHandler struct {
 	exportService       *service.ExportService
 	verificationService *service.VerificationService
 	userService         *service.UserService
+	systemLogService    *service.SystemLogService
 }
 
 // NewExportHandler creates a new ExportHandler.
-func NewExportHandler(exportService *service.ExportService, verificationService *service.VerificationService, userService *service.UserService) *ExportHandler {
+func NewExportHandler(exportService *service.ExportService, verificationService *service.VerificationService, userService *service.UserService, systemLogService *service.SystemLogService) *ExportHandler {
 	return &ExportHandler{
 		exportService:       exportService,
 		verificationService: verificationService,
 		userService:         userService,
+		systemLogService:    systemLogService,
 	}
 }
 
@@ -60,6 +62,15 @@ func (h *ExportHandler) ExportContract(w http.ResponseWriter, r *http.Request) {
 	// Export contract
 	output, err := h.exportService.ExportContract(ctx, buildID, userID)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"CONTRACT_EXPORTED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to export contract: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 		} else {
@@ -67,6 +78,16 @@ func (h *ExportHandler) ExportContract(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"CONTRACT_EXPORTED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Exported finalized contract",
+	)
 
 	writeJSON(w, http.StatusOK, output)
 }
@@ -139,10 +160,19 @@ func (h *ExportHandler) AcknowledgeDownload(w http.ResponseWriter, r *http.Reque
 		UserID:         userID,
 		ContractHash:   req.ContractHash,
 		Signature:      req.Signature,
-		IPAddress:      r.RemoteAddr,
+		IPAddress:      requestIP(r),
 		ActorPublicKey: publicKey,
 	})
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"CONTRACT_DOWNLOAD_ACKNOWLEDGED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to acknowledge contract download: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 		} else {
@@ -150,6 +180,16 @@ func (h *ExportHandler) AcknowledgeDownload(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"CONTRACT_DOWNLOAD_ACKNOWLEDGED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Acknowledged contract download",
+	)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -187,6 +227,15 @@ func (h *ExportHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
 	// Get userdata
 	output, err := h.exportService.GetUserData(ctx, buildID, userID)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"CONTRACT_USERDATA_FETCHED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to get userdata: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 		} else {
@@ -194,6 +243,16 @@ func (h *ExportHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"CONTRACT_USERDATA_FETCHED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Fetched contract userdata",
+	)
 
 	writeJSON(w, http.StatusOK, output)
 }
@@ -223,6 +282,15 @@ func (h *ExportHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request)
 	// Verify audit chain
 	result, err := h.verificationService.VerifyBuildAuditChain(ctx, buildID)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"AUDIT_CHAIN_VERIFIED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to verify audit chain: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 		} else {
@@ -230,6 +298,16 @@ func (h *ExportHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"AUDIT_CHAIN_VERIFIED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Verified audit chain",
+	)
 
 	writeJSON(w, http.StatusOK, result)
 }
@@ -259,6 +337,15 @@ func (h *ExportHandler) VerifyContractIntegrity(w http.ResponseWriter, r *http.R
 	// Verify contract integrity
 	result, err := h.verificationService.VerifyContractIntegrity(ctx, buildID)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"CONTRACT_INTEGRITY_VERIFIED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to verify contract integrity: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 		} else {
@@ -266,6 +353,16 @@ func (h *ExportHandler) VerifyContractIntegrity(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"CONTRACT_INTEGRITY_VERIFIED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Verified contract integrity",
+	)
 
 	writeJSON(w, http.StatusOK, result)
 }

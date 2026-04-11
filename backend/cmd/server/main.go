@@ -64,17 +64,19 @@ func main() {
 	exportService := service.NewExportService(queries, auditService, assignmentService)
 	rotationService := service.NewRotationService(queries)
 	systemLogService := service.NewSystemLogService(queries)
+	middleware.SetSystemLogHook(systemLogService.LogEvent)
+	systemLogService.LogEvent(ctx, "system", "SERVER_STARTED", "Backend Server", cfg.ServerHost, "SUCCESS", "Server boot sequence completed")
 
 	// Initialize handlers
 	auditHandler := handler.NewAuditHandler(auditService)
-	assignmentHandler := handler.NewAssignmentHandler(assignmentService)
-	sectionHandler := handler.NewSectionHandler(sectionService)
-	buildHandler := handler.NewBuildHandler(buildService)
+	assignmentHandler := handler.NewAssignmentHandler(assignmentService, systemLogService)
+	sectionHandler := handler.NewSectionHandler(sectionService, systemLogService)
+	buildHandler := handler.NewBuildHandler(buildService, systemLogService)
 	authHandler := handler.NewAuthHandler(authService, systemLogService)
 	userHandler := handler.NewUserHandler(userService, systemLogService)
 	roleHandler := handler.NewRoleHandler(roleService)
-	exportHandler := handler.NewExportHandler(exportService, verificationService, userService)
-	rotationHandler := handler.NewRotationHandler(rotationService)
+	exportHandler := handler.NewExportHandler(exportService, verificationService, userService, systemLogService)
+	rotationHandler := handler.NewRotationHandler(rotationService, systemLogService)
 	swaggerHandler := handler.NewSwaggerHandler()
 	systemLogHandler := handler.NewSystemLogHandler(systemLogService)
 
@@ -115,16 +117,19 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	slog.Info("shutting down server", "signal", sig.String())
+	systemLogService.LogEvent(ctx, "system", "SERVER_SHUTDOWN_INITIATED", "Backend Server", cfg.ServerHost, "SUCCESS", "Shutdown signal received: "+sig.String())
 
 	// Graceful shutdown with 30-second timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
+		systemLogService.LogEvent(ctx, "system", "SERVER_SHUTDOWN", "Backend Server", cfg.ServerHost, "FAILED", "Graceful shutdown failed: "+err.Error())
 		slog.Error("server forced to shutdown", "error", err)
 		os.Exit(1)
 	}
 
+	systemLogService.LogEvent(ctx, "system", "SERVER_SHUTDOWN", "Backend Server", cfg.ServerHost, "SUCCESS", "Server stopped gracefully")
 	slog.Info("server stopped gracefully")
 }
 

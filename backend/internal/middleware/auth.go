@@ -19,12 +19,30 @@ func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handl
 			// Extract Bearer token from Authorization header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
+				emitSystemLog(
+					r.Context(),
+					"unknown",
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"Missing Authorization header",
+				)
 				writeUnauthorized(w)
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				emitSystemLog(
+					r.Context(),
+					"unknown",
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"Invalid Authorization header format",
+				)
 				writeUnauthorized(w)
 				return
 			}
@@ -34,17 +52,44 @@ func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handl
 			tokenHash := service.HashToken(rawToken)
 			token, err := queries.GetAPITokenByHash(r.Context(), tokenHash)
 			if err != nil {
+				emitSystemLog(
+					r.Context(),
+					"unknown",
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"Token lookup failed",
+				)
 				writeUnauthorized(w)
 				return
 			}
 
 			// Check if token is revoked
 			if token.RevokedAt.Valid {
+				emitSystemLog(
+					r.Context(),
+					"unknown",
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"Token revoked",
+				)
 				writeUnauthorized(w)
 				return
 			}
 			// Check if token is expired
 			if tokenExpiry > 0 && time.Now().After(token.CreatedAt.Add(tokenExpiry)) {
+				emitSystemLog(
+					r.Context(),
+					"unknown",
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"Token expired",
+				)
 				writeUnauthorized(w)
 				return
 			}
@@ -52,12 +97,30 @@ func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handl
 			// Load user
 			user, err := queries.GetUserByID(r.Context(), token.UserID)
 			if err != nil {
+				emitSystemLog(
+					r.Context(),
+					"unknown",
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"User lookup failed for token",
+				)
 				writeUnauthorized(w)
 				return
 			}
 
 			// Check if user is active
 			if !user.IsActive {
+				emitSystemLog(
+					r.Context(),
+					user.Email,
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"Inactive user",
+				)
 				writeUnauthorized(w)
 				return
 			}
@@ -66,6 +129,15 @@ func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handl
 			roles, err := queries.GetRolesByUserID(r.Context(), user.ID)
 			if err != nil {
 				slog.Error("failed to load user roles", "error", err, "user_id", user.ID)
+				emitSystemLog(
+					r.Context(),
+					user.Email,
+					"AUTH_REQUEST_DENIED",
+					"Authentication Middleware",
+					requestIP(r),
+					"FAILED",
+					"Failed to load user roles",
+				)
 				writeUnauthorized(w)
 				return
 			}
@@ -91,7 +163,7 @@ func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handl
 			}()
 
 			// Set auth context and continue
-			ctx := SetAuthContext(r.Context(), user.ID, roleStrings, tokenHash, setupRequired, setupPending)
+			ctx := SetAuthContext(r.Context(), user.ID, user.Email, roleStrings, tokenHash, setupRequired, setupPending)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

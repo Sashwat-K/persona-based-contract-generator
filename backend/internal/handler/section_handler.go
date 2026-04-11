@@ -13,12 +13,16 @@ import (
 
 // SectionHandler handles build section management endpoints.
 type SectionHandler struct {
-	sectionService *service.SectionService
+	sectionService   *service.SectionService
+	systemLogService *service.SystemLogService
 }
 
 // NewSectionHandler creates a new SectionHandler.
-func NewSectionHandler(sectionService *service.SectionService) *SectionHandler {
-	return &SectionHandler{sectionService: sectionService}
+func NewSectionHandler(sectionService *service.SectionService, systemLogService *service.SystemLogService) *SectionHandler {
+	return &SectionHandler{
+		sectionService:   sectionService,
+		systemLogService: systemLogService,
+	}
 }
 
 // submitSectionRequest is the JSON request body for POST /builds/{id}/sections.
@@ -78,14 +82,33 @@ func (h *SectionHandler) SubmitSection(w http.ResponseWriter, r *http.Request) {
 		SectionHash:           req.SectionHash,
 		Signature:             req.Signature,
 		ActorRoles:            middleware.GetUserRoles(r.Context()),
-		ActorIP:               r.RemoteAddr,
+		ActorIP:               requestIP(r),
 		RequestSignature:      sigPtr,
 		RequestSignatureHash:  sigHashPtr,
 	})
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"SECTION_SUBMITTED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to submit section: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal(err.Error()))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"SECTION_SUBMITTED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Submitted section for role "+req.PersonaRole,
+	)
 
 	writeJSON(w, http.StatusCreated, section)
 }

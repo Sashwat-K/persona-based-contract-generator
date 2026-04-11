@@ -80,13 +80,22 @@ func (rl *RateLimiter) Limit() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Get client IP
-			ip := r.RemoteAddr
+			ip := requestIP(r)
 
 			// Get rate limiter for this IP
 			limiter := rl.getVisitor(ip)
 
 			// Check if request is allowed
 			if !limiter.Allow() {
+				emitSystemLog(
+					r.Context(),
+					actorEmailFromContext(r, "unknown"),
+					"RATE_LIMIT_EXCEEDED",
+					"Rate Limiter",
+					ip,
+					"FAILED",
+					"Request blocked due to rate limiting",
+				)
 				http.Error(w, "Rate limit exceeded. Please try again later.", http.StatusTooManyRequests)
 				return
 			}

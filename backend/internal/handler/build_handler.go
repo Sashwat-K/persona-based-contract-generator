@@ -14,12 +14,16 @@ import (
 
 // BuildHandler handles build management endpoints.
 type BuildHandler struct {
-	buildService *service.BuildService
+	buildService     *service.BuildService
+	systemLogService *service.SystemLogService
 }
 
 // NewBuildHandler creates a new BuildHandler.
-func NewBuildHandler(buildService *service.BuildService) *BuildHandler {
-	return &BuildHandler{buildService: buildService}
+func NewBuildHandler(buildService *service.BuildService, systemLogService *service.SystemLogService) *BuildHandler {
+	return &BuildHandler{
+		buildService:     buildService,
+		systemLogService: systemLogService,
+	}
 }
 
 // createBuildRequest is the JSON request body for POST /builds.
@@ -61,9 +65,28 @@ func (h *BuildHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 
 	build, err := h.buildService.CreateBuild(r.Context(), req.Name, actorID, ip, sigPtr, sigHashPtr)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"BUILD_CREATED",
+			"Build Management",
+			"FAILED",
+			"Failed to create build: "+err.Error(),
+		)
 		writeError(w, model.ErrInternal("Failed to create build."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"BUILD_CREATED",
+		"Build: "+build.ID.String(),
+		"SUCCESS",
+		"Created build "+build.Name,
+	)
 
 	writeJSON(w, http.StatusCreated, build)
 }
@@ -154,6 +177,15 @@ func (h *BuildHandler) TransitionStatus(w http.ResponseWriter, r *http.Request) 
 
 	err = h.buildService.TransitionStatus(r.Context(), buildID, newStatus, actorID, ip, roles, sigPtr, sigHashPtr)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"BUILD_STATUS_CHANGED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed transition to "+req.Status+": "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 			return
@@ -161,6 +193,16 @@ func (h *BuildHandler) TransitionStatus(w http.ResponseWriter, r *http.Request) 
 		writeError(w, model.ErrInternal("Failed to transition status."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"BUILD_STATUS_CHANGED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Transitioned build to "+req.Status,
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": req.Status})
 }
@@ -192,6 +234,15 @@ func (h *BuildHandler) FinalizeBuild(w http.ResponseWriter, r *http.Request) {
 
 	err = h.buildService.FinalizeBuild(r.Context(), buildID, req.ContractHash, req.ContractYaml, actorID, ip, req.Signature, req.PublicKey)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"BUILD_FINALIZED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to finalize build: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 			return
@@ -199,6 +250,16 @@ func (h *BuildHandler) FinalizeBuild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, model.ErrInternal("Failed to finalize build."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"BUILD_FINALIZED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Finalized build",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "FINALIZED"})
 }
@@ -237,6 +298,15 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 			current == model.StatusContractAssembled ||
 			current == model.StatusFinalized ||
 			current == model.StatusContractDownloaded {
+			logSystemEvent(
+				h.systemLogService,
+				r,
+				"unknown",
+				"AUDITOR_KEYS_REGISTERED",
+				"Build: "+buildID.String(),
+				"SUCCESS",
+				"Attestation already registered; request treated as idempotent",
+			)
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"status":             current.String(),
 				"already_registered": true,
@@ -256,6 +326,15 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 		sigHashPtr,
 	)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"AUDITOR_KEYS_REGISTERED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to register attestation: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 			return
@@ -263,6 +342,16 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 		writeError(w, model.ErrInternal("Failed to register attestation."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"AUDITOR_KEYS_REGISTERED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Registered attestation / auditor keys",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "AUDITOR_KEYS_REGISTERED"})
 }
@@ -282,6 +371,15 @@ func (h *BuildHandler) CancelBuild(w http.ResponseWriter, r *http.Request) {
 	// Transition to Cancelled
 	err = h.buildService.TransitionStatus(r.Context(), buildID, model.StatusCancelled, actorID, ip, roles, nil, nil)
 	if err != nil {
+		logSystemEvent(
+			h.systemLogService,
+			r,
+			"unknown",
+			"BUILD_CANCELLED",
+			"Build: "+buildID.String(),
+			"FAILED",
+			"Failed to cancel build: "+err.Error(),
+		)
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
 			return
@@ -289,6 +387,16 @@ func (h *BuildHandler) CancelBuild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, model.ErrInternal("Failed to cancel build."))
 		return
 	}
+
+	logSystemEvent(
+		h.systemLogService,
+		r,
+		"unknown",
+		"BUILD_CANCELLED",
+		"Build: "+buildID.String(),
+		"SUCCESS",
+		"Cancelled build",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "CANCELLED"})
 }
