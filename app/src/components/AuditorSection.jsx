@@ -41,7 +41,7 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
   }, [buildId]);
 
   // Lock the form once attestation is complete (status advanced past ENVIRONMENT_STAGED)
-  const DONE_STATUSES = ['AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED'];
+  const DONE_STATUSES = ['AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED', 'CONTRACT_DOWNLOADED'];
   const [existingSection, setExistingSection] = useState(null);
   const [loadingSection, setLoadingSection] = useState(true);
   useEffect(() => {
@@ -495,7 +495,7 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
     'ENVIRONMENT_STAGED', 'AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED',
   ];
   const isCorrectStatus = AUDITOR_ACTIVE_STATUSES.includes(liveStatus);
-  const isTerminalLocked = ['FINALIZED', 'CANCELLED'].includes(liveStatus);
+  const isTerminalLocked = ['FINALIZED', 'CONTRACT_DOWNLOADED', 'CANCELLED'].includes(liveStatus);
   const isDisabled = !isCorrectStatus || isTerminalLocked;
 
   const certOptions = getCertsByPlatform(hpcrPlatformId);

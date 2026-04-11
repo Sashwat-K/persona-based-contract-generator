@@ -123,6 +123,8 @@ const BuildDetails = ({ build, onBack, userRole, advanceBuildState }) => {
                       <BuildAssignments
                         buildId={build.id}
                         buildStatus={currentStatus}
+                        userRole={userRole}
+                        onStatusUpdate={handleStatusUpdate}
                       />
                     )}
                     {(t.key === 'SOLUTION_PROVIDER' || t.key === 'DATA_OWNER' || t.key === 'AUDITOR') && (
@@ -141,7 +143,11 @@ const BuildDetails = ({ build, onBack, userRole, advanceBuildState }) => {
                       />
                     )}
                     {t.key === 'export' && (
-                      <ContractExport buildId={build.id} buildStatus={currentStatus} />
+                      <ContractExport
+                        buildId={build.id}
+                        buildStatus={currentStatus}
+                        onStatusUpdate={handleStatusUpdate}
+                      />
                     )}
                     {t.key === 'audit' && (
                       <AuditViewer buildId={build.id} userRole={userRole} />

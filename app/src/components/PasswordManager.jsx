@@ -69,7 +69,7 @@ const PasswordManager = () => {
   };
 
   return (
-    <Tile>
+    <Tile className="password-manager__tile">
       <div className="password-manager-header">
         <h3>Change Password</h3>
         <p className="password-manager-subtitle">

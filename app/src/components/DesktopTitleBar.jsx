@@ -7,6 +7,37 @@ const CONNECTION_POLL_INTERVAL_MS = 15000;
 const CONNECTION_TIMEOUT_MS = 5000;
 
 const normalizeServerUrl = (value = '') => value.trim().replace(/\/+$/, '');
+const extractVersionToken = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Unknown';
+
+  const semanticMatch = raw.match(/\b\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?\b/);
+  if (semanticMatch?.[0]) return semanticMatch[0];
+
+  return raw.split(/\s+/)[0] || raw;
+};
+
+const normalizeContractCliVersion = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Unknown';
+
+  const match = raw.match(/^contract-cli\s+version\s+(.+)$/i);
+  if (match?.[1]) return extractVersionToken(match[1]);
+
+  return extractVersionToken(raw);
+};
+
+const normalizeOpenSSLVersion = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Unknown';
+
+  const match = raw.match(/^openssl\s+([^\s]+)/i);
+  if (match?.[1]) return match[1].trim();
+
+  const parts = raw.split(/\s+/);
+  if (parts.length >= 2) return parts[1];
+  return raw;
+};
 
 const DesktopTitleBar = ({
   title = 'IBM CC Contract Builder',
@@ -299,9 +330,7 @@ const DesktopTitleBar = ({
                   <span>Status</span>
                   <span>{aboutDetails.contractCli?.installed ? 'Installed' : 'Not detected'}</span>
                   <span>Version</span>
-                  <span>{aboutDetails.contractCli?.version || 'Unknown'}</span>
-                  <span>Command</span>
-                  <span>{aboutDetails.contractCli?.command || 'contract-cli --version'}</span>
+                  <span>{normalizeContractCliVersion(aboutDetails.contractCli?.version)}</span>
                   <span>Details</span>
                   <span>{aboutDetails.contractCli?.details || 'No details available'}</span>
                 </div>
@@ -313,9 +342,7 @@ const DesktopTitleBar = ({
                   <span>Status</span>
                   <span>{aboutDetails.openssl?.installed ? 'Installed' : 'Not detected'}</span>
                   <span>Version</span>
-                  <span>{aboutDetails.openssl?.version || 'Unknown'}</span>
-                  <span>Command</span>
-                  <span>{aboutDetails.openssl?.command || 'openssl version'}</span>
+                  <span>{normalizeOpenSSLVersion(aboutDetails.openssl?.version)}</span>
                   <span>Details</span>
                   <span>{aboutDetails.openssl?.details || 'No details available'}</span>
                 </div>

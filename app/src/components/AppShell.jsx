@@ -148,16 +148,13 @@ const AppShell = ({
           className="app-shell-sidenav"
         >
           <SideNavItems className="app-shell-sidenav-items">
-            {/* Home - visible to all users except pure VIEWERs */}
-            {activeRole !== 'VIEWER' && (
-              <SideNavMenuItem
-                isActive={activeNav === 'HOME'}
-                onClick={() => setActiveNav('HOME')}
-              >
-                <Home size={16} className="app-shell-nav-icon" />
-                Home
-              </SideNavMenuItem>
-            )}
+            <SideNavMenuItem
+              isActive={activeNav === 'HOME'}
+              onClick={() => setActiveNav('HOME')}
+            >
+              <Home size={16} className="app-shell-nav-icon" />
+              Home
+            </SideNavMenuItem>
             
             {/* Build Management - visible to all users */}
             <SideNavMenuItem

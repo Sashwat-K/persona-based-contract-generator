@@ -10,15 +10,12 @@ import {
   ProgressBar
 } from '@carbon/react';
 import {
-  Download,
   DocumentExport,
   CheckmarkFilled,
-  WarningAlt,
   View,
-  Save
+  Information
 } from '@carbon/icons-react';
 import { useBuildStore } from '../store/buildStore';
-import { useAuthStore } from '../store/authStore';
 import exportService from '../services/exportService';
 import verificationService from '../services/verificationService';
 import { formatDate } from '../utils/formatters';
@@ -28,8 +25,7 @@ import { formatDate } from '../utils/formatters';
  * Handles contract export, preview, and download acknowledgment
  * Features: Export button, YAML preview, download with signature, verification
  */
-const ContractExport = ({ buildId, buildStatus }) => {
-  const { user } = useAuthStore();
+const ContractExport = ({ buildId, buildStatus, onStatusUpdate }) => {
   const { getBuildExportData } = useBuildStore();
 
   const [loading, setLoading] = useState(false);
@@ -44,9 +40,16 @@ const ContractExport = ({ buildId, buildStatus }) => {
   // Verification state
   const [verificationResult, setVerificationResult] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [showVerifyInfo, setShowVerifyInfo] = useState(false);
+  const [downloadLocked, setDownloadLocked] = useState(buildStatus === 'CONTRACT_DOWNLOADED');
 
-  // Export only available when build is FINALIZED (contract exists)
-  const buildComplete = buildStatus === 'FINALIZED';
+  // Export only available when build is FINALIZED and not already downloaded.
+  const buildFinalized = buildStatus === 'FINALIZED';
+  const buildDownloaded = buildStatus === 'CONTRACT_DOWNLOADED';
+
+  useEffect(() => {
+    setDownloadLocked(buildStatus === 'CONTRACT_DOWNLOADED');
+  }, [buildStatus]);
 
   useEffect(() => {
     // Load cached export data if available
@@ -54,7 +57,7 @@ const ContractExport = ({ buildId, buildStatus }) => {
     if (cached) {
       setExportData(cached);
     }
-  }, [buildId]);
+  }, [buildId, getBuildExportData]);
 
   const handleExport = async () => {
     setLoading(true);
@@ -68,6 +71,12 @@ const ContractExport = ({ buildId, buildStatus }) => {
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
+      if (err?.message?.toLowerCase().includes('already been downloaded')) {
+        setDownloadLocked(true);
+        onStatusUpdate?.('CONTRACT_DOWNLOADED');
+        setSuccess('Contract already downloaded and acknowledged. Re-download is disabled.');
+        return;
+      }
       setError(`Failed to export contract: ${err.message}`);
     } finally {
       setLoading(false);
@@ -99,6 +108,8 @@ const ContractExport = ({ buildId, buildStatus }) => {
       );
 
       setSuccess(`Contract saved to: ${result.path}`);
+      setDownloadLocked(true);
+      onStatusUpdate?.('CONTRACT_DOWNLOADED');
       setIsPreviewOpen(false);
 
       // Clear success message after 5 seconds
@@ -111,11 +122,6 @@ const ContractExport = ({ buildId, buildStatus }) => {
   };
 
   const handleVerify = async () => {
-    if (!exportData) {
-      setError('No export data available. Please export first.');
-      return;
-    }
-
     setIsVerifying(true);
     setError(null);
 
@@ -140,7 +146,15 @@ const ContractExport = ({ buildId, buildStatus }) => {
   };
 
   const getExportStatus = () => {
-    if (!buildComplete) {
+    if (downloadLocked || buildDownloaded) {
+      return {
+        canExport: false,
+        message: 'Contract already downloaded and acknowledged. Re-download is disabled.',
+        severity: 'warning'
+      };
+    }
+
+    if (!buildFinalized) {
       return {
         canExport: false,
         message: `Build must be FINALIZED before export. Current status: ${buildStatus || 'unknown'}.`,
@@ -286,14 +300,24 @@ const ContractExport = ({ buildId, buildStatus }) => {
             Preview
           </Button>
 
-          <Button
-            kind="tertiary"
-            renderIcon={CheckmarkFilled}
-            onClick={handleVerify}
-            disabled={!exportData || isVerifying}
-          >
-            {isVerifying ? 'Verifying...' : 'Verify'}
-          </Button>
+          <div className="contract-export__verify-actions">
+            <Button
+              kind="tertiary"
+              renderIcon={CheckmarkFilled}
+              onClick={handleVerify}
+              disabled={isVerifying}
+            >
+              {isVerifying ? 'Verifying...' : 'Verify'}
+            </Button>
+            <Button
+              kind="ghost"
+              size="md"
+              hasIconOnly
+              renderIcon={Information}
+              iconDescription="How contract verification works"
+              onClick={() => setShowVerifyInfo(true)}
+            />
+          </div>
         </div>
       </Tile>
 
@@ -335,14 +359,18 @@ const ContractExport = ({ buildId, buildStatus }) => {
                   <span className="contract-export__info-value">{buildId}</span>
                 </div>
                 <div className="contract-export__info-item">
-                  <span className="contract-export__info-label">Hash:</span>
-                  <CodeSnippet type="inline" feedback="Copied">
-                    {exportData.contract_hash}
-                  </CodeSnippet>
-                </div>
-                <div className="contract-export__info-item">
                   <span className="contract-export__info-label">Sections:</span>
                   <span className="contract-export__info-value">{exportData.sections?.length || 0}</span>
+                </div>
+                <div className="contract-export__info-item contract-export__info-item--hash">
+                  <span className="contract-export__info-label">Hash:</span>
+                  <CodeSnippet
+                    type="single"
+                    feedback="Copied"
+                    className="contract-export__hash-snippet"
+                  >
+                    {exportData.contract_hash}
+                  </CodeSnippet>
                 </div>
               </div>
             </div>
@@ -385,6 +413,50 @@ const ContractExport = ({ buildId, buildStatus }) => {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={showVerifyInfo}
+        passiveModal
+        modalHeading="How Verify Works"
+        onRequestClose={() => setShowVerifyInfo(false)}
+      >
+        <div className="contract-export__verify-info">
+          <p>
+            The <strong>Verify</strong> button runs backend integrity checks for this exported contract.
+          </p>
+          <div className="contract-export__verify-info-meta">
+            <div>
+              <strong>Build:</strong> <code>{buildId}</code>
+            </div>
+            {exportData?.contract_hash && (
+              <div>
+                <strong>Contract hash:</strong>{' '}
+                <code>{`${exportData.contract_hash.substring(0, 16)}...`}</code>
+              </div>
+            )}
+          </div>
+          <ol>
+            <li>
+              Backend confirms the build is in a valid terminal state (finalized or downloaded) and contract data exists.
+            </li>
+            <li>
+              It recalculates SHA-256 from stored contract YAML and compares it with saved
+              <code> contract_hash</code>.
+            </li>
+            <li>
+              It finds the <code>BUILD_FINALIZED</code> audit event and verifies its signature against
+              the auditor&apos;s registered public key.
+            </li>
+            <li>
+              If all checks pass, you see <strong>Verification Passed</strong> and
+              <strong> Contract integrity verified successfully</strong>.
+            </li>
+          </ol>
+          <p>
+            If any check fails, the result shows the exact failure reason so the issue can be investigated.
+          </p>
+        </div>
       </Modal>
     </div>
   );

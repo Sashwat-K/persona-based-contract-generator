@@ -196,8 +196,13 @@ const AdminAnalytics = () => {
   }).length, [users]);
 
   const activeBuilds = useMemo(
-    () => builds.filter((b) => b.status !== 'FINALIZED' && b.status !== 'CANCELLED').length,
+    () => builds.filter((b) => !['FINALIZED', 'CONTRACT_DOWNLOADED', 'CANCELLED'].includes(b.status)).length,
     [builds]
+  );
+
+  const completedContracts = useMemo(
+    () => (buildStatusCount['FINALIZED'] || 0) + (buildStatusCount['CONTRACT DOWNLOADED'] || 0),
+    [buildStatusCount]
   );
 
   const activeUsers = useMemo(() => users.filter((u) => u.is_active).length, [users]);
@@ -264,8 +269,8 @@ const AdminAnalytics = () => {
                 </Column>
                 <Column lg={4}>
                   <Tile className="analytics-kpi-tile">
-                    <h3 className="analytics-kpi-title">Finalized Contracts</h3>
-                    <h1 className="analytics-kpi-value">{buildStatusCount['FINALIZED'] || 0}</h1>
+                    <h3 className="analytics-kpi-title">Completed Contracts</h3>
+                    <h1 className="analytics-kpi-value">{completedContracts}</h1>
                   </Tile>
                 </Column>
                 <Column lg={4}>

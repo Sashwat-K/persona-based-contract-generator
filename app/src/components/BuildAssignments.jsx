@@ -9,6 +9,7 @@ import {
   TableBody,
   TableCell,
   Button,
+  Modal,
   InlineNotification,
   Tag,
 } from '@carbon/react';
@@ -28,13 +29,18 @@ import { formatDate } from '../utils/formatters';
  * Manages user-to-build-to-role assignments for two-layer access control
  * Features: Assignment table, creation dialog, deletion, validation
  */
-const BuildAssignments = ({ buildId, buildStatus }) => {
+const BuildAssignments = ({ buildId, buildStatus, userRole, onStatusUpdate }) => {
   const [assignments, setAssignments] = useState([]);
   const [sections, setSections] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  const isAdmin = userRole === 'ADMIN';
+  const canCancelBuild = isAdmin && !['FINALIZED', 'CONTRACT_DOWNLOADED', 'CANCELLED'].includes((buildStatus || '').toUpperCase());
 
   useEffect(() => {
     loadAssignments();
@@ -57,6 +63,25 @@ const BuildAssignments = ({ buildId, buildStatus }) => {
       setError(`Failed to load assignments: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCancelBuild = async () => {
+    if (!canCancelBuild || cancelling) return;
+
+    setCancelling(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await buildService.cancelBuild(buildId);
+      onStatusUpdate?.('CANCELLED');
+      setShowCancelModal(false);
+      setSuccess('Build cancelled successfully.');
+      await loadAssignments();
+    } catch (err) {
+      setError(`Failed to cancel build: ${err.message}`);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -87,7 +112,7 @@ const BuildAssignments = ({ buildId, buildStatus }) => {
     if (role === 'AUDITOR') {
       const auditorComplete =
         hasSubmittedSection ||
-        ['AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED'].includes(buildStatus);
+        ['AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED', 'CONTRACT_DOWNLOADED'].includes(buildStatus);
       if (auditorComplete) {
         return <Tag type="green" renderIcon={CheckmarkFilled}>Completed</Tag>;
       }
@@ -212,6 +237,16 @@ const BuildAssignments = ({ buildId, buildStatus }) => {
         >
           Refresh
         </Button>
+        {isAdmin && (
+          <Button
+            kind="danger--tertiary"
+            size="md"
+            onClick={() => setShowCancelModal(true)}
+            disabled={!canCancelBuild || cancelling}
+          >
+            Cancel Build
+          </Button>
+        )}
       </div>
 
       <DataTable rows={rows} headers={headers}>
@@ -248,6 +283,23 @@ const BuildAssignments = ({ buildId, buildStatus }) => {
           <p>No role assignments are currently configured for this build.</p>
         </div>
       )}
+
+      <Modal
+        open={showCancelModal}
+        danger
+        modalHeading="Cancel Build"
+        primaryButtonText={cancelling ? 'Cancelling...' : 'Cancel Build'}
+        secondaryButtonText="Close"
+        onRequestSubmit={handleCancelBuild}
+        onSecondarySubmit={() => setShowCancelModal(false)}
+        onRequestClose={() => setShowCancelModal(false)}
+        primaryButtonDisabled={cancelling || !canCancelBuild}
+      >
+        <p>
+          This action will cancel the build and stop any further stage submissions.
+          This cannot be undone.
+        </p>
+      </Modal>
     </div>
   );
 };

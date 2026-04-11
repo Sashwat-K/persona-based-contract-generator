@@ -46,6 +46,10 @@ const ASSIGNMENT_ROLE_LABELS = {
 };
 
 const EVENT_TYPES_REQUIRING_SIGNATURE = new Set([
+  'WORKLOAD_SUBMITTED',
+  'ENVIRONMENT_STAGED',
+  'AUDITOR_KEYS_REGISTERED',
+  'CONTRACT_ASSEMBLED',
   'BUILD_FINALIZED',
   'CONTRACT_DOWNLOADED',
 ]);
@@ -54,7 +58,9 @@ const VERIFIABLE_EVENT_TYPES = new Set([
   'WORKLOAD_SUBMITTED',
   'ENVIRONMENT_STAGED',
   'AUDITOR_KEYS_REGISTERED',
-  'BUILD_FINALIZED'
+  'CONTRACT_ASSEMBLED',
+  'BUILD_FINALIZED',
+  'CONTRACT_DOWNLOADED'
 ]);
 
 const STAGE_VERIFY_CONFIG = [
@@ -62,21 +68,28 @@ const STAGE_VERIFY_CONFIG = [
     eventType: 'WORKLOAD_SUBMITTED',
     title: 'Workload Submitted',
     description: 'Confirms the workload submission event is linked correctly in the audit chain.',
-    requiresSignature: false,
+    requiresSignature: true,
     personaRole: 'SOLUTION_PROVIDER'
   },
   {
     eventType: 'ENVIRONMENT_STAGED',
     title: 'Environment Staged',
     description: 'Confirms the environment stage event is linked correctly in the audit chain.',
-    requiresSignature: false,
+    requiresSignature: true,
     personaRole: 'DATA_OWNER'
   },
   {
     eventType: 'AUDITOR_KEYS_REGISTERED',
     title: 'Attestation Keys Registered',
     description: 'Confirms attestation key registration is linked correctly in the audit chain.',
-    requiresSignature: false,
+    requiresSignature: true,
+    personaRole: 'AUDITOR'
+  },
+  {
+    eventType: 'CONTRACT_ASSEMBLED',
+    title: 'Contract Assembled',
+    description: 'Confirms contract assembly is linked correctly in the audit chain and signature validation succeeds.',
+    requiresSignature: true,
     personaRole: 'AUDITOR'
   },
   {
@@ -85,6 +98,13 @@ const STAGE_VERIFY_CONFIG = [
     description: 'Confirms the finalization event is linked correctly and signature validation succeeds.',
     requiresSignature: true,
     personaRole: 'AUDITOR'
+  },
+  {
+    eventType: 'CONTRACT_DOWNLOADED',
+    title: 'Contract Downloaded',
+    description: 'Confirms contract download acknowledgment is linked correctly and signature validation succeeds.',
+    requiresSignature: true,
+    personaRole: 'ENV_OPERATOR'
   }
 ];
 
@@ -242,12 +262,8 @@ const AuditViewer = ({ buildId, userRole = 'VIEWER' }) => {
           stageEvent: null,
           previousEvent: null,
           hashLinkCheckCommand: buildHashLinkCheckCommand(null, null),
-          signatureCheckCommand: stage.requiresSignature
-            ? null
-            : 'This stage does not require a signature check.',
-          signatureCheckStatusMessage: stage.requiresSignature
-            ? 'This stage signature check will be available once the stage event is recorded.'
-            : 'This stage does not require a signature check.',
+          signatureCheckCommand: null,
+          signatureCheckStatusMessage: 'This stage signature check will be available once the stage event is recorded.',
         };
       }
 
@@ -270,7 +286,7 @@ const AuditViewer = ({ buildId, userRole = 'VIEWER' }) => {
             ? ''
             : 'No signature is present on this stage event. Signature verification cannot be completed.'
         )
-        : 'This stage does not require a signature check. Hash-link check is the expected manual validation.';
+        : 'Signature verification is not configured for this stage.';
 
       return {
         ...stage,
@@ -528,7 +544,7 @@ const AuditViewer = ({ buildId, userRole = 'VIEWER' }) => {
               </Tag>
             </div>
             <p className="audit-stage-guide__expectation">
-              {stage.requiresSignature ? 'Hash-chain + signature check' : 'Hash-chain check only'}
+              Hash-chain + signature check
             </p>
             <Button
               kind="ghost"
@@ -821,7 +837,7 @@ const AuditViewer = ({ buildId, userRole = 'VIEWER' }) => {
                 </div>
                 <div>
                   <strong>Signature expected:</strong>{' '}
-                  {selectedStageGuide.requiresSignature ? 'Yes' : 'No'}
+                  Yes
                 </div>
               </div>
 
@@ -835,32 +851,24 @@ const AuditViewer = ({ buildId, userRole = 'VIEWER' }) => {
                 {selectedStageGuide.hashLinkCheckCommand}
               </CodeSnippet>
 
-              {selectedStageGuide.requiresSignature ? (
-                <>
-                  <ol start={2}>
-                    <li>
-                      <strong>Validate this stage signature.</strong>{' '}
-                      If OpenSSL prints <code>Verified OK</code>, signature validation passed.
-                    </li>
-                  </ol>
-                  {selectedStageGuide.signatureCheckCommand ? (
-                    <CodeSnippet type="multi" feedback="Copied">
-                      {selectedStageGuide.signatureCheckCommand}
-                    </CodeSnippet>
-                  ) : (
-                    <InlineNotification
-                      kind="warning"
-                      title="Signature check unavailable"
-                      subtitle={selectedStageGuide.signatureCheckStatusMessage}
-                      lowContrast
-                      hideCloseButton
-                    />
-                  )}
-                </>
+              <ol start={2}>
+                <li>
+                  <strong>Validate this stage signature.</strong>{' '}
+                  If OpenSSL prints <code>Verified OK</code>, signature validation passed.
+                </li>
+              </ol>
+              {selectedStageGuide.signatureCheckCommand ? (
+                <CodeSnippet type="multi" feedback="Copied">
+                  {selectedStageGuide.signatureCheckCommand}
+                </CodeSnippet>
               ) : (
-                <p>
-                  {selectedStageGuide.signatureCheckStatusMessage}
-                </p>
+                <InlineNotification
+                  kind="warning"
+                  title="Signature check unavailable"
+                  subtitle={selectedStageGuide.signatureCheckStatusMessage}
+                  lowContrast
+                  hideCloseButton
+                />
               )}
             </>
           )}

@@ -15,7 +15,8 @@ import {
   SelectItem,
   Tag,
   Stack,
-  InlineNotification
+  InlineNotification,
+  Pagination
 } from '@carbon/react';
 import { Add, WarningAlt, Renew } from '@carbon/icons-react';
 import { BUILD_STATUS_CONFIG, ROLES } from '../utils/constants';
@@ -26,6 +27,9 @@ import assignmentService from '../services/assignmentService';
 import { InlineLoader } from '../components/LoadingSpinner';
 import { useAuthStore } from '../store/authStore';
 import { StatePanel } from '../components/StatePanel';
+
+const COMPLETED_BUILD_STATUSES = new Set(['CONTRACT_DOWNLOADED', 'CANCELLED']);
+const TABLE_PAGE_SIZES = [10, 20, 30, 50];
 
 const TABLE_HEADERS = [
   { key: 'name', header: 'Build Name' },
@@ -49,6 +53,17 @@ const EMPTY_ASSIGNMENTS = {
   [ROLES.ENV_OPERATOR]: ''
 };
 
+const normalizeUserRole = (role) => {
+  if (!role) return '';
+  if (typeof role === 'string') return role.toUpperCase();
+  return String(role.role_name || role.name || role).toUpperCase();
+};
+
+const userHasRole = (user, roleName) => {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  return roles.some((role) => normalizeUserRole(role) === roleName);
+};
+
 const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) => {
   const isAdmin = userRole === 'ADMIN';
   const isSetupRequired = useAuthStore((state) => state.isSetupRequired());
@@ -61,6 +76,10 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
   const [creating, setCreating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [activePage, setActivePage] = useState(1);
+  const [activePageSize, setActivePageSize] = useState(TABLE_PAGE_SIZES[0]);
+  const [completedPage, setCompletedPage] = useState(1);
+  const [completedPageSize, setCompletedPageSize] = useState(TABLE_PAGE_SIZES[0]);
 
   const loadUsers = useCallback(async () => {
     try {
@@ -82,30 +101,83 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
     }
   }, [createModalOpen, users.length, loadUsers]);
 
-  const rows = useMemo(() => builds.map(b => ({
+  const getBuildStatusMeta = useCallback((build) => {
+    const statusKey = (build.status || '').toUpperCase();
+    const statusConfig = BUILD_STATUS_CONFIG[statusKey] || BUILD_STATUS_CONFIG[build.status];
+    return {
+      kind: statusConfig?.kind || 'gray',
+      label: statusConfig?.label || statusKey || 'Unknown'
+    };
+  }, []);
+
+  const mapBuildRows = useCallback((list) => list.map((b) => ({
     id: b.id,
     name: b.name,
-    status: (
-      <Tag type={BUILD_STATUS_CONFIG[b.status]?.kind || 'gray'}>
-        {BUILD_STATUS_CONFIG[b.status]?.label || b.status}
-      </Tag>
-    ),
+    status: (() => {
+      const statusMeta = getBuildStatusMeta(b);
+      return (
+        <Tag type={statusMeta.kind}>
+          {statusMeta.label}
+        </Tag>
+      );
+    })(),
     createdBy: b.created_by || b.createdBy || 'Admin',
     createdAt: formatDate(b.created_at || b.createdAt),
     action: <Button size="sm" onClick={() => onSelectBuild(b.id)}>View Details</Button>
-  })), [builds, onSelectBuild]);
+  })), [getBuildStatusMeta, onSelectBuild]);
+
+  const activeBuilds = useMemo(
+    () => builds.filter((build) => !COMPLETED_BUILD_STATUSES.has((build.status || '').toUpperCase())),
+    [builds]
+  );
+  const completedBuilds = useMemo(
+    () => builds.filter((build) => COMPLETED_BUILD_STATUSES.has((build.status || '').toUpperCase())),
+    [builds]
+  );
+
+  const activeRows = useMemo(() => mapBuildRows(activeBuilds), [activeBuilds, mapBuildRows]);
+  const completedRows = useMemo(() => mapBuildRows(completedBuilds), [completedBuilds, mapBuildRows]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(activeRows.length / activePageSize));
+    if (activePage > maxPage) {
+      setActivePage(maxPage);
+    }
+  }, [activeRows.length, activePage, activePageSize]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(completedRows.length / completedPageSize));
+    if (completedPage > maxPage) {
+      setCompletedPage(maxPage);
+    }
+  }, [completedRows.length, completedPage, completedPageSize]);
+
+  const paginatedActiveRows = useMemo(() => {
+    const startIndex = (activePage - 1) * activePageSize;
+    return activeRows.slice(startIndex, startIndex + activePageSize);
+  }, [activeRows, activePage, activePageSize]);
+
+  const paginatedCompletedRows = useMemo(() => {
+    const startIndex = (completedPage - 1) * completedPageSize;
+    return completedRows.slice(startIndex, startIndex + completedPageSize);
+  }, [completedRows, completedPage, completedPageSize]);
 
   // Get users by role for assignment dropdowns
   const isUserReady = (u) =>
     u.is_active &&
+    !userHasRole(u, ROLES.ADMIN) &&
     !u.must_change_password &&
     u.public_key_fingerprint != null;
 
   // Show all ready users in every role dropdown — one person can cover multiple roles.
   // The build assignment (not system role) controls access per build.
   const readyUsers = useMemo(() => users.filter(isUserReady), [users]);
+  const excludedAdminCount = useMemo(
+    () => users.filter((u) => u.is_active && userHasRole(u, ROLES.ADMIN)).length,
+    [users]
+  );
   const notReadyCount = useMemo(
-    () => users.filter(u => u.is_active && !isUserReady(u)).length,
+    () => users.filter((u) => u.is_active && !userHasRole(u, ROLES.ADMIN) && !isUserReady(u)).length,
     [users]
   );
 
@@ -246,41 +318,111 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
           }
         />
       ) : (
-        <DataTable rows={rows} headers={TABLE_HEADERS}>
-          {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
-            <TableContainer
-              title="Contract Builds"
-              description="List of all encrypted userdata contract builds in the system."
-            >
-              <Table {...getTableProps()}>
-                <TableHead>
-                  <TableRow>
-                    {headers.map((header) => {
-                      const { key, ...headerProps } = getHeaderProps({ header });
-                      return (
-                        <TableHeader key={header.key} {...headerProps}>
-                          {header.header}
-                        </TableHeader>
-                      );
-                    })}
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {rows.map((row) => {
-                    const { key, ...rowProps } = getRowProps({ row });
-                    return (
-                      <TableRow key={row.id} {...rowProps}>
-                        {row.cells.map((cell) => (
-                          <TableCell key={cell.id}>{cell.value}</TableCell>
-                        ))}
+        <div className="build-management-table-stack">
+          {activeRows.length > 0 && (
+            <DataTable rows={paginatedActiveRows} headers={TABLE_HEADERS}>
+              {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
+                <TableContainer
+                  title="Active & In-Progress Builds"
+                  description="Builds that are still in progress or awaiting final actions."
+                >
+                  <Table {...getTableProps()}>
+                    <TableHead>
+                      <TableRow>
+                        {headers.map((header) => {
+                          const { key, ...headerProps } = getHeaderProps({ header });
+                          return (
+                            <TableHeader key={header.key} {...headerProps}>
+                              {header.header}
+                            </TableHeader>
+                          );
+                        })}
                       </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                    </TableHead>
+                    <TableBody>
+                      {rows.map((row) => {
+                        const { key, ...rowProps } = getRowProps({ row });
+                        return (
+                          <TableRow key={row.id} {...rowProps}>
+                            {row.cells.map((cell) => (
+                              <TableCell key={cell.id}>{cell.value}</TableCell>
+                            ))}
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+
+                  <div className="build-management-pagination">
+                    <Pagination
+                      page={activePage}
+                      pageSize={activePageSize}
+                      pageSizes={TABLE_PAGE_SIZES}
+                      totalItems={activeRows.length}
+                      size="sm"
+                      onChange={({ page, pageSize }) => {
+                        setActivePage(page);
+                        setActivePageSize(pageSize);
+                      }}
+                    />
+                  </div>
+                </TableContainer>
+              )}
+            </DataTable>
           )}
-        </DataTable>
+
+          {completedRows.length > 0 && (
+            <DataTable rows={paginatedCompletedRows} headers={TABLE_HEADERS}>
+              {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
+                <TableContainer
+                  title="Completed Builds"
+                  description="Downloaded and cancelled builds."
+                >
+                  <Table {...getTableProps()}>
+                    <TableHead>
+                      <TableRow>
+                        {headers.map((header) => {
+                          const { key, ...headerProps } = getHeaderProps({ header });
+                          return (
+                            <TableHeader key={header.key} {...headerProps}>
+                              {header.header}
+                            </TableHeader>
+                          );
+                        })}
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {rows.map((row) => {
+                        const { key, ...rowProps } = getRowProps({ row });
+                        return (
+                          <TableRow key={row.id} {...rowProps}>
+                            {row.cells.map((cell) => (
+                              <TableCell key={cell.id}>{cell.value}</TableCell>
+                            ))}
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+
+                  <div className="build-management-pagination">
+                    <Pagination
+                      page={completedPage}
+                      pageSize={completedPageSize}
+                      pageSizes={TABLE_PAGE_SIZES}
+                      totalItems={completedRows.length}
+                      size="sm"
+                      onChange={({ page, pageSize }) => {
+                        setCompletedPage(page);
+                        setCompletedPageSize(pageSize);
+                      }}
+                    />
+                  </div>
+                </TableContainer>
+              )}
+            </DataTable>
+          )}
+        </div>
       )}
 
       {/* Create Build Modal */}
@@ -332,10 +474,17 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
             ) : (
               <Stack gap={5}>
               {BUILD_ASSIGNMENT_FIELDS.map(({ role, id, label }) => {
-                const helperText = notReadyCount > 0
-                  ? `${notReadyCount} user(s) excluded — pending initial login or public key registration.`
+                const helperText = (notReadyCount > 0 || excludedAdminCount > 0)
+                  ? [
+                    notReadyCount > 0
+                      ? `${notReadyCount} user(s) excluded — pending initial login, password reset, or public key registration`
+                      : null,
+                    excludedAdminCount > 0
+                      ? `${excludedAdminCount} admin user(s) excluded — admin cannot be assigned to persona roles`
+                      : null
+                  ].filter(Boolean).join('; ')
                   : readyUsers.length === 0
-                  ? 'No eligible users. Users must complete initial login and register a public key.'
+                  ? 'No eligible users. Users must complete initial setup and must not have ADMIN role.'
                   : undefined;
 
                 return (

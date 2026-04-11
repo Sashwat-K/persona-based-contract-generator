@@ -86,7 +86,7 @@ function App() {
     setUserRoles(roles);
     setUserRole(effectiveRole);
     setActivePersona(ROLE_PERSONA_MAP[effectiveRole] || PERSONAS.ADMIN);
-    setActiveNav(effectiveRole === 'VIEWER' && roles.length === 1 ? 'BUILDS' : 'HOME');
+    setActiveNav('HOME');
     setUserEmail(email || '');
   }, []);
 
@@ -152,8 +152,8 @@ function App() {
         (activeNav === 'USERS' && !canAccessUsers) ||
         (activeNav === 'LOGS' && !canAccessLogs);
 
-      if (blockedAdminPage || (activeNav === 'HOME' && nextRole === 'VIEWER')) {
-        setActiveNav(nextRole === 'VIEWER' ? 'BUILDS' : 'HOME');
+      if (blockedAdminPage) {
+        setActiveNav('HOME');
       }
     };
 
@@ -192,12 +192,6 @@ function App() {
       setActiveNav('SETTINGS');
     }
   }, [setupRequired, activeNav]);
-
-  useEffect(() => {
-    if (activeNav === 'HOME' && userRoles.length <= 1 && userRole === 'VIEWER') {
-      setActiveNav('BUILDS');
-    }
-  }, [activeNav, userRole, userRoles]);
 
   useEffect(() => {
     if (!isBooting) return;
@@ -253,14 +247,13 @@ function App() {
     const canAccessAnalytics = nextRole === 'ADMIN';
     const canAccessUsers = nextRole === 'ADMIN';
     const canAccessLogs = nextRole === 'ADMIN' || nextRole === 'AUDITOR';
-    const shouldMoveToBuilds = activeNav === 'HOME' && nextRole === 'VIEWER';
     const blockedAdminPage =
       (activeNav === 'ANALYTICS' && !canAccessAnalytics) ||
       (activeNav === 'USERS' && !canAccessUsers) ||
       (activeNav === 'LOGS' && !canAccessLogs);
 
-    if (shouldMoveToBuilds || blockedAdminPage) {
-      setActiveNav(nextRole === 'VIEWER' ? 'BUILDS' : 'HOME');
+    if (blockedAdminPage) {
+      setActiveNav('HOME');
     }
   }, [activeNav, userRoles]);
 

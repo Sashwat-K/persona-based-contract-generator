@@ -4,7 +4,9 @@ export const BUILD_STATUS = {
   WORKLOAD_SUBMITTED: 'WORKLOAD_SUBMITTED',
   ENVIRONMENT_STAGED: 'ENVIRONMENT_STAGED',
   AUDITOR_KEYS_REGISTERED: 'AUDITOR_KEYS_REGISTERED',
+  CONTRACT_ASSEMBLED: 'CONTRACT_ASSEMBLED',
   FINALIZED: 'FINALIZED',
+  CONTRACT_DOWNLOADED: 'CONTRACT_DOWNLOADED',
   CANCELLED: 'CANCELLED'
 };
 
@@ -30,10 +32,20 @@ export const BUILD_STATUS_CONFIG = {
     kind: 'teal',
     description: 'Auditor keys registered, ready for finalization'
   },
+  [BUILD_STATUS.CONTRACT_ASSEMBLED]: {
+    label: 'Contract Assembled',
+    kind: 'cyan',
+    description: 'Contract assembled, awaiting finalization signature'
+  },
   [BUILD_STATUS.FINALIZED]: {
     label: 'Finalized',
     kind: 'green',
     description: 'Contract finalized and ready for deployment'
+  },
+  [BUILD_STATUS.CONTRACT_DOWNLOADED]: {
+    label: 'Downloaded',
+    kind: 'teal',
+    description: 'Contract downloaded and acknowledgment signed'
   },
   [BUILD_STATUS.CANCELLED]: {
     label: 'Cancelled',
@@ -221,5 +233,4 @@ export const SUCCESS_MESSAGES = {
   USER_CREATED: 'User created successfully',
   SETTINGS_SAVED: 'Settings saved successfully'
 };
-
 

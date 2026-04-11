@@ -27,6 +27,8 @@ const ALERT_CLASS_BY_TYPE = {
   info: 'home-alert-item--info'
 };
 
+const TERMINAL_BUILD_STATUSES = new Set(['CONTRACT_DOWNLOADED', 'CANCELLED']);
+
 const BUILD_ACTION_RULES = [
   {
     role: 'SOLUTION_PROVIDER',
@@ -69,33 +71,64 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   const isPasswordExpired = useAuthStore((state) => state.isPasswordExpired());
   const isSetupRequired = useAuthStore((state) => state.isSetupRequired());
   const mustChangePassword = useAuthStore((state) => state.mustChangePassword);
+  const lastPasswordChange = useAuthStore((state) =>
+    state.lastPasswordChange || state.user?.password_changed_at || null
+  );
 
   const [myBuilds, setMyBuilds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const isViewer = userRole === 'VIEWER';
 
   const defaultUserName = useMemo(() => {
     const localPart = (userEmail || '').split('@')[0];
     return localPart || 'User';
   }, [userEmail]);
 
+  const getDaysUntil = useCallback((dateValue) => {
+    if (!dateValue) return null;
+    return Math.ceil((new Date(dateValue) - new Date()) / (1000 * 60 * 60 * 24));
+  }, []);
+
+  const passwordExpiresAt = useMemo(() => {
+    const explicitExpiry = authUser?.password_expires_at;
+    if (explicitExpiry) return explicitExpiry;
+    if (!lastPasswordChange) return null;
+
+    const expiry = new Date(lastPasswordChange);
+    expiry.setDate(expiry.getDate() + 90);
+    return expiry.toISOString();
+  }, [authUser?.password_expires_at, lastPasswordChange]);
+
   // Prepare current user data from authStore
-  const currentUser = useMemo(() => ({
-    name: authUser?.full_name || authUser?.name || defaultUserName,
-    email: authUser?.email || userEmail,
-    role: userRole,
-    keyStatus: !(publicKeyExpiry || authUser?.public_key_fingerprint) ? 'Not Registered' : (isKeyExpired ? 'Expired' : 'Active'),
-    keyExpiresAt: publicKeyExpiry || null,
-    passwordExpired: mustChangePassword || isPasswordExpired
-  }), [
+  const currentUser = useMemo(() => {
+    const keyDaysUntilExpiry = getDaysUntil(publicKeyExpiry || null);
+    const passwordDaysUntilExpiry = getDaysUntil(passwordExpiresAt);
+
+    return {
+      name: authUser?.full_name || authUser?.name || defaultUserName,
+      email: authUser?.email || userEmail,
+      role: userRole,
+      keyStatus: !(publicKeyExpiry || authUser?.public_key_fingerprint) ? 'Not Registered' : (isKeyExpired ? 'Expired' : 'Active'),
+      keyExpiresAt: publicKeyExpiry || null,
+      keyDaysUntilExpiry,
+      passwordLastChangedAt: lastPasswordChange,
+      passwordExpiresAt,
+      passwordDaysUntilExpiry,
+      passwordExpired: mustChangePassword || isPasswordExpired || (passwordDaysUntilExpiry != null && passwordDaysUntilExpiry <= 0)
+    };
+  }, [
     authUser,
     defaultUserName,
     userEmail,
     userRole,
     publicKeyExpiry,
     isKeyExpired,
+    lastPasswordChange,
+    passwordExpiresAt,
     mustChangePassword,
-    isPasswordExpired
+    isPasswordExpired,
+    getDaysUntil
   ]);
 
   const loadBuilds = useCallback(async ({ showLoader = false } = {}) => {
@@ -201,6 +234,20 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
     return nextActions;
   }, [myBuilds, userRole]);
 
+  const buildOverview = useMemo(() => {
+    const normalizedStatuses = myBuilds.map((build) => (build.status || '').toUpperCase());
+    const inProgress = normalizedStatuses.filter((status) => !TERMINAL_BUILD_STATUSES.has(status)).length;
+    const downloaded = normalizedStatuses.filter((status) => status === 'CONTRACT_DOWNLOADED').length;
+    const cancelled = normalizedStatuses.filter((status) => status === 'CANCELLED').length;
+
+    return {
+      total: myBuilds.length,
+      inProgress,
+      downloaded,
+      cancelled
+    };
+  }, [myBuilds]);
+
   // Get status color and icon
   const getStatusDisplay = useCallback((status) => {
     if (status === 'Active') {
@@ -216,7 +263,17 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   const keyStatusDisplay = getStatusDisplay(currentUser.keyStatus);
   const passwordStatusDisplay = currentUser.passwordExpired
     ? { color: 'red', icon: WarningAlt, text: 'Expired' }
-    : { color: 'green', icon: Checkmark, text: 'Valid' };
+    : (currentUser.passwordDaysUntilExpiry != null && currentUser.passwordDaysUntilExpiry <= 14)
+      ? { color: 'yellow', icon: Time, text: 'Expiring Soon' }
+      : { color: 'green', icon: Checkmark, text: 'Active' };
+
+  const getExpiryHint = useCallback((daysUntilExpiry) => {
+    if (daysUntilExpiry == null) return '(Not available)';
+    if (daysUntilExpiry < 0) return '(Expired)';
+    if (daysUntilExpiry === 0) return '(Expires today)';
+    if (daysUntilExpiry === 1) return '(1 day remaining)';
+    return `(${daysUntilExpiry} days remaining)`;
+  }, []);
 
   // Show loading state only for builds
   if (loading) {
@@ -257,13 +314,19 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                 <Locked size={20} className="home-status-icon" />
                 <strong>Password Status</strong>
               </div>
-              <div className="home-tag-row">
+              <div className="home-key-status-content">
                 <Tag type={passwordStatusDisplay.color} className="home-status-tag">
                   {passwordStatusDisplay.text}
                 </Tag>
                 {currentUser.passwordExpired && (
                   <span className="home-status-action-required">Action required</span>
                 )}
+                <div className="home-muted-text">
+                  Changed: {formatDateOnly(currentUser.passwordLastChangedAt)}
+                </div>
+                <div className="home-muted-text">
+                  Expires: {formatDateOnly(currentUser.passwordExpiresAt)} {getExpiryHint(currentUser.passwordDaysUntilExpiry)}
+                </div>
               </div>
             </div>
 
@@ -281,7 +344,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                   {keyStatusDisplay.text}
                 </Tag>
                 <div className="home-muted-text">
-                  Expires: {formatDateOnly(currentUser.keyExpiresAt)}
+                  Expires: {formatDateOnly(currentUser.keyExpiresAt)} {getExpiryHint(currentUser.keyDaysUntilExpiry)}
                 </div>
               </div>
             </div>
@@ -341,17 +404,28 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
       </h2>
 
       <Grid>
-        <Column lg={8} md={4} sm={4} className="home-grid-column">
+        <Column lg={isViewer ? 16 : 8} md={isViewer ? 8 : 4} sm={4} className="home-grid-column">
           <Tile className="home-tile">
             <h3 className="home-tile__title">My Builds</h3>
 
             {myBuilds.length > 0 ? (
               <>
                 <div className="home-build-count">
-                  <div className="home-build-count__value">{myBuilds.length}</div>
+                  <div className="home-build-count__value">{buildOverview.inProgress}</div>
                   <div className="home-muted-text">
-                    Active builds assigned to you
+                    In-progress builds for your current role
                   </div>
+                  <div className="home-muted-text">
+                    Total visible: {buildOverview.total}
+                  </div>
+                  <div className="home-muted-text">
+                    Downloaded: {buildOverview.downloaded} • Cancelled: {buildOverview.cancelled}
+                  </div>
+                  {!isViewer && (
+                    <div className="home-muted-text">
+                      Action required now: {buildActions.length}
+                    </div>
+                  )}
                 </div>
 
                 <div className="home-build-list">
@@ -361,7 +435,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                         {build.name}
                       </div>
                       <div className="home-build-list-item__meta">
-                        Status: {build.status.replace(/_/g, ' ')}
+                        Status: {(build.status || 'UNKNOWN').replace(/_/g, ' ')}
                       </div>
                     </div>
                   ))}
@@ -383,56 +457,58 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
           </Tile>
         </Column>
 
-        <Column lg={8} md={4} sm={4} className="home-grid-column">
-          <Tile className="home-tile">
-            <h3 className="home-tile__title">Build Actions Required</h3>
+        {!isViewer && (
+          <Column lg={8} md={4} sm={4} className="home-grid-column">
+            <Tile className="home-tile">
+              <h3 className="home-tile__title">Build Actions Required</h3>
 
-            {buildActions.length > 0 ? (
-              <div>
-                {buildActions.map((action, index) => (
-                  <div key={index} className="home-build-action-card">
-                    <div className="home-build-action-card__header">
-                      <div>
-                        <h4 className="home-build-action-card__build-name">{action.buildName}</h4>
-                        <Tag type="blue" size="sm" className="home-build-action-card__status-tag">
-                          {action.status.replace(/_/g, ' ')}
-                        </Tag>
+              {buildActions.length > 0 ? (
+                <div>
+                  {buildActions.map((action, index) => (
+                    <div key={index} className="home-build-action-card">
+                      <div className="home-build-action-card__header">
+                        <div>
+                          <h4 className="home-build-action-card__build-name">{action.buildName}</h4>
+                          <Tag type="blue" size="sm" className="home-build-action-card__status-tag">
+                            {action.status.replace(/_/g, ' ')}
+                          </Tag>
+                        </div>
                       </div>
+                      <div className="home-build-action-card__details">
+                        <div className="home-build-action-card__title">
+                          {action.title}
+                        </div>
+                        <div className="home-build-action-card__description">
+                          Role: {getRoleLabel(action.role)}
+                        </div>
+                        <div className="home-build-action-card__description">
+                          {action.description}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          onSelectBuild(action.buildId);
+                          onNavigate('BUILDS');
+                        }}
+                      >
+                        Go to {action.buildName}
+                      </Button>
                     </div>
-                    <div className="home-build-action-card__details">
-                      <div className="home-build-action-card__title">
-                        {action.title}
-                      </div>
-                      <div className="home-build-action-card__description">
-                        Role: {getRoleLabel(action.role)}
-                      </div>
-                      <div className="home-build-action-card__description">
-                        {action.description}
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        onSelectBuild(action.buildId);
-                        onNavigate('BUILDS');
-                      }}
-                    >
-                      Go to {action.buildName}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="home-empty-state">
-                <Checkmark size={32} className="home-empty-state__icon" />
-                <p className="home-empty-state__title">All Clear</p>
-                <p className="home-empty-state__description">
-                  No build actions required at this time.
-                </p>
-              </div>
-            )}
-          </Tile>
-        </Column>
+                  ))}
+                </div>
+              ) : (
+                <div className="home-empty-state">
+                  <Checkmark size={32} className="home-empty-state__icon" />
+                  <p className="home-empty-state__title">All Clear</p>
+                  <p className="home-empty-state__description">
+                    No build actions required at this time.
+                  </p>
+                </div>
+              )}
+            </Tile>
+          </Column>
+        )}
       </Grid>
     </div>
   );

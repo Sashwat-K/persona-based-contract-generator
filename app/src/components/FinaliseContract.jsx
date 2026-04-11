@@ -43,14 +43,14 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
     return () => { window.electron?.auditor?.offTerminalLine?.(); };
   }, [buildId]);
 
-  // Check if already finalized
+  // Check if already finalized or downloaded
   const [isFinalized, setIsFinalized] = useState(false);
   const [finalizedAt, setFinalizedAt] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   useEffect(() => {
     buildService.getBuild(buildId)
       .then(b => {
-        if (b?.status === 'FINALIZED') {
+        if (b?.status === 'FINALIZED' || b?.status === 'CONTRACT_DOWNLOADED') {
           setIsFinalized(true);
           setFinalizedAt(b.updated_at || b.finalized_at || null);
         }
@@ -213,7 +213,7 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
     try {
       const STATUS_ORDER = [
         'CREATED', 'WORKLOAD_SUBMITTED', 'ENVIRONMENT_STAGED',
-        'AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED',
+        'AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED', 'CONTRACT_DOWNLOADED',
       ];
       const currentBuild = await buildService.getBuild(buildId);
       let currentStatus = currentBuild.status;

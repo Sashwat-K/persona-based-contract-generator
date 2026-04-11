@@ -150,7 +150,11 @@ const UserManagement = () => {
           ),
           action: (
             <div className="user-management-action-cell">
-              <OverflowMenu size="sm" flipped>
+              <OverflowMenu
+                size="sm"
+                flipped
+                menuOptionsClass="user-management-overflow-options"
+              >
                 <OverflowMenuItem
                   itemText="Edit User"
                   onClick={() => handleEditClick(u)}
