@@ -18,6 +18,7 @@ const (
 	setupPendingKey contextKey = "setup_pending"
 	requestSigKey   contextKey = "request_signature"
 	requestHashKey  contextKey = "request_signature_hash"
+	requestIDKey    contextKey = "request_id"
 )
 
 // AuthenticatedUser holds the user info extracted from a valid token.
@@ -124,4 +125,18 @@ func GetRequestSignatureHash(ctx context.Context) string {
 		return ""
 	}
 	return hash
+}
+
+// SetRequestIDContext stores the request ID in context.
+func SetRequestIDContext(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, requestIDKey, requestID)
+}
+
+// GetRequestID retrieves the request ID from context.
+func GetRequestID(ctx context.Context) string {
+	id, ok := ctx.Value(requestIDKey).(string)
+	if !ok {
+		return ""
+	}
+	return id
 }

@@ -8,16 +8,7 @@ import (
 )
 
 func requestIP(r *http.Request) string {
-	if r == nil {
-		return "unknown"
-	}
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return forwarded
-	}
-	if r.RemoteAddr != "" {
-		return r.RemoteAddr
-	}
-	return "unknown"
+	return middleware.RequestIP(r)
 }
 
 func actorEmail(r *http.Request, fallback string) string {

@@ -52,7 +52,7 @@ func (h *BuildHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	requestSignature := middleware.GetRequestSignature(r.Context())
 	requestSignatureHash := middleware.GetRequestSignatureHash(r.Context())
 
-	ip := r.RemoteAddr
+	ip := requestIP(r)
 
 	var sigPtr *string
 	var sigHashPtr *string
@@ -163,7 +163,7 @@ func (h *BuildHandler) TransitionStatus(w http.ResponseWriter, r *http.Request) 
 	newStatus := model.BuildStatus(req.Status)
 	actorID, _ := middleware.GetUserID(r.Context())
 	roles := middleware.GetUserRoles(r.Context())
-	ip := r.RemoteAddr
+	ip := requestIP(r)
 	requestSignature := middleware.GetRequestSignature(r.Context())
 	requestSignatureHash := middleware.GetRequestSignatureHash(r.Context())
 	var sigPtr *string
@@ -230,7 +230,7 @@ func (h *BuildHandler) FinalizeBuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actorID, _ := middleware.GetUserID(r.Context())
-	ip := r.RemoteAddr
+	ip := requestIP(r)
 
 	err = h.buildService.FinalizeBuild(r.Context(), buildID, req.ContractHash, req.ContractYaml, actorID, ip, req.Signature, req.PublicKey)
 	if err != nil {
@@ -276,7 +276,7 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 
 	actorID, _ := middleware.GetUserID(r.Context())
 	roles := middleware.GetUserRoles(r.Context())
-	ip := r.RemoteAddr
+	ip := requestIP(r)
 	requestSignature := middleware.GetRequestSignature(r.Context())
 	requestSignatureHash := middleware.GetRequestSignatureHash(r.Context())
 	var sigPtr *string
@@ -366,7 +366,7 @@ func (h *BuildHandler) CancelBuild(w http.ResponseWriter, r *http.Request) {
 
 	actorID, _ := middleware.GetUserID(r.Context())
 	roles := middleware.GetUserRoles(r.Context())
-	ip := r.RemoteAddr
+	ip := requestIP(r)
 
 	// Transition to Cancelled
 	err = h.buildService.TransitionStatus(r.Context(), buildID, model.StatusCancelled, actorID, ip, roles, nil, nil)

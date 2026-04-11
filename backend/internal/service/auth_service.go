@@ -86,7 +86,10 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 	}
 
 	// Generate token
-	rawToken, hashedToken := GenerateToken()
+	rawToken, hashedToken, err := GenerateToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
 
 	// Store token in DB
 	_, err = s.queries.CreateAPIToken(ctx, repository.CreateAPITokenParams{
@@ -170,14 +173,14 @@ func (s *AuthService) HashPassword(password string) (string, error) {
 }
 
 // GenerateToken generates a cryptographically secure token and its SHA256 hash.
-func GenerateToken() (raw string, hashed string) {
+func GenerateToken() (raw string, hashed string, err error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", "", fmt.Errorf("crypto/rand failed: %w", err)
 	}
 	raw = base64.URLEncoding.EncodeToString(b)
 	hashed = HashToken(raw)
-	return
+	return raw, hashed, nil
 }
 
 // HashToken computes the SHA256 hash of a raw token string.

@@ -440,7 +440,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
           if (!creating) setCreateModalOpen(false);
         }}
         primaryButtonDisabled={!isFormValid || creating || loadingUsers}
-        preventCloseOnClickOutside={creating}
+        preventCloseOnClickOutside
         size="lg"
       >
         <Stack gap={6}>

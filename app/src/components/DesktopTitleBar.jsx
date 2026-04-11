@@ -50,6 +50,7 @@ const DesktopTitleBar = ({
     : 'desktop-titlebar--z-base';
   const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || '');
   const [connectionStatus, setConnectionStatus] = useState(showConnectionStatus ? 'checking' : 'unknown');
+  const [connectionLatencyMs, setConnectionLatencyMs] = useState(null);
   const [connectionError, setConnectionError] = useState('');
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [isRetryingConnection, setIsRetryingConnection] = useState(false);
@@ -80,6 +81,9 @@ const DesktopTitleBar = ({
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT_MS);
+    const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
 
     try {
       const response = await fetch(`${serverUrl}/health`, {
@@ -97,9 +101,15 @@ const DesktopTitleBar = ({
         throw new Error(`Health endpoint returned HTTP ${response.status}.`);
       }
 
+      const endedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+      const latency = Math.max(0, Math.round(endedAt - startedAt));
+
       clearTimeout(timeoutId);
       hasSeenOnline.current = true;
       setConnectionStatus('online');
+      setConnectionLatencyMs(latency);
       setConnectionError('');
       if (enableConnectionWatcher) {
         setShowConnectionModal(false);
@@ -111,6 +121,7 @@ const DesktopTitleBar = ({
         ? `Connection test timed out for ${serverUrl}.`
         : `Cannot reach ${serverUrl}. ${err.message || 'Server may be unavailable.'}`;
       setConnectionStatus('offline');
+      setConnectionLatencyMs(null);
       setConnectionError(message);
       if (enableConnectionWatcher && (forceModal || hasSeenOnline.current)) {
         setShowConnectionModal(true);
@@ -223,10 +234,17 @@ const DesktopTitleBar = ({
           {showConnectionStatus && (
             <div
               className={`desktop-titlebar__status ${statusMeta.className}`}
-              title={connectionError || `Server status: ${statusMeta.label}`}
+              title={
+                connectionError
+                  ? connectionError
+                  : `Server status: ${statusMeta.label}${connectionStatus === 'online' && connectionLatencyMs !== null ? ` (${connectionLatencyMs} ms)` : ''}`
+              }
             >
               <span className="desktop-titlebar__status-dot" />
               <span className="desktop-titlebar__status-label">{statusMeta.label}</span>
+              {connectionStatus === 'online' && connectionLatencyMs !== null && (
+                <span className="desktop-titlebar__status-latency">{connectionLatencyMs} ms</span>
+              )}
             </div>
           )}
 

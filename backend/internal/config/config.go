@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,14 @@ type Config struct {
 
 	// Limits
 	MaxPayloadSize int64 // bytes
+
+	// Security
+	CORSAllowedOrigins []string
+	CORSAllowAll       bool
+	TrustProxyHeaders  bool
+
+	// Request lifecycle
+	RequestTimeout time.Duration
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -39,6 +48,13 @@ func Load() (*Config, error) {
 		LogLevel:       getEnv("LOG_LEVEL", "info"),
 		LogFormat:      getEnv("LOG_FORMAT", "json"),
 		MaxPayloadSize: getEnvInt64("MAX_PAYLOAD_SIZE", 52428800), // 50MB
+		CORSAllowedOrigins: splitAndTrim(getEnv(
+			"CORS_ALLOWED_ORIGINS",
+			"http://localhost:5173,http://127.0.0.1:5173,null",
+		)),
+		CORSAllowAll:      getEnvBool("CORS_ALLOW_ALL", false),
+		TrustProxyHeaders: getEnvBool("TRUST_PROXY_HEADERS", false),
+		RequestTimeout:    getEnvDuration("REQUEST_TIMEOUT", 30*time.Second),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -76,6 +92,34 @@ func getEnvInt64(key string, fallback int64) int64 {
 		}
 	}
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v := strings.TrimSpace(strings.ToLower(os.Getenv(key))); v != "" {
+		switch v {
+		case "1", "true", "yes", "y", "on":
+			return true
+		case "0", "false", "no", "n", "off":
+			return false
+		}
+	}
+	return fallback
+}
+
+func splitAndTrim(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func getEnvDuration(key string, fallback time.Duration) time.Duration {

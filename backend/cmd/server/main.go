@@ -31,7 +31,8 @@ func main() {
 
 	// Configure structured logging
 	setupLogging(cfg.LogLevel, cfg.LogFormat)
-	slog.Info("startingIBM Confidential Computing Contract Generator", "host", cfg.ServerHost, "port", cfg.ServerPort)
+	slog.Info("starting IBM Confidential Computing Contract Generator", "host", cfg.ServerHost, "port", cfg.ServerPort)
+	middleware.SetTrustProxyHeaders(cfg.TrustProxyHeaders)
 
 	// Connect to PostgreSQL
 	ctx := context.Background()
@@ -90,11 +91,13 @@ func main() {
 
 	// Create HTTP server
 	srv := &http.Server{
-		Addr:         cfg.Addr(),
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              cfg.Addr(),
+		Handler:           r,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
 	// Start server in a goroutine
@@ -152,8 +155,12 @@ func buildRouter(
 
 	// Global middleware
 	r.Use(middleware.Recoverer())
+	r.Use(middleware.RequestID())
+	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.Logging())
-	r.Use(middleware.CORS()) // Add CORS middleware
+	r.Use(middleware.CORS(cfg.CORSAllowedOrigins, cfg.CORSAllowAll))
+	r.Use(middleware.MaxBodyBytes(cfg.MaxPayloadSize))
+	r.Use(middleware.RequestTimeout(cfg.RequestTimeout))
 	r.Use(middleware.RateLimit())
 
 	// Health check (unauthenticated)

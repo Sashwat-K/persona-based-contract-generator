@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -157,9 +158,15 @@ func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handl
 			}
 			setupRequired := len(setupPending) > 0
 
-			// Update last_used_at (fire-and-forget, don't block the request)
+			// Update last_used_at (fire-and-forget, don't block the request).
+			// Use a detached timeout context so request cancellation does not skip telemetry updates.
+			tokenID := token.ID
 			go func() {
-				_ = queries.UpdateTokenLastUsed(r.Context(), token.ID)
+				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := queries.UpdateTokenLastUsed(bgCtx, tokenID); err != nil {
+					slog.Debug("failed to update token last_used_at", "error", err, "token_id", tokenID)
+				}
 			}()
 
 			// Set auth context and continue

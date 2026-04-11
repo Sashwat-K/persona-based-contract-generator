@@ -282,7 +282,10 @@ type CreateTokenResult struct {
 
 // CreateToken creates a new API token for a user.
 func (s *UserService) CreateToken(ctx context.Context, userID uuid.UUID, name string) (*CreateTokenResult, error) {
-	rawToken, hashedToken := GenerateToken()
+	rawToken, hashedToken, err := GenerateToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
 
 	row, err := s.queries.CreateAPIToken(ctx, repository.CreateAPITokenParams{
 		UserID:    userID,

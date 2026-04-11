@@ -42,13 +42,15 @@ func Logging() func(http.Handler) http.Handler {
 			next.ServeHTTP(rw, r)
 
 			duration := time.Since(start)
+			requestID := GetRequestID(r.Context())
 
 			slog.Info("http request",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rw.statusCode,
 				"duration_ms", duration.Milliseconds(),
-				"remote_addr", r.RemoteAddr,
+				"request_id", requestID,
+				"client_ip", requestIP(r),
 				"user_agent", r.UserAgent(),
 			)
 		})
@@ -61,7 +63,12 @@ func Recoverer() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rvr := recover(); rvr != nil {
-					slog.Error("panic recovered", "error", rvr, "path", r.URL.Path)
+					slog.Error("panic recovered",
+						"error", rvr,
+						"path", r.URL.Path,
+						"request_id", GetRequestID(r.Context()),
+						"client_ip", requestIP(r),
+					)
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write([]byte(`{"error":{"code":"INTERNAL_ERROR","message":"An unexpected error occurred."}}`))
