@@ -2,6 +2,10 @@
   "appId": "com.ibm.hpcr.contract-builder",
   "productName": "IBM Confidential Computing Contract Builder",
   "copyright": "Copyright © 2024 IBM Corporation",
+  "asar": true,
+  "compression": "maximum",
+  "buildDependenciesFromSource": false,
+  "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
   "directories": {
     "output": "dist-electron",
     "buildResources": "build"
@@ -26,7 +30,7 @@
         "arch": ["x64", "arm64"]
       }
     ],
-    "icon": "build/icon.icns",
+    "icon": "icon.icns",
     "hardenedRuntime": true,
     "gatekeeperAssess": false,
     "entitlements": "build/entitlements.mac.plist",
@@ -42,8 +46,7 @@
         "target": "portable",
         "arch": ["x64"]
       }
-    ],
-    "icon": "build/icon.ico"
+    ]
   },
   "linux": {
     "target": [
@@ -60,7 +63,7 @@
         "arch": ["x64"]
       }
     ],
-    "icon": "build/icon.png",
+    "icon": "icon.png",
     "category": "Development"
   },
   "nsis": {

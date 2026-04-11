@@ -7,7 +7,10 @@
     "start": "vite",
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
     "build": "vite build",
-    "package": "electron-builder"
+    "package": "electron-builder --config electron-builder.json",
+    "package:mac": "electron-builder --config electron-builder.json --mac",
+    "package:win": "electron-builder --config electron-builder.json --win",
+    "package:linux": "electron-builder --config electron-builder.json --linux"
   },
   "keywords": [
     "hpcr",

@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('node:path');
+const { URL, fileURLToPath } = require('node:url');
 const { spawn } = require('child_process');
 const keyManager = require('./crypto/keyManager');
 const encryptor = require('./crypto/encryptor');
@@ -8,6 +9,105 @@ const keyStorage = require('./crypto/keyStorage');
 const contractCli = require('./crypto/contractCli');
 
 const TOOL_INFO_TIMEOUT_MS = 5000;
+const APP_ID = 'com.ibm.hpcr.contract-builder';
+const DEV_SERVER_URL = process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173';
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'http:', 'mailto:']);
+const APP_DIST_DIR = path.resolve(__dirname, '../dist');
+const APP_INDEX_FILE = path.join(APP_DIST_DIR, 'index.html');
+let mainWindow = null;
+
+const getDevOrigin = () => {
+  try {
+    return new URL(DEV_SERVER_URL).origin;
+  } catch {
+    return null;
+  }
+};
+
+const DEV_ORIGIN = getDevOrigin();
+
+const isSafeExternalUrl = (rawUrl = '') => {
+  try {
+    const parsed = new URL(rawUrl);
+    return ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol);
+  } catch {
+    return false;
+  }
+};
+
+const isAllowedAppFileUrl = (rawUrl = '') => {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'file:') return false;
+    const filePath = path.normalize(fileURLToPath(parsed));
+    return filePath === APP_INDEX_FILE || filePath.startsWith(`${APP_DIST_DIR}${path.sep}`);
+  } catch {
+    return false;
+  }
+};
+
+const isAllowedNavigationUrl = (rawUrl = '') => {
+  if (!rawUrl) return false;
+  if (rawUrl === 'about:blank') return true;
+  if (isDev && DEV_ORIGIN) {
+    try {
+      return new URL(rawUrl).origin === DEV_ORIGIN;
+    } catch {
+      return false;
+    }
+  }
+  if (!isDev) {
+    return isAllowedAppFileUrl(rawUrl);
+  }
+  return false;
+};
+
+const getSenderUrl = (event) => (
+  event?.senderFrame?.url ||
+  event?.sender?.getURL?.() ||
+  ''
+);
+
+const isTrustedSender = (event) => {
+  const senderUrl = getSenderUrl(event);
+  return isAllowedNavigationUrl(senderUrl);
+};
+
+const ensureTrustedSender = (event, channel) => {
+  if (!isTrustedSender(event)) {
+    const senderUrl = getSenderUrl(event) || 'unknown';
+    throw new Error(`Blocked IPC request for ${channel} from untrusted sender: ${senderUrl}`);
+  }
+};
+
+const registerIpcHandler = (channel, handler) => {
+  ipcMain.handle(channel, async (event, ...args) => {
+    ensureTrustedSender(event, channel);
+    return handler(event, ...args);
+  });
+};
+
+const applySecurityToSession = (targetSession) => {
+  if (!targetSession) return;
+
+  if (typeof targetSession.setPermissionRequestHandler === 'function') {
+    targetSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  }
+  if (typeof targetSession.setPermissionCheckHandler === 'function') {
+    targetSession.setPermissionCheckHandler(() => false);
+  }
+  if (typeof targetSession.setDevicePermissionHandler === 'function') {
+    targetSession.setDevicePermissionHandler(() => false);
+  }
+};
+
+const configureSessionSecurity = () => {
+  applySecurityToSession(session.defaultSession);
+  app.on('session-created', (createdSession) => {
+    applySecurityToSession(createdSession);
+  });
+};
 
 const firstNonEmptyLine = (value = '') => (
   value
@@ -132,7 +232,6 @@ const getOpensslInfo = async () => {
 };
 
 const createWindow = () => {
-  const isDev = process.env.NODE_ENV === 'development';
   const isMac = process.platform === 'darwin';
   
   const win = new BrowserWindow({
@@ -145,11 +244,12 @@ const createWindow = () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // Disable web security in development to bypass CORS
-      webSecurity: !isDev
+      devTools: isDev,
+      webviewTag: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     },
     title: 'IBM Confidential Computing Contract Generator',
-    icon: path.join(__dirname, '../assets/icon.png'),
     frame: false,  // Remove the default title bar
     titleBarStyle: isMac ? 'hidden' : 'default',
     autoHideMenuBar: true  // Hide the menu bar
@@ -166,11 +266,36 @@ const createWindow = () => {
   win.on('focus', hideMacWindowButtons);
 
   if (isDev) {
-    win.loadURL('http://localhost:5173');
+    win.loadURL(DEV_SERVER_URL);
     win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  // Block unexpected navigation and only allow explicit external URLs.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedNavigationUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+
+  // Defense in depth: block any attempt to attach a webview.
+  win.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[main] Renderer process exited unexpectedly:', details);
+  });
 
   // Clear session data when window is closed
   win.on('close', () => {
@@ -182,6 +307,13 @@ const createWindow = () => {
     });
   });
 
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) {
+      mainWindow = null;
+    }
+  });
+
   return win;
 };
 
@@ -190,7 +322,7 @@ const createWindow = () => {
 // ============================================================================
 
 // Key Generation
-ipcMain.handle('crypto:generateIdentityKeyPair', async () => {
+registerIpcHandler('crypto:generateIdentityKeyPair', async () => {
   try {
     return await keyManager.generateIdentityKeyPair();
   } catch (error) {
@@ -198,7 +330,7 @@ ipcMain.handle('crypto:generateIdentityKeyPair', async () => {
   }
 });
 
-ipcMain.handle('crypto:generateAttestationKeyPair', async () => {
+registerIpcHandler('crypto:generateAttestationKeyPair', async () => {
   try {
     return await keyManager.generateAttestationKeyPair();
   } catch (error) {
@@ -206,7 +338,7 @@ ipcMain.handle('crypto:generateAttestationKeyPair', async () => {
   }
 });
 
-ipcMain.handle('crypto:generateSymmetricKey', () => {
+registerIpcHandler('crypto:generateSymmetricKey', () => {
   try {
     return keyManager.generateSymmetricKey().toString('base64');
   } catch (error) {
@@ -214,7 +346,7 @@ ipcMain.handle('crypto:generateSymmetricKey', () => {
   }
 });
 
-ipcMain.handle('crypto:computeFingerprint', (event, publicKeyPem) => {
+registerIpcHandler('crypto:computeFingerprint', (event, publicKeyPem) => {
   try {
     return keyManager.computeFingerprint(publicKeyPem);
   } catch (error) {
@@ -223,7 +355,7 @@ ipcMain.handle('crypto:computeFingerprint', (event, publicKeyPem) => {
 });
 
 // Encryption/Decryption
-ipcMain.handle('crypto:encryptWithSymmetricKey', async (event, data, keyBase64) => {
+registerIpcHandler('crypto:encryptWithSymmetricKey', async (event, data, keyBase64) => {
   try {
     const key = Buffer.from(keyBase64, 'base64');
     return encryptor.encryptWithSymmetricKey(data, key);
@@ -232,7 +364,7 @@ ipcMain.handle('crypto:encryptWithSymmetricKey', async (event, data, keyBase64) 
   }
 });
 
-ipcMain.handle('crypto:decryptWithSymmetricKey', async (event, encrypted, keyBase64) => {
+registerIpcHandler('crypto:decryptWithSymmetricKey', async (event, encrypted, keyBase64) => {
   try {
     const key = Buffer.from(keyBase64, 'base64');
     return encryptor.decryptWithSymmetricKey(encrypted, key);
@@ -242,7 +374,7 @@ ipcMain.handle('crypto:decryptWithSymmetricKey', async (event, encrypted, keyBas
 });
 
 // Key Wrapping
-ipcMain.handle('crypto:wrapSymmetricKey', async (event, keyBase64, publicKeyPem) => {
+registerIpcHandler('crypto:wrapSymmetricKey', async (event, keyBase64, publicKeyPem) => {
   try {
     const key = Buffer.from(keyBase64, 'base64');
     return encryptor.wrapSymmetricKey(key, publicKeyPem);
@@ -251,7 +383,7 @@ ipcMain.handle('crypto:wrapSymmetricKey', async (event, keyBase64, publicKeyPem)
   }
 });
 
-ipcMain.handle('crypto:unwrapSymmetricKey', async (event, wrappedKey, privateKeyPem) => {
+registerIpcHandler('crypto:unwrapSymmetricKey', async (event, wrappedKey, privateKeyPem) => {
   try {
     const unwrapped = encryptor.unwrapSymmetricKey(wrappedKey, privateKeyPem);
     return unwrapped.toString('base64');
@@ -261,7 +393,7 @@ ipcMain.handle('crypto:unwrapSymmetricKey', async (event, wrappedKey, privateKey
 });
 
 // Hashing and Signing
-ipcMain.handle('crypto:hash', (event, data) => {
+registerIpcHandler('crypto:hash', (event, data) => {
   try {
     return signer.hash(data);
   } catch (error) {
@@ -269,7 +401,7 @@ ipcMain.handle('crypto:hash', (event, data) => {
   }
 });
 
-ipcMain.handle('crypto:hashFile', async (event, filePath) => {
+registerIpcHandler('crypto:hashFile', async (event, filePath) => {
   try {
     return await signer.hashFile(filePath);
   } catch (error) {
@@ -277,7 +409,7 @@ ipcMain.handle('crypto:hashFile', async (event, filePath) => {
   }
 });
 
-ipcMain.handle('crypto:sign', (event, hash, privateKeyPem) => {
+registerIpcHandler('crypto:sign', (event, hash, privateKeyPem) => {
   try {
     return signer.sign(hash, privateKeyPem);
   } catch (error) {
@@ -285,7 +417,7 @@ ipcMain.handle('crypto:sign', (event, hash, privateKeyPem) => {
   }
 });
 
-ipcMain.handle('crypto:verify', (event, hash, signature, publicKeyPem) => {
+registerIpcHandler('crypto:verify', (event, hash, signature, publicKeyPem) => {
   try {
     return signer.verify(hash, signature, publicKeyPem);
   } catch (error) {
@@ -294,7 +426,7 @@ ipcMain.handle('crypto:verify', (event, hash, signature, publicKeyPem) => {
 });
 
 // Key Storage
-ipcMain.handle('crypto:storePrivateKey', async (event, userId, privateKeyPem) => {
+registerIpcHandler('crypto:storePrivateKey', async (event, userId, privateKeyPem) => {
   try {
     await keyStorage.storePrivateKey(userId, privateKeyPem);
     return { success: true };
@@ -303,7 +435,7 @@ ipcMain.handle('crypto:storePrivateKey', async (event, userId, privateKeyPem) =>
   }
 });
 
-ipcMain.handle('crypto:getPrivateKey', async (event, userId) => {
+registerIpcHandler('crypto:getPrivateKey', async (event, userId) => {
   try {
     return await keyStorage.getPrivateKey(userId);
   } catch (error) {
@@ -311,7 +443,7 @@ ipcMain.handle('crypto:getPrivateKey', async (event, userId) => {
   }
 });
 
-ipcMain.handle('crypto:deletePrivateKey', async (event, userId) => {
+registerIpcHandler('crypto:deletePrivateKey', async (event, userId) => {
   try {
     await keyStorage.deletePrivateKey(userId);
     return { success: true };
@@ -320,7 +452,7 @@ ipcMain.handle('crypto:deletePrivateKey', async (event, userId) => {
   }
 });
 
-ipcMain.handle('crypto:hasPrivateKey', async (event, userId) => {
+registerIpcHandler('crypto:hasPrivateKey', async (event, userId) => {
   try {
     return await keyStorage.hasPrivateKey(userId);
   } catch (error) {
@@ -332,7 +464,7 @@ ipcMain.handle('crypto:hasPrivateKey', async (event, userId) => {
 // IPC Handlers - contract-cli Operations
 // ============================================================================
 
-ipcMain.handle('contractCli:encryptSection', async (event, plainText, certContent) => {
+registerIpcHandler('contractCli:encryptSection', async (event, plainText, certContent) => {
   let certPath = null;
   try {
     certPath = await contractCli.saveCertToTempFile(certContent);
@@ -348,7 +480,7 @@ ipcMain.handle('contractCli:encryptSection', async (event, plainText, certConten
 });
 
 // Streaming encrypt: emits terminal log lines back to renderer via webContents.send
-ipcMain.handle('contractCli:encryptSectionStream', async (event, plainText, certContent) => {
+registerIpcHandler('contractCli:encryptSectionStream', async (event, plainText, certContent) => {
   const { spawn } = require('child_process');
   const { promises: fs } = require('fs');
   const path = require('path');
@@ -404,7 +536,7 @@ ipcMain.handle('contractCli:encryptSectionStream', async (event, plainText, cert
   }
 });
 
-ipcMain.handle('contractCli:assembleContract', async (event, sections) => {
+registerIpcHandler('contractCli:assembleContract', async (event, sections) => {
   try {
     return contractCli.assembleContract(sections);
   } catch (error) {
@@ -417,7 +549,7 @@ ipcMain.handle('contractCli:assembleContract', async (event, sections) => {
 // ============================================================================
 
 // Generate signing key pair (RSA-4096), write to folder with passphrase-encrypted private key
-ipcMain.handle('auditor:generateSigningKey', async (event, { folderPath, passphrase }) => {
+registerIpcHandler('auditor:generateSigningKey', async (event, { folderPath, passphrase }) => {
   const { promises: fs } = require('fs');
   const path = require('path');
   const crypto = require('crypto');
@@ -450,7 +582,7 @@ ipcMain.handle('auditor:generateSigningKey', async (event, { folderPath, passphr
 
 // Generate signing certificate (self-signed X.509) via Node forge-style using crypto + asn1
 // Uses openssl subprocess for simplicity and correctness
-ipcMain.handle('auditor:generateSigningCert', async (event, {
+registerIpcHandler('auditor:generateSigningCert', async (event, {
   folderPath, passphrase,
   country, state, locality, organisation, unit, domain, email
 }) => {
@@ -518,7 +650,7 @@ ipcMain.handle('auditor:generateSigningCert', async (event, {
 });
 
 // Generate attestation key pair (RSA-4096), write to folder with passphrase
-ipcMain.handle('auditor:generateAttestationKey', async (event, { folderPath, passphrase }) => {
+registerIpcHandler('auditor:generateAttestationKey', async (event, { folderPath, passphrase }) => {
   const { promises: fs } = require('fs');
   const path = require('path');
   const crypto = require('crypto');
@@ -550,7 +682,7 @@ ipcMain.handle('auditor:generateAttestationKey', async (event, { folderPath, pas
 });
 
 // Generate encrypted environment artifact only (decrypt env, inject signing key/cert, re-encrypt with HPCR cert)
-ipcMain.handle('auditor:generateEncryptedEnv', async (event, {
+registerIpcHandler('auditor:generateEncryptedEnv', async (event, {
   encryptedEnvPayload,   // JSON string: {iv, authTag, encrypted}
   wrappedSymmetricKey,   // base64 wrapped AES key
   signingCertContent,    // PEM signing cert/public key to inject into env
@@ -625,7 +757,7 @@ ipcMain.handle('auditor:generateEncryptedEnv', async (event, {
 });
 
 // Encrypt attestation public key only using HPCR certificate
-ipcMain.handle('auditor:encryptAttestationPublicKey', async (event, {
+registerIpcHandler('auditor:encryptAttestationPublicKey', async (event, {
   attestationPublicKey,
   certContent,
 }) => {
@@ -667,7 +799,7 @@ ipcMain.handle('auditor:encryptAttestationPublicKey', async (event, {
 
 // Decrypt env section (unwrap AES key + AES-GCM decrypt), inject signing cert,
 // then contract-cli encrypt env + attestation pubkey (streaming terminal output)
-ipcMain.handle('auditor:encryptEnvAndAttestation', async (event, {
+registerIpcHandler('auditor:encryptEnvAndAttestation', async (event, {
   encryptedEnvPayload,   // JSON string: {iv, authTag, encrypted}
   wrappedSymmetricKey,   // base64 wrapped AES key
   signingCertContent,    // PEM signing cert to inject into env
@@ -753,7 +885,7 @@ ipcMain.handle('auditor:encryptEnvAndAttestation', async (event, {
 
 // Sign contract YAML (workload + env) using contract-cli sign-contract
 // Produces the envWorkloadSignature value for the final contract
-ipcMain.handle('auditor:signContract', async (event, {
+registerIpcHandler('auditor:signContract', async (event, {
   contractYaml,       // workload + env YAML string to sign
   signingKeyPath,     // path to encrypted RSA private key PEM
   signingPassphrase,  // passphrase to decrypt the private key
@@ -797,7 +929,7 @@ ipcMain.handle('auditor:signContract', async (event, {
 // IPC Handlers - App Information
 // ============================================================================
 
-ipcMain.handle('app:getClientToolInfo', async () => {
+registerIpcHandler('app:getClientToolInfo', async () => {
   const [contractCliInfo, opensslInfo] = await Promise.all([
     getContractCliInfo(),
     getOpensslInfo()
@@ -822,7 +954,10 @@ ipcMain.handle('app:getClientToolInfo', async () => {
 // IPC Handlers - Shell Operations
 // ============================================================================
 
-ipcMain.handle('shell:openExternal', async (event, url) => {
+registerIpcHandler('shell:openExternal', async (event, url) => {
+  if (!isSafeExternalUrl(url)) {
+    throw new Error('Blocked unsafe external URL.');
+  }
   try {
     await shell.openExternal(url);
     return { success: true };
@@ -835,12 +970,12 @@ ipcMain.handle('shell:openExternal', async (event, url) => {
 // IPC Handlers - Window Controls
 // ============================================================================
 
-ipcMain.handle('window:minimize', (event) => {
+registerIpcHandler('window:minimize', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.minimize();
 });
 
-ipcMain.handle('window:maximize', (event) => {
+registerIpcHandler('window:maximize', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) {
     if (win.isMaximized()) {
@@ -851,7 +986,7 @@ ipcMain.handle('window:maximize', (event) => {
   }
 });
 
-ipcMain.handle('window:close', (event) => {
+registerIpcHandler('window:close', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.close();
 });
@@ -860,7 +995,7 @@ ipcMain.handle('window:close', (event) => {
 // IPC Handlers - File Operations
 // ============================================================================
 
-ipcMain.handle('file:selectFile', async (event, options) => {
+registerIpcHandler('file:selectFile', async (event, options) => {
   try {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
@@ -887,7 +1022,7 @@ ipcMain.handle('file:selectFile', async (event, options) => {
   }
 });
 
-ipcMain.handle('file:saveFile', async (event, defaultPath, content) => {
+registerIpcHandler('file:saveFile', async (event, defaultPath, content) => {
   try {
     const result = await dialog.showSaveDialog({
       defaultPath,
@@ -910,7 +1045,7 @@ ipcMain.handle('file:saveFile', async (event, defaultPath, content) => {
   }
 });
 
-ipcMain.handle('file:readFile', async (event, filePath) => {
+registerIpcHandler('file:readFile', async (event, filePath) => {
   try {
     const fs = require('fs').promises;
     return await fs.readFile(filePath, 'utf8');
@@ -919,7 +1054,7 @@ ipcMain.handle('file:readFile', async (event, filePath) => {
   }
 });
 
-ipcMain.handle('file:selectDirectory', async (event) => {
+registerIpcHandler('file:selectDirectory', async (event) => {
   try {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory', 'createDirectory']
@@ -939,7 +1074,20 @@ ipcMain.handle('file:selectDirectory', async (event) => {
 // App Lifecycle
 // ============================================================================
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
+
 app.whenReady().then(() => {
+  app.setAppUserModelId(APP_ID);
+  configureSessionSecurity();
   createWindow();
 
   app.on('activate', () => {
@@ -950,8 +1098,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  // Clear all sessions before quitting
-  const { session } = require('electron');
   session.defaultSession.clearStorageData({
     storages: ['localstorage', 'sessionstorage', 'cookies', 'indexdb']
   }).then(() => {
@@ -964,6 +1110,19 @@ app.on('window-all-closed', () => {
       app.quit();
     }
   });
+});
+
+app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {
+  event.preventDefault();
+  callback(false);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[main] uncaughtException:', error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandledRejection:', reason);
 });
 
 // Handle app quit

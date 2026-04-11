@@ -4,8 +4,8 @@ This guide explains how to build the desktop application for production distribu
 
 ## Prerequisites
 
-- **Node.js**: v18 or higher
-- **npm**: v9 or higher
+- **Node.js**: v25.9.0 or higher (latest stable recommended)
+- **npm**: v11.12.1 or higher
 - **Operating System**: 
   - macOS 10.13+ (for macOS builds)
   - Windows 10+ (for Windows builds)
@@ -170,7 +170,7 @@ Place your application icons in the `app/build/` directory:
 
 2. **Check Node.js version:**
    ```bash
-   node --version  # Should be v18+
+   node --version  # Should be v25.9.0+
    ```
 
 3. **Check disk space:**
