@@ -109,17 +109,7 @@ const ToastContainer = ({ toasts, onClose }) => {
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: '5rem',
-        right: '1rem',
-        zIndex: 9999,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '0.5rem',
-        maxWidth: '400px',
-        width: '100%'
-      }}
+      className="toast-container"
       role="region"
       aria-label="Notifications"
       aria-live="polite"
@@ -135,10 +125,7 @@ const ToastContainer = ({ toasts, onClose }) => {
           hideCloseButton={toast.hideCloseButton}
           onClose={() => onClose(toast.id)}
           timeout={toast.timeout}
-          style={{
-            minWidth: '100%',
-            marginBottom: 0
-          }}
+          className="toast-container__item"
         />
       ))}
     </div>
@@ -146,5 +133,4 @@ const ToastContainer = ({ toasts, onClose }) => {
 };
 
 export default ToastProvider;
-
 

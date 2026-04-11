@@ -13,10 +13,30 @@ export const formatDate = (timestamp, options = {}) => {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-    ...options
+    ...options,
+    hour12: false
   };
 
   return new Date(timestamp).toLocaleString('en-US', defaultOptions);
+};
+
+/**
+ * Format a date without time
+ * @param {string|Date} timestamp
+ * @param {Object} options - Intl.DateTimeFormat options
+ * @returns {string}
+ */
+export const formatDateOnly = (timestamp, options = {}) => {
+  if (!timestamp) return 'N/A';
+
+  const defaultOptions = {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    ...options
+  };
+
+  return new Date(timestamp).toLocaleDateString('en-US', defaultOptions);
 };
 
 /**
@@ -238,5 +258,3 @@ export const formatBase64 = (base64, length = 20) => {
 
   return `${base64.substring(0, length)}...${base64.substring(base64.length - length)}`;
 };
-
-

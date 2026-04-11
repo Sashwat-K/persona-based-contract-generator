@@ -19,21 +19,7 @@ import sectionService from '../services/sectionService';
 import cryptoService from '../services/cryptoService';
 import apiClient from '../services/apiClient';
 import { useAuthStore } from '../store/authStore';
-
-// ── Terminal colours ──────────────────────────────────────────────────────────
-
-const TC = {
-  cmd:     '#78a9ff',
-  info:    '#a8a8a8',
-  stdout:  '#f4f4f4',
-  stderr:  '#f1c21b',
-  success: '#42be65',
-  result:  '#42be65',
-  error:   '#fa4d56',
-  muted:   '#6f6f6f',
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
+import { formatDate } from '../utils/formatters';
 
 const upsertTopLevelYamlField = (yaml, key, value) => {
   const fieldPattern = new RegExp(`^${key}:\\s*.*$`, 'm');
@@ -282,38 +268,46 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
     'AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED',
   ];
   const isAvailable = ACTIVE_STATUSES.includes(liveStatus) || isFinalized;
+  const bodyClassName = `workflow-body${isAvailable && !isFinalized ? '' : ' workflow-body--disabled'}`;
+  const step2ClassName = `workflow-step-card${contractReady ? '' : ' workflow-step-card--blocked'}`;
+
+  const getTerminalLineClass = (type) => {
+    const supportedTypes = ['cmd', 'info', 'stdout', 'stderr', 'success', 'result', 'error', 'muted'];
+    const normalizedType = supportedTypes.includes(type) ? type : 'stdout';
+    return `workflow-terminal__line workflow-terminal__line--${normalizedType}`;
+  };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div ref={topRef}>
-      <h3 style={{ marginBottom: '0.5rem' }}>Finalise Contract</h3>
-      <p style={{ color: 'var(--cds-text-secondary)', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
+      <h3 className="workflow-title">Finalise Contract</h3>
+      <p className="workflow-description">
         Generate the final signed contract and finalize the build.
       </p>
 
       {error && (
         <InlineNotification kind="error" title="Error" subtitle={error}
-          onCloseButtonClick={() => setError(null)} lowContrast style={{ marginBottom: '1rem' }} />
+          onCloseButtonClick={() => setError(null)} lowContrast className="workflow-notification" />
       )}
       {success && (
         <InlineNotification kind="success" title="Success" subtitle={success}
-          onCloseButtonClick={() => setSuccess(null)} lowContrast style={{ marginBottom: '1rem' }} />
+          onCloseButtonClick={() => setSuccess(null)} lowContrast className="workflow-notification" />
       )}
 
       {!loadingStatus && isFinalized && (
-        <Tile style={{ marginBottom: '1.5rem', padding: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <CheckmarkFilled size={20} style={{ color: 'var(--cds-support-success)' }} />
+        <Tile className="workflow-complete-tile">
+          <div className="workflow-complete-tile__row">
+            <CheckmarkFilled size={20} className="workflow-complete-tile__icon" />
             <div>
               <strong>Build finalized</strong>
               {finalizedAt && (
-                <div style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)', marginTop: '0.25rem' }}>
-                  Finalized at: {new Date(finalizedAt).toLocaleString()}
+                <div className="workflow-complete-tile__meta">
+                  Finalized at: {formatDate(finalizedAt, { second: '2-digit', timeZoneName: 'short' })}
                 </div>
               )}
             </div>
-            <Tag type="green" style={{ marginLeft: 'auto' }}>FINALIZED</Tag>
+            <Tag type="green" className="workflow-complete-tile__tag">FINALIZED</Tag>
           </div>
         </Tile>
       )}
@@ -321,27 +315,23 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
       {!loadingStatus && !isFinalized && !ACTIVE_STATUSES.includes(liveStatus) && (
         <InlineNotification kind="info" title="Not yet available"
           subtitle={`Requires build status "AUDITOR_KEYS_REGISTERED". Current: ${liveStatus}. Complete Sign & Add Attestation first.`}
-          lowContrast hideCloseButton style={{ marginBottom: '1rem' }} />
+          lowContrast hideCloseButton className="workflow-notification" />
       )}
 
-      <div style={{
-        display: 'flex', flexDirection: 'column', gap: '2rem',
-        opacity: isAvailable && !isFinalized ? 1 : 0.6,
-        pointerEvents: isAvailable && !isFinalized ? 'auto' : 'none',
-      }}>
+      <div className={bodyClassName}>
 
         {/* ── Step 1: Generate contract ─────────────────────────────────── */}
         <div>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h4 className="workflow-step-heading">
             <Terminal size={18} />
             Step 1 — Generate Contract
             {contractReady && <Tag type="green" size="sm">Done</Tag>}
           </h4>
-          <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', marginBottom: '1rem' }}>
+          <p className="workflow-step-copy">
             Signs and assembles the final contract YAML locally.
           </p>
 
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="workflow-inline-actions">
             <Button
               kind="secondary"
               renderIcon={Document}
@@ -364,13 +354,13 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
         </div>
 
         {/* ── Step 2: Finalize ─────────────────────────────────────────── */}
-        <div style={{ opacity: contractReady ? 1 : 0.45, pointerEvents: contractReady ? 'auto' : 'none' }}>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className={step2ClassName}>
+          <h4 className="workflow-step-heading">
             <Upload size={18} />
             Step 2 — Finalize Build
             {!contractReady && <Tag type="gray" size="sm">Waiting for Step 1</Tag>}
           </h4>
-          <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', marginBottom: '1rem' }}>
+          <p className="workflow-step-copy">
             Submits the contract to the backend and locks the build as FINALIZED.
           </p>
 
@@ -385,37 +375,25 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
 
         {/* ── Terminal ─────────────────────────────────────────────────── */}
         <div>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h4 className="workflow-step-heading">
             <Terminal size={18} /> Terminal Output
           </h4>
           <div
             ref={terminalRef}
-            style={{
-              background: '#161616',
-              borderRadius: '4px',
-              padding: '1rem',
-              fontFamily: '"IBM Plex Mono", "Courier New", monospace',
-              fontSize: '0.8125rem',
-              lineHeight: '1.7',
-              minHeight: '160px',
-              maxHeight: '360px',
-              overflowY: 'auto',
-              border: '1px solid #393939',
-              color: TC.stdout,
-            }}
+            className="workflow-terminal workflow-terminal--compact"
           >
             {terminalLines.length === 0 ? (
-              <span style={{ color: TC.muted }}>
+              <span className="workflow-terminal__line workflow-terminal__line--muted">
                 Terminal output will appear here...
               </span>
             ) : (
               terminalLines.map((l, i) => (
-                <div key={i} style={{ color: TC[l.type] || TC.stdout, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                <div key={i} className={getTerminalLineClass(l.type)}>
                   {l.line}
                 </div>
               ))
             )}
-            {(generating || finalizing) && <span style={{ color: TC.info }}>|</span>}
+            {(generating || finalizing) && <span className="workflow-terminal__cursor">|</span>}
           </div>
         </div>
 
@@ -434,10 +412,10 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
       >
         {generatedContract && (
           <>
-            <p style={{ marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+            <p className="workflow-modal-copy workflow-modal-copy--tight">
               Contract hash: <code>{generatedContract.hash}</code>
             </p>
-            <p style={{ marginBottom: '1rem', fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+            <p className="workflow-modal-copy">
               Review the assembled contract YAML below. Once you finalize, the build is locked.
             </p>
             <CodeSnippet type="multi" feedback="Copied to clipboard" wrapText>

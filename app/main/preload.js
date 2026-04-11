@@ -115,6 +115,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('auditor:signContract', opts),
   },
 
+  // App information
+  appInfo: {
+    getClientToolInfo: () =>
+      ipcRenderer.invoke('app:getClientToolInfo')
+  },
+
   // Directory selection
   selectDirectory: () =>
     ipcRenderer.invoke('file:selectDirectory'),

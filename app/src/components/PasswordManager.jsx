@@ -2,16 +2,15 @@ import React, { useState } from 'react';
 import {
   Tile,
   FormGroup,
-  TextInput,
+  PasswordInput,
   Button,
   InlineNotification
 } from '@carbon/react';
-import { CheckmarkOutline, ErrorOutline } from '@carbon/icons-react';
 import authService from '../services/authService';
-import { useAuthStore } from '../store/authStore';
+
+const MIN_PASSWORD_LENGTH = 12;
 
 const PasswordManager = () => {
-  const { user } = useAuthStore();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -31,11 +30,11 @@ const PasswordManager = () => {
       return;
     }
 
-    if (newPassword.length < 8) {
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
       setNotification({
         kind: 'error',
         title: 'Validation Error',
-        subtitle: 'Password must be at least 8 characters long.'
+        subtitle: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.`
       });
       return;
     }
@@ -71,9 +70,9 @@ const PasswordManager = () => {
 
   return (
     <Tile>
-      <div style={{ marginBottom: '1.5rem' }}>
+      <div className="password-manager-header">
         <h3>Change Password</h3>
-        <p style={{ marginTop: '0.5rem', color: '#525252' }}>
+        <p className="password-manager-subtitle">
           Update your account password securely.
         </p>
       </div>
@@ -84,39 +83,36 @@ const PasswordManager = () => {
           title={notification.title}
           subtitle={notification.subtitle}
           onClose={() => setNotification(null)}
-          style={{ marginBottom: '1.5rem' }}
+          className="password-manager-notification"
         />
       )}
 
       <form onSubmit={handleSubmit}>
         <FormGroup legendText="">
-          <TextInput
+          <PasswordInput
             id="current-password"
-            type="password"
             labelText="Current Password"
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
             required
-            style={{ marginBottom: '1rem' }}
+            className="password-manager-field"
           />
-          <TextInput
+          <PasswordInput
             id="new-password"
-            type="password"
             labelText="New Password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             required
-            helperText="Must be at least 8 characters long"
-            style={{ marginBottom: '1rem' }}
+            helperText={`Must be at least ${MIN_PASSWORD_LENGTH} characters long`}
+            className="password-manager-field"
           />
-          <TextInput
+          <PasswordInput
             id="confirm-password"
-            type="password"
             labelText="Confirm New Password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             required
-            style={{ marginBottom: '1.5rem' }}
+            className="password-manager-field password-manager-field--last"
           />
           <Button 
             type="submit" 

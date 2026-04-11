@@ -39,6 +39,7 @@ import {
 } from '@carbon/icons-react';
 import { useAuthStore } from '../store/authStore';
 import tokenService from '../services/tokenService';
+import { formatDate } from '../utils/formatters';
 
 /**
  * APITokenManager Component
@@ -195,10 +196,6 @@ const APITokenManager = () => {
     }
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleString();
-  };
-
   const filterRows = (rows) => {
     if (!searchTerm) return rows;
 
@@ -235,22 +232,22 @@ const APITokenManager = () => {
     const stats = getTokenStats();
 
     return (
-      <div className="token-stats">
-        <Tile className="stat-tile">
-          <div className="stat-value">{stats.active}</div>
-          <div className="stat-label">Active Tokens</div>
+      <div className="api-token-manager__stats">
+        <Tile className="api-token-manager__stat-tile">
+          <div className="api-token-manager__stat-value">{stats.active}</div>
+          <div className="api-token-manager__stat-label">Active Tokens</div>
         </Tile>
-        <Tile className="stat-tile warning">
-          <div className="stat-value">{stats.expiringSoon}</div>
-          <div className="stat-label">Expiring Soon</div>
+        <Tile className="api-token-manager__stat-tile api-token-manager__stat-tile--warning">
+          <div className="api-token-manager__stat-value">{stats.expiringSoon}</div>
+          <div className="api-token-manager__stat-label">Expiring Soon</div>
         </Tile>
-        <Tile className="stat-tile critical">
-          <div className="stat-value">{stats.expired}</div>
-          <div className="stat-label">Expired</div>
+        <Tile className="api-token-manager__stat-tile api-token-manager__stat-tile--critical">
+          <div className="api-token-manager__stat-value">{stats.expired}</div>
+          <div className="api-token-manager__stat-label">Expired</div>
         </Tile>
-        <Tile className="stat-tile">
-          <div className="stat-value">{stats.revoked}</div>
-          <div className="stat-label">Revoked</div>
+        <Tile className="api-token-manager__stat-tile">
+          <div className="api-token-manager__stat-value">{stats.revoked}</div>
+          <div className="api-token-manager__stat-label">Revoked</div>
         </Tile>
       </div>
     );
@@ -315,11 +312,12 @@ const APITokenManager = () => {
         />
       )}
 
-      <div className="manager-header">
+      <div className="api-token-manager__header">
         <h3>API Token Management</h3>
-        <div className="header-actions">
+        <div className="api-token-manager__header-actions">
           <Button
             kind="tertiary"
+            size="md"
             renderIcon={Renew}
             onClick={loadTokens}
             disabled={loading}
@@ -403,10 +401,10 @@ const APITokenManager = () => {
                         ))}
                       </TableRow>
                       {visibleTokens.has(row.id) && (
-                        <TableRow className="token-reveal-row">
+                        <TableRow className="api-token-manager__token-reveal-row">
                           <TableCell colSpan={headers.length + 1}>
-                            <div className="token-reveal">
-                              <span className="reveal-label">Full Token:</span>
+                            <div className="api-token-manager__token-reveal">
+                              <span className="api-token-manager__reveal-label">Full Token:</span>
                               <CodeSnippet type="single" feedback="Copied">
                                 {row._token.token_prefix}...
                               </CodeSnippet>
@@ -442,7 +440,7 @@ const APITokenManager = () => {
         onSecondarySubmit={() => setShowCreateModal(false)}
         primaryButtonDisabled={loading || !tokenName.trim()}
       >
-        <div className="create-token-form">
+        <div className="api-token-manager__create-form">
           <TextInput
             id="token-name"
             labelText="Token Name"
@@ -483,7 +481,7 @@ const APITokenManager = () => {
         modalHeading="Token Created Successfully"
         passiveModal
       >
-        <div className="created-token-display">
+        <div className="api-token-manager__created-token">
           <InlineNotification
             kind="warning"
             title="Important"
@@ -492,20 +490,20 @@ const APITokenManager = () => {
             hideCloseButton
           />
 
-          <div className="token-info">
-            <div className="info-item">
-              <span className="info-label">Name:</span>
-              <span className="info-value">{createdToken?.name}</span>
+          <div className="api-token-manager__token-info">
+            <div className="api-token-manager__info-item">
+              <span className="api-token-manager__info-label">Name:</span>
+              <span className="api-token-manager__info-value">{createdToken?.name}</span>
             </div>
-            <div className="info-item">
-              <span className="info-label">Expires:</span>
-              <span className="info-value">
+            <div className="api-token-manager__info-item">
+              <span className="api-token-manager__info-label">Expires:</span>
+              <span className="api-token-manager__info-value">
                 {createdToken && formatDate(createdToken.expires_at)}
               </span>
             </div>
           </div>
 
-          <div className="token-display">
+          <div className="api-token-manager__token-display">
             <CodeSnippet type="multi" feedback="Copied">
               {createdToken?.token}
             </CodeSnippet>
@@ -538,113 +536,8 @@ const APITokenManager = () => {
           This action cannot be undone and will immediately invalidate the tokens.
         </p>
       </Modal>
-
-      <style>{`
-        .api-token-manager {
-          padding: 1rem;
-        }
-        
-        .manager-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1.5rem;
-        }
-        
-        .manager-header h3 {
-          margin: 0;
-        }
-        
-        .header-actions {
-          display: flex;
-          gap: 1rem;
-        }
-        
-        .token-stats {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 1rem;
-          margin-bottom: 1.5rem;
-        }
-        
-        .stat-tile {
-          padding: 1.5rem;
-          text-align: center;
-        }
-        
-        .stat-tile.warning {
-          border-left: 4px solid var(--cds-support-warning);
-        }
-        
-        .stat-tile.critical {
-          border-left: 4px solid var(--cds-support-error);
-        }
-        
-        .stat-value {
-          font-size: 2.5rem;
-          font-weight: 600;
-          margin-bottom: 0.5rem;
-        }
-        
-        .stat-label {
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-        
-        .token-reveal-row {
-          background: var(--cds-layer-accent-01);
-        }
-        
-        .token-reveal {
-          display: flex;
-          align-items: center;
-          gap: 1rem;
-          padding: 1rem;
-        }
-        
-        .reveal-label {
-          font-weight: 600;
-        }
-        
-        .create-token-form {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-        }
-        
-        .created-token-display {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-        }
-        
-        .token-info {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-        
-        .info-item {
-          display: flex;
-          gap: 0.5rem;
-        }
-        
-        .info-label {
-          font-weight: 600;
-          min-width: 80px;
-        }
-        
-        .info-value {
-          color: var(--cds-text-secondary);
-        }
-        
-        .token-display {
-          margin: 1rem 0;
-        }
-      `}</style>
     </div>
   );
 };
 
 export default APITokenManager;
-

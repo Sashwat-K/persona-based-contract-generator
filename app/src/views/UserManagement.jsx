@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   DataTable,
   Table,
@@ -11,35 +11,43 @@ import {
   Button,
   Modal,
   TextInput,
-  Select,
-  SelectItem,
   Tag,
   Stack,
   OverflowMenu,
   OverflowMenuItem,
   Checkbox,
-  CheckboxGroup,
   ToastNotification
 } from '@carbon/react';
-import { Add, Edit, TrashCan, Renew, WarningAlt } from '@carbon/icons-react';
+import { Add, Renew } from '@carbon/icons-react';
 import userService from '../services/userService';
-import { ROLES, ROLE_NAMES } from '../utils/constants';
-import { formatDate } from '../utils/formatters';
+import { ROLE_NAMES } from '../utils/constants';
 import { FullPageLoader } from '../components/LoadingSpinner';
+import { formatDateOnly } from '../utils/formatters';
+import { ErrorStatePanel, StatePanel } from '../components/StatePanel';
+import { useAuthStore } from '../store/authStore';
+import { getPrimaryRole } from '../utils/roles';
 
-// Add CSS to prevent truncation in overflow menu
-const overflowMenuStyles = `
-  .cds--overflow-menu-options__option-content {
-    white-space: nowrap !important;
-    overflow: visible !important;
-    text-overflow: clip !important;
-  }
-  .cds--overflow-menu-options {
-    min-width: 220px !important;
-  }
-`;
+const MIN_PASSWORD_LENGTH = 12;
+const ACTIVE_TABLE_HEADERS = [
+  { key: 'name', header: 'User Name' },
+  { key: 'email', header: 'Email' },
+  { key: 'role', header: 'Persona Role' },
+  { key: 'keyStatus', header: 'Public Key Status' },
+  { key: 'keyExpiresAt', header: 'Key Expiry' },
+  { key: 'passwordStatus', header: 'Password Status' },
+  { key: 'action', header: 'Actions' }
+];
+
+const INACTIVE_TABLE_HEADERS = [
+  { key: 'name', header: 'User Name' },
+  { key: 'email', header: 'Email' },
+  { key: 'role', header: 'Persona Role' },
+  { key: 'status', header: 'Status' },
+  { key: 'action', header: 'Actions' }
+];
 
 const UserManagement = () => {
+  const authUser = useAuthStore((state) => state.user);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -92,125 +100,121 @@ const UserManagement = () => {
     }));
   };
 
-  const headers = [
-    { key: 'name', header: 'User Name' },
-    { key: 'email', header: 'Email' },
-    { key: 'role', header: 'Persona Role' },
-    { key: 'keyStatus', header: 'Public Key Status' },
-    { key: 'keyExpiresAt', header: 'Key Expiry' },
-    { key: 'passwordStatus', header: 'Password Status' },
-    { key: 'action', header: 'Actions' }
-  ];
+  const headers = useMemo(() => ACTIVE_TABLE_HEADERS, []);
 
-  const rows = users
-    .filter(u => u.is_active)
-    .map(u => {
-    const keyExpired = u.public_key_expires_at && new Date(u.public_key_expires_at) < new Date();
-    const passwordExpired = u.password_expires_at && new Date(u.password_expires_at) < new Date();
-    
-    return {
-      id: u.id,
-      name: u.name || u.full_name || u.email.split('@')[0],
-      email: u.email,
-      role: (
-        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', minHeight: '24px' }}>
-          {u.roles && u.roles.length > 0 ? (
-            u.roles.map(r => {
-              const key = typeof r === 'string' ? r : (r.role_name || r.name || r);
-              return (
-                <Tag type="blue" key={key}>
-                  {ROLE_NAMES[key] || key}
-                </Tag>
-              );
-            })
-          ) : (
-            <Tag type="gray">None</Tag>
-          )}
-        </div>
-      ),
-      keyStatus: (
-        u.public_key_fingerprint ? (
-          <Tag type={keyExpired ? 'red' : 'green'}>
-            {keyExpired ? 'Expired' : 'Active'}
-          </Tag>
-        ) : (
-          <Tag type="gray">Not Registered</Tag>
-        )
-      ),
-      keyExpiresAt: u.public_key_expires_at ? new Date(u.public_key_expires_at).toLocaleDateString() : 'N/A',
-      passwordStatus: (
-        u.must_change_password ? (
-          <Tag type="yellow">Pending Reset</Tag>
-        ) : (
-          <Tag type={passwordExpired ? 'red' : 'green'}>
-            {passwordExpired ? 'Expired' : 'Valid'}
-          </Tag>
-        )
-      ),
-      action: (
-        <div style={{ minWidth: '200px' }}>
-          <OverflowMenu size="sm" flipped>
-            <OverflowMenuItem
-              itemText="Edit User"
-              onClick={() => handleEditClick(u)}
-            />
-            <OverflowMenuItem
-              itemText="Reset Password"
-              onClick={() => handleAdminResetPassword(u)}
-            />
-            <OverflowMenuItem
-              itemText="Force Password Expiry"
-              onClick={() => handleForcePasswordReset(u)}
-            />
-            <OverflowMenuItem
-              itemText="Force Key Rotation"
-              onClick={() => handleForceKeyRotation(u)}
-            />
-            <OverflowMenuItem
-              itemText="Delete User"
-              onClick={() => handleDeleteClick(u)}
-              hasDivider
-              isDelete
-            />
-          </OverflowMenu>
-        </div>
-      )
-    };
-  });
+  const rows = useMemo(() => (
+    users
+      .filter((u) => u.is_active)
+      .map((u) => {
+        const keyExpired = u.public_key_expires_at && new Date(u.public_key_expires_at) < new Date();
+        const passwordExpired = u.password_expires_at && new Date(u.password_expires_at) < new Date();
+
+        return {
+          id: u.id,
+          name: u.name || u.full_name || u.email.split('@')[0],
+          email: u.email,
+          role: (
+            <div className="user-management-role-tags">
+              {u.roles && u.roles.length > 0 ? (
+                u.roles.map((r) => {
+                  const key = typeof r === 'string' ? r : (r.role_name || r.name || r);
+                  return (
+                    <Tag type="blue" key={key}>
+                      {ROLE_NAMES[key] || key}
+                    </Tag>
+                  );
+                })
+              ) : (
+                <Tag type="gray">None</Tag>
+              )}
+            </div>
+          ),
+          keyStatus: (
+            u.public_key_fingerprint ? (
+              <Tag type={keyExpired ? 'red' : 'green'}>
+                {keyExpired ? 'Expired' : 'Active'}
+              </Tag>
+            ) : (
+              <Tag type="gray">Not Registered</Tag>
+            )
+          ),
+          keyExpiresAt: formatDateOnly(u.public_key_expires_at),
+          passwordStatus: (
+            u.must_change_password ? (
+              <Tag type="yellow">Pending Reset</Tag>
+            ) : (
+              <Tag type={passwordExpired ? 'red' : 'green'}>
+                {passwordExpired ? 'Expired' : 'Valid'}
+              </Tag>
+            )
+          ),
+          action: (
+            <div className="user-management-action-cell">
+              <OverflowMenu size="sm" flipped>
+                <OverflowMenuItem
+                  itemText="Edit User"
+                  onClick={() => handleEditClick(u)}
+                />
+                <OverflowMenuItem
+                  itemText="Reset Password"
+                  onClick={() => handleAdminResetPassword(u)}
+                />
+                <OverflowMenuItem
+                  itemText="Force Password Expiry"
+                  onClick={() => handleForcePasswordReset(u)}
+                />
+                <OverflowMenuItem
+                  itemText="Force Key Rotation"
+                  onClick={() => handleForceKeyRotation(u)}
+                />
+                <OverflowMenuItem
+                  itemText="Delete User"
+                  onClick={() => handleDeleteClick(u)}
+                  hasDivider
+                  isDelete
+                />
+              </OverflowMenu>
+            </div>
+          )
+        };
+      })
+  ), [users]);
 
   // Inactive user rows
-  const inactiveRows = users
-    .filter(u => !u.is_active)
-    .map(u => ({
-      id: u.id,
-      name: u.name || u.full_name || u.email.split('@')[0],
-      email: u.email,
-      role: (
-        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', minHeight: '24px' }}>
-          {u.roles && u.roles.length > 0 ? (
-            u.roles.map(r => (
-              <Tag type="gray" key={r.role_id || r.id || r.name || r}>
-                {r.role_name || r.name || r}
-              </Tag>
-            ))
-          ) : (
-            <Tag type="gray">None</Tag>
-          )}
-        </div>
-      ),
-      status: <Tag type="red">Disabled</Tag>,
-      action: (
-        <div style={{ minWidth: '200px' }}>
-          <Button
-            kind="tertiary"
-            size="sm"
-            onClick={() => handleReactivateClick(u)}
-          >
-            Reactivate
-          </Button>
-        </div>
-      )
-    }));
+  const inactiveRows = useMemo(() => (
+    users
+      .filter((u) => !u.is_active)
+      .map((u) => ({
+        id: u.id,
+        name: u.name || u.full_name || u.email.split('@')[0],
+        email: u.email,
+        role: (
+          <div className="user-management-role-tags">
+            {u.roles && u.roles.length > 0 ? (
+              u.roles.map((r) => (
+                <Tag type="gray" key={r.role_id || r.id || r.name || r}>
+                  {r.role_name || r.name || r}
+                </Tag>
+              ))
+            ) : (
+              <Tag type="gray">None</Tag>
+            )}
+          </div>
+        ),
+        status: <Tag type="red">Disabled</Tag>,
+        action: (
+          <div className="user-management-action-cell">
+            <Button
+              kind="tertiary"
+              size="sm"
+              onClick={() => handleReactivateClick(u)}
+            >
+              Reactivate
+            </Button>
+          </div>
+        )
+      }))
+  ), [users]);
 
   const handleEditClick = (user) => {
     setSelectedUser(user);
@@ -275,6 +279,32 @@ const UserManagement = () => {
       
       // Update roles
       await userService.updateUserRoles(selectedUser.id, formData.roles);
+
+      // Keep current session role list in sync if admin edits their own account.
+      if (authUser?.id && selectedUser.id === authUser.id) {
+        const normalizedRoles = Array.from(new Set((formData.roles || []).filter(Boolean)));
+        const safeRoles = normalizedRoles.length > 0 ? normalizedRoles : ['VIEWER'];
+        const persistedRole = localStorage.getItem('user_role');
+        const nextRole = safeRoles.includes(persistedRole) ? persistedRole : getPrimaryRole(safeRoles);
+        const nextEmail = formData.email?.trim() || authUser.email || '';
+
+        useAuthStore.getState().updateUser({
+          name: formData.name,
+          full_name: formData.name,
+          email: nextEmail,
+          roles: safeRoles
+        });
+        localStorage.setItem('user_roles', JSON.stringify(safeRoles));
+        localStorage.setItem('user_role', nextRole);
+        localStorage.setItem('user_email', nextEmail);
+        window.dispatchEvent(new CustomEvent('auth:session-updated', {
+          detail: {
+            role: nextRole,
+            rolesJson: JSON.stringify(safeRoles),
+            email: nextEmail
+          }
+        }));
+      }
       
       setNotification({
         kind: 'success',
@@ -444,7 +474,7 @@ const UserManagement = () => {
     return formData.name.trim() &&
            formData.email.trim() &&
            formData.roles.length > 0 &&
-           formData.password.length >= 12;
+           formData.password.length >= MIN_PASSWORD_LENGTH;
   };
 
   const isEditFormValid = () => {
@@ -461,32 +491,20 @@ const UserManagement = () => {
   // Show error state
   if (error) {
     return (
-      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem' }}>
-        <div style={{
-          padding: '2rem',
-          textAlign: 'center',
-          backgroundColor: 'var(--cds-layer-01)',
-          borderRadius: '4px'
-        }}>
-          <WarningAlt size={48} style={{ color: 'var(--cds-support-error)', marginBottom: '1rem' }} />
-          <h3 style={{ marginBottom: '0.5rem' }}>Failed to Load Users</h3>
-          <p style={{ color: 'var(--cds-text-secondary)', marginBottom: '1.5rem' }}>
-            {error}
-          </p>
-          <Button onClick={loadUsers}>
-            Retry
-          </Button>
-        </div>
+      <div className="app-page app-page--padded">
+        <ErrorStatePanel
+          title="Failed to Load Users"
+          description={error}
+          action={<Button onClick={loadUsers}>Retry</Button>}
+        />
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-      <style>{overflowMenuStyles}</style>
-
+    <div className="app-page user-management-page">
       {notification && (
-        <div style={{ position: 'fixed', top: '5rem', right: '1rem', zIndex: 9999 }}>
+        <div className="user-management-toast">
           <ToastNotification
             kind={notification.kind}
             title={notification.title}
@@ -498,9 +516,9 @@ const UserManagement = () => {
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h1>User Management</h1>
-        <div style={{ display: 'flex', gap: '1rem' }}>
+      <div className="app-page__header">
+        <h1 className="app-page__title">User Management</h1>
+        <div className="app-page__actions user-management-header-actions">
           <Button
             kind="tertiary"
             size="md"
@@ -519,23 +537,15 @@ const UserManagement = () => {
       </div>
 
       {users.length === 0 ? (
-        <div style={{
-          padding: '4rem 2rem',
-          textAlign: 'center',
-          backgroundColor: 'var(--cds-layer-01)',
-          borderRadius: '4px'
-        }}>
-          <h3 style={{ marginBottom: '1rem' }}>No Users Found</h3>
-          <p style={{ color: 'var(--cds-text-secondary)', marginBottom: '2rem' }}>
-            Get started by creating your first user.
-          </p>
-          <Button
-            renderIcon={Add}
-            onClick={handleCreateClick}
-          >
-            Create First User
-          </Button>
-        </div>
+        <StatePanel
+          title="No Users Found"
+          description="Get started by creating your first user."
+          action={(
+            <Button renderIcon={Add} onClick={handleCreateClick}>
+              Create First User
+            </Button>
+          )}
+        />
       ) : (
         <DataTable rows={rows} headers={headers}>
         {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
@@ -543,7 +553,7 @@ const UserManagement = () => {
             title="System Users"
             description="Manage users, roles, and cryptographic credentials."
           >
-            <Table {...getTableProps()}>
+            <Table {...getTableProps()} className="user-management-table user-management-table--active">
               <TableHead>
                 <TableRow>
                   {headers.map((header) => {
@@ -576,8 +586,8 @@ const UserManagement = () => {
 
       {/* Inactive Users Section */}
       {inactiveRows.length > 0 && (
-        <div style={{ marginTop: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div className="user-management-inactive">
+          <div className="user-management-inactive__header">
             <h3>Inactive Users ({inactiveRows.length})</h3>
             <Button
               kind="ghost"
@@ -590,20 +600,14 @@ const UserManagement = () => {
           {showInactive && (
             <DataTable
               rows={inactiveRows}
-              headers={[
-                { key: 'name', header: 'User Name' },
-                { key: 'email', header: 'Email' },
-                { key: 'role', header: 'Persona Role' },
-                { key: 'status', header: 'Status' },
-                { key: 'action', header: 'Actions' }
-              ]}
+              headers={INACTIVE_TABLE_HEADERS}
             >
               {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
                 <TableContainer
                   title="Disabled Users"
                   description="Users that have been deactivated. Reactivate them to restore access."
                 >
-                  <Table {...getTableProps()}>
+                  <Table {...getTableProps()} className="user-management-table user-management-table--inactive">
                     <TableHead>
                       <TableRow>
                         {headers.map((header) => {
@@ -664,31 +668,15 @@ const UserManagement = () => {
             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
             autoComplete="new-email"
           />
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{
-              display: 'block',
-              marginBottom: '0.5rem',
-              fontSize: '0.75rem',
-              fontWeight: 400,
-              color: 'var(--cds-text-secondary)',
-              letterSpacing: '0.32px'
-            }}>
+          <div className="user-management-role-editor">
+            <label className="user-management-role-editor__label">
               Persona Roles
             </label>
-            <div style={{
-              padding: '1rem',
-              backgroundColor: 'var(--cds-field)',
-              border: '1px solid var(--cds-border-subtle)',
-              borderRadius: '0'
-            }}>
-              <p style={{
-                fontSize: '0.75rem',
-                color: 'var(--cds-text-secondary)',
-                marginBottom: '0.75rem'
-              }}>
+            <div className="user-management-role-editor__box">
+              <p className="user-management-role-editor__hint">
                 Select one or more roles for this user
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div className="user-management-role-editor__list">
                 {Object.entries(ROLE_NAMES).map(([key, name]) => (
                   <Checkbox
                     key={key}
@@ -738,31 +726,15 @@ const UserManagement = () => {
             value={formData.email}
             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
           />
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{
-              display: 'block',
-              marginBottom: '0.5rem',
-              fontSize: '0.75rem',
-              fontWeight: 400,
-              color: 'var(--cds-text-secondary)',
-              letterSpacing: '0.32px'
-            }}>
+          <div className="user-management-role-editor">
+            <label className="user-management-role-editor__label">
               Persona Roles
             </label>
-            <div style={{
-              padding: '1rem',
-              backgroundColor: 'var(--cds-field)',
-              border: '1px solid var(--cds-border-subtle)',
-              borderRadius: '0'
-            }}>
-              <p style={{
-                fontSize: '0.75rem',
-                color: 'var(--cds-text-secondary)',
-                marginBottom: '0.75rem'
-              }}>
+            <div className="user-management-role-editor__box">
+              <p className="user-management-role-editor__hint">
                 Select one or more roles for this user
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div className="user-management-role-editor__list">
                 {Object.entries(ROLE_NAMES).map(([key, name]) => (
                   <Checkbox
                     key={key}
@@ -812,7 +784,7 @@ const UserManagement = () => {
         <p>
           Are you sure you want to force a password reset for <strong>{selectedUser?.name}</strong>?
         </p>
-        <p style={{ marginTop: '1rem' }}>
+        <p className="user-management-modal-copy user-management-modal-copy--spaced">
           The user will be required to change their password on their next login.
         </p>
       </Modal>
@@ -834,10 +806,10 @@ const UserManagement = () => {
         <p>
           Are you sure you want to force key rotation for <strong>{selectedUser?.name}</strong>?
         </p>
-        <p style={{ marginTop: '1rem' }}>
+        <p className="user-management-modal-copy user-management-modal-copy--spaced">
           The user will be required to generate a new RSA-4096 key pair on their next login:
         </p>
-        <ul style={{ marginTop: '0.5rem', marginLeft: '1.5rem' }}>
+        <ul className="user-management-modal-list">
           <li>Generate new RSA-4096 key pair</li>
           <li>Register the new public key</li>
           <li>Old key will be invalidated</li>
@@ -860,7 +832,7 @@ const UserManagement = () => {
         <p>
           Are you sure you want to reactivate <strong>{selectedUser?.name}</strong>?
         </p>
-        <p style={{ marginTop: '1rem' }}>
+        <p className="user-management-modal-copy user-management-modal-copy--spaced">
           This will restore their access to the system. Their roles and credentials will remain as they were before deactivation.
         </p>
       </Modal>
@@ -878,16 +850,16 @@ const UserManagement = () => {
           setSelectedUser(null);
           setResetPasswordValue('');
         }}
-        primaryButtonDisabled={resetPasswordValue.length < 8}
+        primaryButtonDisabled={resetPasswordValue.length < MIN_PASSWORD_LENGTH}
       >
-        <p style={{ marginBottom: '1.5rem' }}>
+        <p className="user-management-modal-copy user-management-modal-copy--lead">
           Set a new password for <strong>{selectedUser?.name}</strong>. The user will be required to change it on their next login.
         </p>
         <TextInput
           id="admin-reset-password"
           type="password"
           labelText="New Password"
-          placeholder="Minimum 8 characters"
+          placeholder={`Minimum ${MIN_PASSWORD_LENGTH} characters`}
           value={resetPasswordValue}
           onChange={(e) => setResetPasswordValue(e.target.value)}
           autoComplete="new-password"

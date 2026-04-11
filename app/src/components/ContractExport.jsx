@@ -21,6 +21,7 @@ import { useBuildStore } from '../store/buildStore';
 import { useAuthStore } from '../store/authStore';
 import exportService from '../services/exportService';
 import verificationService from '../services/verificationService';
+import { formatDate } from '../utils/formatters';
 
 /**
  * ContractExport Component
@@ -204,9 +205,9 @@ const ContractExport = ({ buildId, buildStatus }) => {
         />
       )}
 
-      <Tile className="export-tile">
-        <div className="export-header">
-          <div className="header-content">
+      <Tile className="contract-export__tile">
+        <div className="contract-export__header">
+          <div className="contract-export__header-content">
             <DocumentExport size={24} />
             <h4>Contract Export</h4>
           </div>
@@ -226,30 +227,30 @@ const ContractExport = ({ buildId, buildStatus }) => {
         />
 
         {metadata && (
-          <div className="metadata">
-            <div className="metadata-row">
-              <span className="label">Contract Hash:</span>
+          <div className="contract-export__metadata">
+            <div className="contract-export__metadata-row">
+              <span className="contract-export__metadata-label">Contract Hash:</span>
               <CodeSnippet type="inline" feedback="Copied">
                 {metadata.hash.substring(0, 16)}...
               </CodeSnippet>
             </div>
-            <div className="metadata-row">
-              <span className="label">Size:</span>
+            <div className="contract-export__metadata-row">
+              <span className="contract-export__metadata-label">Size:</span>
               <span>{(metadata.size / 1024).toFixed(2)} KB</span>
             </div>
-            <div className="metadata-row">
-              <span className="label">Sections:</span>
+            <div className="contract-export__metadata-row">
+              <span className="contract-export__metadata-label">Sections:</span>
               <span>{metadata.sections}</span>
             </div>
-            <div className="metadata-row">
-              <span className="label">Exported:</span>
-              <span>{new Date(metadata.exportedAt).toLocaleString()}</span>
+            <div className="contract-export__metadata-row">
+              <span className="contract-export__metadata-label">Exported:</span>
+              <span>{formatDate(metadata.exportedAt, { second: '2-digit', timeZoneName: 'short' })}</span>
             </div>
           </div>
         )}
 
         {verificationResult && (
-          <div className="verification-result">
+          <div className="contract-export__verification-result">
             <InlineNotification
               kind={verificationResult.valid ? 'success' : 'error'}
               title={verificationResult.valid ? 'Verification Passed' : 'Verification Failed'}
@@ -266,7 +267,7 @@ const ContractExport = ({ buildId, buildStatus }) => {
           </div>
         )}
 
-        <div className="export-actions">
+        <div className="contract-export__actions">
           <Button
             kind="primary"
             renderIcon={DocumentExport}
@@ -310,14 +311,14 @@ const ContractExport = ({ buildId, buildStatus }) => {
         hasScrollingContent
       >
         {isExporting && (
-          <div className="exporting-overlay">
+          <div className="contract-export__exporting-overlay">
             <Loading description="Saving contract and generating signature..." withOverlay={false} />
             <ProgressBar label="Download Progress" helperText="Signing with your private key..." />
           </div>
         )}
 
         {exportData && (
-          <div className="preview-content">
+          <div className="contract-export__preview-content">
             <InlineNotification
               kind="info"
               title="Download Acknowledgment"
@@ -326,27 +327,27 @@ const ContractExport = ({ buildId, buildStatus }) => {
               hideCloseButton
             />
 
-            <div className="contract-info">
+            <div className="contract-export__info">
               <h5>Contract Information</h5>
-              <div className="info-grid">
-                <div className="info-item">
-                  <span className="info-label">Build ID:</span>
-                  <span className="info-value">{buildId}</span>
+              <div className="contract-export__info-grid">
+                <div className="contract-export__info-item">
+                  <span className="contract-export__info-label">Build ID:</span>
+                  <span className="contract-export__info-value">{buildId}</span>
                 </div>
-                <div className="info-item">
-                  <span className="info-label">Hash:</span>
+                <div className="contract-export__info-item">
+                  <span className="contract-export__info-label">Hash:</span>
                   <CodeSnippet type="inline" feedback="Copied">
                     {exportData.contract_hash}
                   </CodeSnippet>
                 </div>
-                <div className="info-item">
-                  <span className="info-label">Sections:</span>
-                  <span className="info-value">{exportData.sections?.length || 0}</span>
+                <div className="contract-export__info-item">
+                  <span className="contract-export__info-label">Sections:</span>
+                  <span className="contract-export__info-value">{exportData.sections?.length || 0}</span>
                 </div>
               </div>
             </div>
 
-            <div className="yaml-preview">
+            <div className="contract-export__yaml-preview">
               <h5>Contract YAML</h5>
               <CodeSnippet
                 type="multi"
@@ -358,18 +359,18 @@ const ContractExport = ({ buildId, buildStatus }) => {
             </div>
 
             {exportData.sections && exportData.sections.length > 0 && (
-              <div className="sections-info">
+              <div className="contract-export__sections-info">
                 <h5>Included Sections</h5>
-                <div className="sections-list">
+                <div className="contract-export__sections-list">
                   {exportData.sections.map((section, index) => (
-                    <Tile key={index} className="section-tile">
-                      <div className="section-header">
+                    <Tile key={index} className="contract-export__section-tile">
+                      <div className="contract-export__section-header">
                         <Tag type="blue">{section.persona_role}</Tag>
-                        <span className="section-submitter">
+                        <span className="contract-export__section-submitter">
                           by {section.submitted_by_name}
                         </span>
                       </div>
-                      <div className="section-details">
+                      <div className="contract-export__section-details">
                         <span className="section-hash">
                           Hash: {section.section_hash.substring(0, 16)}...
                         </span>
@@ -385,142 +386,6 @@ const ContractExport = ({ buildId, buildStatus }) => {
           </div>
         )}
       </Modal>
-
-      <style>{`
-        .contract-export {
-          margin: 1rem 0;
-        }
-        
-        .export-tile {
-          padding: 1.5rem;
-        }
-        
-        .export-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1rem;
-        }
-        
-        .header-content {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        
-        .header-content h4 {
-          margin: 0;
-        }
-        
-        .metadata {
-          margin: 1rem 0;
-          padding: 1rem;
-          background: var(--cds-layer-02);
-          border-radius: 4px;
-        }
-        
-        .metadata-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 0.5rem 0;
-          border-bottom: 1px solid var(--cds-border-subtle);
-        }
-        
-        .metadata-row:last-child {
-          border-bottom: none;
-        }
-        
-        .metadata-row .label {
-          font-weight: 600;
-          color: var(--cds-text-secondary);
-        }
-        
-        .verification-result {
-          margin: 1rem 0;
-        }
-        
-        .export-actions {
-          display: flex;
-          gap: 0.5rem;
-          margin-top: 1rem;
-        }
-        
-        .exporting-overlay {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 1rem;
-          padding: 2rem;
-        }
-        
-        .preview-content {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-        }
-        
-        .contract-info h5,
-        .yaml-preview h5,
-        .sections-info h5 {
-          margin-bottom: 0.5rem;
-        }
-        
-        .info-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 1rem;
-        }
-        
-        .info-item {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-        }
-        
-        .info-label {
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-        
-        .info-value {
-          font-weight: 600;
-        }
-        
-        .yaml-preview {
-          max-height: 400px;
-          overflow-y: auto;
-        }
-        
-        .sections-list {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-        
-        .section-tile {
-          padding: 1rem;
-        }
-        
-        .section-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 0.5rem;
-        }
-        
-        .section-submitter {
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-        
-        .section-details {
-          display: flex;
-          justify-content: space-between;
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-      `}</style>
     </div>
   );
 };

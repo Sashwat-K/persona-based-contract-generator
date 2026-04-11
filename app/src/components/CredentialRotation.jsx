@@ -223,10 +223,10 @@ const CredentialRotation = () => {
   const renderPasswordTable = (data, title) => {
     if (data.length === 0) {
       return (
-        <Tile style={{ padding: '2rem', textAlign: 'center' }}>
-          <CheckmarkFilled size={32} style={{ color: 'var(--cds-support-success)', marginBottom: '0.5rem' }} />
-          <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{title}</p>
-          <p style={{ color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>No users found.</p>
+        <Tile className="credential-rotation-empty-state">
+          <CheckmarkFilled size={32} className="credential-rotation-empty-state__icon" />
+          <p className="credential-rotation-empty-state__title">{title}</p>
+          <p className="credential-rotation-empty-state__description">No users found.</p>
         </Tile>
       );
     }
@@ -325,10 +325,10 @@ const CredentialRotation = () => {
   const renderKeyTable = (data, title) => {
     if (data.length === 0) {
       return (
-        <Tile style={{ padding: '2rem', textAlign: 'center' }}>
-          <CheckmarkFilled size={32} style={{ color: 'var(--cds-support-success)', marginBottom: '0.5rem' }} />
-          <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{title}</p>
-          <p style={{ color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>No users found.</p>
+        <Tile className="credential-rotation-empty-state">
+          <CheckmarkFilled size={32} className="credential-rotation-empty-state__icon" />
+          <p className="credential-rotation-empty-state__title">{title}</p>
+          <p className="credential-rotation-empty-state__description">No users found.</p>
         </Tile>
       );
     }
@@ -547,6 +547,7 @@ const CredentialRotation = () => {
         <h3>Credential Rotation Management</h3>
         <Button
           kind="tertiary"
+          size="md"
           renderIcon={Renew}
           onClick={loadData}
           disabled={loading}
@@ -635,107 +636,8 @@ const CredentialRotation = () => {
           </ProgressIndicator>
         )}
       </Modal>
-
-      <style>{`
-        .credential-rotation {
-          padding: 1rem;
-        }
-        
-        .rotation-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1.5rem;
-        }
-        
-        .rotation-header h3 {
-          margin: 0;
-        }
-        
-        .user-status {
-          margin-bottom: 1.5rem;
-          padding: 1.5rem;
-        }
-        
-        .user-status h5 {
-          margin-bottom: 1rem;
-        }
-        
-        .status-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-          gap: 1.5rem;
-        }
-        
-        .status-item {
-          display: flex;
-          flex-direction: column;
-          gap: 0.75rem;
-        }
-        
-        .status-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        
-        .status-label {
-          font-weight: 600;
-          font-size: 1rem;
-        }
-        
-        .status-details {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-        
-        .days-count {
-          font-weight: 600;
-          color: var(--cds-text-primary);
-        }
-        
-        .fingerprint {
-          font-family: monospace;
-          font-size: 0.75rem;
-        }
-        
-        .summary-stats {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 1rem;
-          margin-bottom: 1.5rem;
-        }
-        
-        .stat-tile {
-          padding: 1.5rem;
-          text-align: center;
-        }
-        
-        .stat-tile.critical {
-          border-left: 4px solid var(--cds-support-error);
-        }
-        
-        .stat-tile.warning {
-          border-left: 4px solid var(--cds-support-warning);
-        }
-        
-        .stat-value {
-          font-size: 2.5rem;
-          font-weight: 600;
-          margin-bottom: 0.5rem;
-        }
-        
-        .stat-label {
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-      `}</style>
     </div>
   );
 };
 
 export default CredentialRotation;
-

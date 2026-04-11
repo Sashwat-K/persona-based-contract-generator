@@ -3,14 +3,15 @@ import {
   Header,
   HeaderName,
   HeaderGlobalBar,
-  HeaderGlobalAction,
   HeaderMenuButton,
   Theme,
   SideNav,
   SideNavItems,
   SideNavMenuItem,
   SideNavMenu,
-  Modal
+  Modal,
+  MenuButton,
+  MenuItem
 } from '@carbon/react';
 import {
   Settings,
@@ -26,14 +27,21 @@ import {
   Catalog,
   ChartLine,
   UserMultiple,
-  DocumentTasks,
-  Minimize,
-  Maximize,
-  Close
+  DocumentTasks
 } from '@carbon/icons-react';
-import HyperProtectIcon from './HyperProtectIcon';
+import DesktopTitleBar from './DesktopTitleBar';
+import { getRoleLabel } from '../utils/roles';
 
-const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [], userEmail, children }) => {
+const AppShell = ({
+  activeNav,
+  setActiveNav,
+  onLogout,
+  userRole,
+  userRoles = [],
+  userEmail,
+  onRoleChange,
+  children
+}) => {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isSideNavExpanded, setIsSideNavExpanded] = useState(true);
   
@@ -47,31 +55,19 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
   };
   
   // Define which navigation items each role can see
-  const allRoles = userRoles.length > 0 ? userRoles : [userRole];
-  const isAdmin = allRoles.includes('ADMIN');
-  const isAuditor = allRoles.includes('AUDITOR');
+  const availableRoles = Array.from(new Set((userRoles.length > 0 ? userRoles : [userRole]).filter(Boolean)));
+  const activeRole = userRole;
+  const isAdmin = activeRole === 'ADMIN';
+  const isAuditor = activeRole === 'AUDITOR';
   const canViewAnalytics = isAdmin;
   const canViewUsers = isAdmin;
   const canViewLogs = isAdmin || isAuditor;
-  const canViewBuilds = true; // All users can view builds
 
   const hasAdminOperations = canViewAnalytics || canViewUsers || canViewLogs;
   
-  // Format role name for display
-  const getRoleName = (role) => {
-    const roleNames = {
-      'ADMIN': 'Administrator',
-      'SOLUTION_PROVIDER': 'Solution Provider',
-      'DATA_OWNER': 'Data Owner',
-      'AUDITOR': 'Auditor',
-      'ENV_OPERATOR': 'Environment Operator',
-      'VIEWER': 'Viewer'
-    };
-    return roleNames[role] || role;
-  };
-  
   // Get username from email
   const getUsername = (email) => {
+    if (!email) return 'User';
     return email.split('@')[0].replace(/\./g, ' ').split(' ').map(word =>
       word.charAt(0).toUpperCase() + word.slice(1)
     ).join(' ');
@@ -90,166 +86,56 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
     const IconComponent = icons[role] || UserAvatar;
     return <IconComponent size={20} />;
   };
+
+  const handleRoleChange = (nextRole) => {
+    if (!nextRole || nextRole === activeRole || typeof onRoleChange !== 'function') return;
+    onRoleChange(nextRole);
+  };
   
   return (
     <>
       <Theme theme="g100">
-        {/* Custom Title Bar */}
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: '40px',
-          background: 'rgba(22, 22, 22, 0.95)',
-          backdropFilter: 'blur(10px)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 1rem',
-          WebkitAppRegion: 'drag',
-          zIndex: 10000
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <HyperProtectIcon size={18} />
-            <span style={{
-              fontSize: '0.875rem',
-              color: 'rgba(255, 255, 255, 0.9)',
-              fontWeight: 500,
-              letterSpacing: '0.02em'
-            }}>
-              HPCR Contract Builder
-            </span>
-          </div>
-          
-          {/* Window Controls */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.25rem',
-            WebkitAppRegion: 'no-drag'
-          }}>
-            <button
-              onClick={() => window.electron?.minimizeWindow?.()}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                width: '46px',
-                height: '32px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'rgba(255, 255, 255, 0.7)',
-                transition: 'all 0.2s ease',
-                borderRadius: '4px'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-                e.currentTarget.style.color = 'rgba(255, 255, 255, 0.95)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-              }}
-              title="Minimize"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </button>
-            <button
-              onClick={() => window.electron?.maximizeWindow?.()}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                width: '46px',
-                height: '32px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'rgba(255, 255, 255, 0.7)',
-                transition: 'all 0.2s ease',
-                borderRadius: '4px'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-                e.currentTarget.style.color = 'rgba(255, 255, 255, 0.95)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-              }}
-              title="Maximize"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <rect x="1" y="1" width="10" height="10" stroke="currentColor" strokeWidth="1.5" fill="none" rx="1"/>
-              </svg>
-            </button>
-            <button
-              onClick={() => window.electron?.closeWindow?.()}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                width: '46px',
-                height: '32px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'rgba(255, 255, 255, 0.7)',
-                transition: 'all 0.2s ease',
-                borderRadius: '4px'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#da1e28';
-                e.currentTarget.style.color = 'white';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-              }}
-              title="Close"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </button>
-          </div>
-        </div>
+        <DesktopTitleBar
+          zIndex={10000}
+          showConnectionStatus
+          enableConnectionWatcher
+        />
 
-        <Header aria-label="IBM Confidential Computing Contract Builder" style={{ WebkitAppRegion: 'drag', marginTop: '40px' }}>
+        <Header aria-label="IBM Confidential Computing Contract Builder" className="app-shell-header">
           <HeaderMenuButton
             aria-label={isSideNavExpanded ? 'Close menu' : 'Open menu'}
             onClick={() => setIsSideNavExpanded(!isSideNavExpanded)}
             isActive={isSideNavExpanded}
-            style={{ WebkitAppRegion: 'no-drag' }}
+            className="app-shell-no-drag"
           />
-          <HeaderName href="#" prefix="IBM" style={{ WebkitAppRegion: 'no-drag' }}>
-            Confidential Computing Contract Builder v1.0
+          <HeaderName href="#" prefix="IBM" className="app-shell-no-drag">
+            <span className="app-shell-header-title">Confidential Computing Contract Builder v1.0</span>
           </HeaderName>
-          <HeaderGlobalBar>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              paddingRight: '1rem',
-              color: 'var(--cds-text-secondary)',
-              fontSize: '0.875rem',
-              WebkitAppRegion: 'no-drag'
-            }}>
-              {getPersonaIcon(userRole)}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                <span style={{ fontWeight: 600, color: 'var(--cds-text-primary)' }}>
-                  {getUsername(userEmail)}
-                </span>
-                <span style={{ fontSize: '0.75rem' }}>
-                  {(userRoles.length > 1 ? userRoles : [userRole]).map(r => getRoleName(r)).join(', ')}
-                </span>
+          <HeaderGlobalBar className="app-shell-header-global">
+            <div className="app-shell-user-chip app-shell-no-drag">
+              <div className="app-shell-user-chip__avatar">
+                {getPersonaIcon(activeRole)}
               </div>
+              <span className="app-shell-user-chip__name" title={userEmail}>
+                {getUsername(userEmail)}
+              </span>
+              <MenuButton
+                kind="ghost"
+                size="sm"
+                label={getRoleLabel(activeRole)}
+                menuAlignment="bottom-end"
+                className="app-shell-role-menu-button"
+                disabled={availableRoles.length <= 1}
+              >
+                {availableRoles.map((role) => (
+                  <MenuItem
+                    key={role}
+                    label={`${getRoleLabel(role)}${role === activeRole ? ' (Current)' : ''}`}
+                    disabled={role === activeRole}
+                    onClick={() => handleRoleChange(role)}
+                  />
+                ))}
+              </MenuButton>
             </div>
           </HeaderGlobalBar>
         </Header>
@@ -259,16 +145,16 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
           expanded={isSideNavExpanded}
           isChildOfHeader={true}
           aria-label="Side navigation"
-          style={{ height: 'calc(100vh - 3rem - 40px)', top: 'calc(3rem + 40px)' }}
+          className="app-shell-sidenav"
         >
-          <SideNavItems style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <SideNavItems className="app-shell-sidenav-items">
             {/* Home - visible to all users except pure VIEWERs */}
-            {!(allRoles.length === 1 && allRoles[0] === 'VIEWER') && (
+            {activeRole !== 'VIEWER' && (
               <SideNavMenuItem
                 isActive={activeNav === 'HOME'}
                 onClick={() => setActiveNav('HOME')}
               >
-                <Home size={16} style={{ marginRight: '0.5rem' }} />
+                <Home size={16} className="app-shell-nav-icon" />
                 Home
               </SideNavMenuItem>
             )}
@@ -278,7 +164,7 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
               isActive={activeNav === 'BUILDS'}
               onClick={() => setActiveNav('BUILDS')}
             >
-              <Catalog size={16} style={{ marginRight: '0.5rem' }} />
+              <Catalog size={16} className="app-shell-nav-icon" />
               Build Management
             </SideNavMenuItem>
             
@@ -290,7 +176,7 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
                     isActive={activeNav === 'ANALYTICS'}
                     onClick={() => setActiveNav('ANALYTICS')}
                   >
-                    <ChartLine size={16} style={{ marginRight: '0.5rem' }} />
+                    <ChartLine size={16} className="app-shell-nav-icon" />
                     Diagnostics & Analytics
                   </SideNavMenuItem>
                 )}
@@ -299,7 +185,7 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
                     isActive={activeNav === 'USERS'}
                     onClick={() => setActiveNav('USERS')}
                   >
-                    <UserMultiple size={16} style={{ marginRight: '0.5rem' }} />
+                    <UserMultiple size={16} className="app-shell-nav-icon" />
                     User Management
                   </SideNavMenuItem>
                 )}
@@ -308,7 +194,7 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
                     isActive={activeNav === 'LOGS'}
                     onClick={() => setActiveNav('LOGS')}
                   >
-                    <DocumentTasks size={16} style={{ marginRight: '0.5rem' }} />
+                    <DocumentTasks size={16} className="app-shell-nav-icon" />
                     System Logs
                   </SideNavMenuItem>
                 )}
@@ -316,16 +202,16 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
             )}
             
             {/* Spacer to push Account menu to bottom */}
-            <div style={{ flex: '1 1 auto' }} />
+            <div className="app-shell-sidenav-spacer" />
             
             {/* Account menu at bottom */}
-            <div style={{ borderTop: '1px solid var(--cds-border-subtle)', paddingTop: '1rem' }}>
+            <div className="app-shell-account-menu">
               <SideNavMenu renderIcon={Settings} title="Account">
                 <SideNavMenuItem onClick={() => setActiveNav('SETTINGS')}>
                   Settings
                 </SideNavMenuItem>
                 <SideNavMenuItem onClick={handleLogoutClick}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div className="app-shell-logout-row">
                     <Logout size={16} />
                     Logout
                   </div>
@@ -336,28 +222,11 @@ const AppShell = ({ activeNav, setActiveNav, onLogout, userRole, userRoles = [],
         </SideNav>
       </Theme>
 
-      <main style={{
-        marginTop: 'calc(3rem + 40px)',
-        marginLeft: isSideNavExpanded ? '16rem' : '3rem',
-        height: 'calc(100vh - 3rem - 40px)',
-        backgroundColor: 'var(--cds-background)',
-        overflowY: 'auto',
-        transition: 'margin-left 110ms cubic-bezier(0.2, 0, 1, 0.9)',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
-        <div style={{ flex: '1 0 auto', padding: '2rem' }}>
+      <main className={`app-shell-main ${isSideNavExpanded ? 'app-shell-main--expanded' : 'app-shell-main--collapsed'}`}>
+        <div className="app-shell-content">
           {children}
         </div>
-        <footer style={{
-          padding: '1rem 2rem',
-          backgroundColor: 'var(--cds-layer)',
-          borderTop: '1px solid var(--cds-border-subtle)',
-          color: 'var(--cds-text-secondary)',
-          fontSize: '0.75rem',
-          textAlign: 'center',
-          flexShrink: 0
-        }}>
+        <footer className="app-shell-footer">
           Powered by IBM Confidential Computing
         </footer>
       </main>

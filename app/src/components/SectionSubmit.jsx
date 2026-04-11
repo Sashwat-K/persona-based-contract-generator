@@ -19,6 +19,7 @@ import assignmentService from '../services/assignmentService';
 import cryptoService from '../services/cryptoService';
 import { PLATFORMS, getCertsByPlatform, getCertById } from '../data/builtinCerts';
 import AuditorSection from './AuditorSection';
+import { formatDate } from '../utils/formatters';
 
 // ── Workload templates ────────────────────────────────────────────────────────
 
@@ -107,21 +108,6 @@ const ROLE_CONFIG = {
   },
 };
 
-// ── Terminal colours — always light-on-dark, no CSS variables ────────────────
-
-const TC = {
-  cmd:     '#78a9ff',  // bright blue — the command line
-  info:    '#a8a8a8',
-  stdout:  '#f4f4f4',
-  stderr:  '#f1c21b',
-  success: '#42be65',
-  result:  '#42be65',  // final encrypted output
-  error:   '#fa4d56',
-  muted:   '#6f6f6f',
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onStatusUpdate }) => {
   const config = ROLE_CONFIG[personaRole];
 
@@ -143,9 +129,13 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
   const [wrappedSymmetricKey, setWrappedSymmetricKey] = useState(null);
   const terminalRef = useRef(null);
   const topRef = useRef(null);
+  const uploadEditorLineRef = useRef(null);
 
   // Preview modal
   const [showPreview, setShowPreview] = useState(false);
+  const [showUploadEditor, setShowUploadEditor] = useState(false);
+  const [uploadDraftContent, setUploadDraftContent] = useState('');
+  const [uploadDraftFileName, setUploadDraftFileName] = useState('');
 
   // Submission
   const [submitting, setSubmitting] = useState(false);
@@ -195,7 +185,15 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
     if (!file) return;
     setWorkloadFileName(file.name);
     const reader = new FileReader();
-    reader.onload = (ev) => setWorkloadContent(ev.target.result);
+    reader.onload = (ev) => {
+      const content = typeof ev.target?.result === 'string' ? ev.target.result : '';
+      setWorkloadContent(content);
+      setUploadDraftContent(content);
+      setUploadDraftFileName(file.name);
+      setEncryptedResult(null);
+      setWrappedSymmetricKey(null);
+      setShowUploadEditor(true);
+    };
     reader.readAsText(file);
   };
 
@@ -227,6 +225,46 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
 
   const addLine = (type, line) =>
     setTerminalLines(prev => [...prev, { type, line }]);
+
+  const openUploadEditor = () => {
+    if (!workloadContent) return;
+    setUploadDraftContent(workloadContent);
+    setUploadDraftFileName(workloadFileName || `${config.fileLabel}.yaml`);
+    setShowUploadEditor(true);
+  };
+
+  const closeUploadEditor = () => {
+    setShowUploadEditor(false);
+    setUploadDraftContent(workloadContent);
+  };
+
+  const applyUploadEditorChanges = () => {
+    setWorkloadContent(uploadDraftContent);
+    setEncryptedResult(null);
+    setWrappedSymmetricKey(null);
+    setShowUploadEditor(false);
+  };
+
+  const handleUploadEditorKeyDown = (event) => {
+    if (event.key !== 'Tab') return;
+    event.preventDefault();
+
+    const { selectionStart, selectionEnd, value } = event.target;
+    const updatedValue = `${value.slice(0, selectionStart)}\t${value.slice(selectionEnd)}`;
+    setUploadDraftContent(updatedValue);
+    setEncryptedResult(null);
+    setWrappedSymmetricKey(null);
+
+    requestAnimationFrame(() => {
+      event.target.selectionStart = selectionStart + 1;
+      event.target.selectionEnd = selectionStart + 1;
+    });
+  };
+
+  const syncUploadEditorScroll = (event) => {
+    if (!uploadEditorLineRef.current) return;
+    uploadEditorLineRef.current.scrollTop = event.target.scrollTop;
+  };
 
   const handleEncrypt = async () => {
     if (!workloadContent) { setError(`Please upload a ${config.fileLabel} YAML file.`); return; }
@@ -344,35 +382,42 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
   const isCorrectStatus = liveStatus === config.requiredBuildStatus;
   const certOptions = getCertsByPlatform(selectedPlatformId);
   const isDisabled = !isCorrectStatus || !!existingSection;
+  const bodyClassName = `workflow-body${isDisabled ? ' workflow-body--disabled' : ''}`;
+
+  const getTerminalLineClass = (type) => {
+    const supportedTypes = ['cmd', 'info', 'stdout', 'stderr', 'success', 'result', 'error', 'muted'];
+    const normalizedType = supportedTypes.includes(type) ? type : 'stdout';
+    return `workflow-terminal__line workflow-terminal__line--${normalizedType}`;
+  };
 
   return (
     <div ref={topRef}>
-      <h3 style={{ marginBottom: '0.5rem' }}>{config.title}</h3>
-      <p style={{ color: 'var(--cds-text-secondary)', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
+      <h3 className="workflow-title">{config.title}</h3>
+      <p className="workflow-description">
         {config.description}
       </p>
 
       {error && (
         <InlineNotification kind="error" title="Error" subtitle={error}
-          onCloseButtonClick={() => setError(null)} lowContrast style={{ marginBottom: '1rem' }} />
+          onCloseButtonClick={() => setError(null)} lowContrast className="workflow-notification" />
       )}
       {success && (
         <InlineNotification kind="success" title="Success" subtitle={success}
-          onCloseButtonClick={() => setSuccess(null)} lowContrast style={{ marginBottom: '1rem' }} />
+          onCloseButtonClick={() => setSuccess(null)} lowContrast className="workflow-notification" />
       )}
 
       {!loadingSection && existingSection && (
-        <Tile style={{ marginBottom: '1.5rem', padding: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <CheckmarkFilled size={20} style={{ color: 'var(--cds-support-success)' }} />
+        <Tile className="workflow-complete-tile">
+          <div className="workflow-complete-tile__row">
+            <CheckmarkFilled size={20} className="workflow-complete-tile__icon" />
             <div>
               <strong>Section already submitted</strong>
-              <div style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)', marginTop: '0.25rem' }}>
+              <div className="workflow-complete-tile__meta">
                 Submitted at: {existingSection.submitted_at
-                  ? new Date(existingSection.submitted_at).toLocaleString() : 'N/A'}
+                  ? formatDate(existingSection.submitted_at, { second: '2-digit', timeZoneName: 'short' }) : 'N/A'}
               </div>
             </div>
-            <Tag type="green" style={{ marginLeft: 'auto' }}>Submitted</Tag>
+            <Tag type="green" className="workflow-complete-tile__tag">Submitted</Tag>
           </div>
         </Tile>
       )}
@@ -380,25 +425,21 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
       {!isCorrectStatus && !existingSection && (
         <InlineNotification kind="info" title="Not yet available"
           subtitle={`This section requires build status "${config.requiredBuildStatus}". Current: ${liveStatus}.`}
-          lowContrast hideCloseButton style={{ marginBottom: '1rem' }} />
+          lowContrast hideCloseButton className="workflow-notification" />
       )}
 
-      <div style={{
-        display: 'flex', flexDirection: 'column', gap: '2rem',
-        opacity: isDisabled ? 0.6 : 1,
-        pointerEvents: isDisabled ? 'none' : 'auto',
-      }}>
+      <div className={bodyClassName}>
 
         {/* ── Step 1: Upload YAML ───────────────────────────────────────── */}
         <div>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h4 className="workflow-step-heading">
             <Document size={18} /> Step 1 — Upload {config.fileLabel.charAt(0).toUpperCase() + config.fileLabel.slice(1)} YAML
           </h4>
 
           {/* Template buttons — shown when templates are configured */}
           {config.templates && (
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+            <div className="workflow-template-row">
+              <span className="workflow-template-row__label">
                 Download template:
               </span>
               {Object.entries(config.templates).map(([key, tpl]) => (
@@ -423,35 +464,46 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
             onChange={handleWorkloadUpload}
           />
           {workloadContent && (
-            <p style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)', marginTop: '0.5rem' }}>
-              {workloadFileName} — {workloadContent.length} bytes loaded
-            </p>
+            <div>
+              <p className="workflow-upload-meta">
+                {workloadFileName} — {workloadContent.length} bytes loaded
+              </p>
+              <Button
+                kind="ghost"
+                size="sm"
+                renderIcon={View}
+                onClick={openUploadEditor}
+                className="workflow-upload-preview-button"
+              >
+                Preview / Edit {config.fileLabel} YAML
+              </Button>
+            </div>
           )}
         </div>
 
         {/* ── Step 2: Certificate (only when encryption is needed) ─────── */}
         {config.needsCert && (
           <div>
-            <h4 style={{ marginBottom: '0.75rem' }}>Step 2 — HPCR Encryption Certificate</h4>
+            <h4 className="workflow-step-title">Step 2 — HPCR Encryption Certificate</h4>
 
             <RadioButtonGroup
               name={`cert-source-${personaRole}`}
               valueSelected={certSource}
               onChange={(val) => { setCertSource(val); setEncryptedResult(null); }}
-              style={{ marginBottom: '1rem' }}
+              className="workflow-radio-group"
             >
               <RadioButton labelText="Upload custom certificate" value="custom" id={`cert-custom-${personaRole}`} />
               <RadioButton labelText="Use built-in certificate" value="builtin" id={`cert-builtin-${personaRole}`} />
             </RadioButtonGroup>
 
             {certSource === 'builtin' ? (
-              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div className="workflow-form-row">
                 <Select
                   id={`cert-platform-${personaRole}`}
                   labelText="Platform"
                   value={selectedPlatformId}
                   onChange={(e) => { setSelectedPlatformId(e.target.value); setEncryptedResult(null); }}
-                  style={{ minWidth: '420px' }}
+                  className="workflow-select workflow-select--platform"
                 >
                   {PLATFORMS.map(p => (
                     <SelectItem key={p.id} value={p.id} text={p.label} />
@@ -463,7 +515,7 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
                   labelText="Version"
                   value={selectedCertId}
                   onChange={(e) => { setSelectedCertId(e.target.value); setEncryptedResult(null); }}
-                  style={{ minWidth: '140px' }}
+                  className="workflow-select workflow-select--version"
                 >
                   {certOptions.map(c => (
                     <SelectItem key={c.id} value={c.id} text={c.version} />
@@ -480,7 +532,7 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
                   onChange={handleCustomCertUpload}
                 />
                 {customCertFileName && (
-                  <p style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)', marginTop: '0.5rem' }}>
+                  <p className="workflow-upload-meta">
                     {customCertFileName} loaded
                   </p>
                 )}
@@ -491,7 +543,7 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
 
         {/* ── Step 2/3: Encrypt ─────────────────────────────────────────── */}
         <div>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h4 className="workflow-step-heading">
             <Terminal size={18} /> Step {config.needsCert ? 3 : 2} — {config.needsCert ? 'Encrypt' : 'Prepare'}
           </h4>
 
@@ -500,7 +552,7 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
             renderIcon={Terminal}
             onClick={handleEncrypt}
             disabled={encrypting || !workloadContent}
-            style={{ marginBottom: '1rem' }}
+            className="workflow-step-action"
           >
             {encrypting ? 'Processing...' : config.needsCert ? 'Run Encryption' : 'Prepare Section'}
           </Button>
@@ -508,58 +560,31 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
           {/* Terminal */}
           <div
             ref={terminalRef}
-            style={{
-              background: '#161616',
-              borderRadius: '4px',
-              padding: '1rem',
-              fontFamily: '"IBM Plex Mono", "Courier New", monospace',
-              fontSize: '0.8125rem',
-              lineHeight: '1.7',
-              minHeight: '160px',
-              maxHeight: '320px',
-              overflowY: 'auto',
-              border: '1px solid #393939',
-              color: TC.stdout,
-            }}
+            className="workflow-terminal workflow-terminal--compact"
           >
             {terminalLines.length === 0 ? (
-              <span style={{ color: TC.muted }}>
+              <span className="workflow-terminal__line workflow-terminal__line--muted">
                 Terminal output will appear here when encryption runs...
               </span>
             ) : (
               terminalLines.map((l, i) => (
-                <div key={i} style={{ color: TC[l.type] || TC.stdout, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                <div key={i} className={getTerminalLineClass(l.type)}>
                   {l.line}
                 </div>
               ))
             )}
             {encrypting && (
-              <span style={{ color: TC.info, animation: 'blink 1s step-end infinite' }}>▌</span>
+              <span className="workflow-terminal__cursor">▌</span>
             )}
           </div>
 
           {encryptedResult && (
-            <div style={{
-              marginTop: '0.75rem',
-              padding: '0.75rem 1rem',
-              background: '#0d1a0d',
-              borderRadius: '4px',
-              borderLeft: '4px solid #42be65',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: '1rem',
-            }}>
+            <div className="workflow-result-banner">
               <div>
-                <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#42be65', marginBottom: '0.25rem' }}>
+                <div className="workflow-result-banner__title">
                   {config.needsCert ? 'Encryption complete' : 'Section ready'}
                 </div>
-                <div style={{
-                  fontFamily: '"IBM Plex Mono", monospace',
-                  fontSize: '0.75rem',
-                  color: TC.muted,
-                  wordBreak: 'break-all',
-                }}>
+                <div className="workflow-result-banner__preview">
                   {encryptedResult.substring(0, 80)}...
                 </div>
               </div>
@@ -568,7 +593,7 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
                 size="sm"
                 renderIcon={View}
                 onClick={() => setShowPreview(true)}
-                style={{ flexShrink: 0 }}
+                className="workflow-result-banner__preview-button"
               >
                 Preview
               </Button>
@@ -578,7 +603,7 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
 
         {/* ── Step 3/4: Submit ──────────────────────────────────────────── */}
         <div>
-          <h4 style={{ marginBottom: '0.75rem' }}>Step {config.needsCert ? 4 : 3} — Submit</h4>
+          <h4 className="workflow-step-title">Step {config.needsCert ? 4 : 3} — Submit</h4>
           <Button
             renderIcon={Upload}
             onClick={handleSubmit}
@@ -587,13 +612,54 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
             {submitting ? 'Submitting...' : `Submit ${config.title}`}
           </Button>
           {!encryptedResult && (
-            <p style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)', marginTop: '0.5rem' }}>
+            <p className="workflow-help-text">
               Complete Step {config.needsCert ? 3 : 2} before submitting.
             </p>
           )}
         </div>
 
       </div>
+
+      <Modal
+        open={showUploadEditor}
+        modalHeading={`${config.fileLabel.charAt(0).toUpperCase() + config.fileLabel.slice(1)} YAML Preview`}
+        modalLabel="Editable file preview"
+        primaryButtonText="Apply Changes"
+        secondaryButtonText="Cancel"
+        onRequestSubmit={applyUploadEditorChanges}
+        onSecondarySubmit={closeUploadEditor}
+        onRequestClose={closeUploadEditor}
+        size="lg"
+      >
+        <p className="workflow-modal-copy workflow-modal-copy--tight">
+          Review and edit the uploaded YAML before encryption. Use <code>Tab</code> to indent.
+        </p>
+        {uploadDraftFileName && (
+          <p className="workflow-upload-meta">Editing: {uploadDraftFileName}</p>
+        )}
+        <div className="workflow-code-editor">
+          <pre ref={uploadEditorLineRef} className="workflow-code-editor__line-numbers" aria-hidden="true">
+            {Array.from(
+              { length: Math.max(uploadDraftContent.split('\n').length, 1) },
+              (_, index) => index + 1
+            ).join('\n')}
+          </pre>
+          <textarea
+            value={uploadDraftContent}
+            onChange={(event) => {
+              setUploadDraftContent(event.target.value);
+              setEncryptedResult(null);
+              setWrappedSymmetricKey(null);
+            }}
+            onKeyDown={handleUploadEditorKeyDown}
+            onScroll={syncUploadEditorScroll}
+            className="workflow-code-editor__textarea"
+            spellCheck={false}
+            wrap="off"
+            aria-label={`${config.fileLabel} yaml editor`}
+          />
+        </div>
+      </Modal>
 
       {/* ── Preview modal ─────────────────────────────────────────────────── */}
       <Modal
@@ -606,7 +672,7 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
         size="lg"
         passiveModal
       >
-        <p style={{ marginBottom: '1rem', fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+        <p className="workflow-modal-copy">
           {config.needsCert
             ? <>This is the encrypted payload that will be submitted. It is in{' '}
                 <code>hyper-protect-basic.&lt;encrypted-password&gt;.&lt;encrypted-data&gt;</code> format.</>
@@ -623,10 +689,6 @@ const SectionSubmit = ({ buildId, buildStatus: buildStatusProp, personaRole, onS
           })()}
         </CodeSnippet>
       </Modal>
-
-      <style>{`
-        @keyframes blink { 50% { opacity: 0; } }
-      `}</style>
     </div>
   );
 };

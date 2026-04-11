@@ -9,16 +9,7 @@ import { Loading, InlineLoading } from '@carbon/react';
 
 export const FullPageLoader = ({ description = 'Loading...' }) => {
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '400px',
-        width: '100%'
-      }}
-    >
+    <div className="loading-spinner-full-page">
       <Loading description={description} withOverlay={false} />
     </div>
   );
@@ -26,95 +17,62 @@ export const FullPageLoader = ({ description = 'Loading...' }) => {
 
 export const InlineLoader = ({
   description = 'Loading...',
+  message,
   status = 'active',
-  successDelay = 1500
+  successDelay = 1500,
+  ...rest
 }) => {
+  const resolvedDescription = message || description;
+
   return (
     <InlineLoading
-      description={description}
+      description={resolvedDescription}
       status={status}
       successDelay={successDelay}
+      {...rest}
     />
   );
 };
 
+const getSkeletonWidthClass = (width) => {
+  if (width === '25%') return 'loading-skeleton--quarter';
+  if (width === '50%') return 'loading-skeleton--half';
+  if (width === '75%') return 'loading-skeleton--three-quarter';
+  return 'loading-skeleton--full';
+};
+
+const getTableSkeletonColumnClass = (columns) => {
+  const normalized = Number.isFinite(Number(columns))
+    ? Math.max(1, Math.min(8, Number(columns)))
+    : 4;
+  return `loading-table-skeleton--cols-${normalized}`;
+};
+
 export const SkeletonLoader = ({ rows = 3, width = '100%' }) => {
   return (
-    <div style={{ width }}>
+    <div className={`loading-skeleton ${getSkeletonWidthClass(width)}`}>
       {Array.from({ length: rows }).map((_, index) => (
-        <div
-          key={index}
-          style={{
-            height: '48px',
-            backgroundColor: 'var(--cds-skeleton-background)',
-            marginBottom: '0.5rem',
-            borderRadius: '4px',
-            animation: 'skeleton-loading 1.5s ease-in-out infinite'
-          }}
-        />
+        <div key={index} className="loading-skeleton__row" />
       ))}
-      <style>{`
-        @keyframes skeleton-loading {
-          0%, 100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.4;
-          }
-        }
-      `}</style>
     </div>
   );
 };
 
 export const TableSkeletonLoader = ({ rows = 5, columns = 4 }) => {
+  const columnClass = getTableSkeletonColumnClass(columns);
+
   return (
-    <div style={{ width: '100%' }}>
-      {/* Header */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: `repeat(${columns}, 1fr)`,
-        gap: '1rem',
-        marginBottom: '1rem',
-        padding: '1rem',
-        backgroundColor: 'var(--cds-layer-01)'
-      }}>
+    <div className={`loading-table-skeleton ${columnClass}`}>
+      <div className="loading-table-skeleton__row loading-table-skeleton__row--header">
         {Array.from({ length: columns }).map((_, index) => (
-          <div
-            key={`header-${index}`}
-            style={{
-              height: '24px',
-              backgroundColor: 'var(--cds-skeleton-background)',
-              borderRadius: '4px'
-            }}
-          />
+          <div key={`header-${index}`} className="loading-table-skeleton__cell loading-table-skeleton__cell--header" />
         ))}
       </div>
 
-      {/* Rows */}
       {Array.from({ length: rows }).map((_, rowIndex) => (
-        <div
-          key={`row-${rowIndex}`}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${columns}, 1fr)`,
-            gap: '1rem',
-            marginBottom: '0.5rem',
-            padding: '1rem',
-            backgroundColor: 'var(--cds-layer-01)'
-          }}
-        >
+        <div key={`row-${rowIndex}`} className="loading-table-skeleton__row">
           {Array.from({ length: columns }).map((_, colIndex) => (
-            <div
-              key={`cell-${rowIndex}-${colIndex}`}
-              style={{
-                height: '20px',
-                backgroundColor: 'var(--cds-skeleton-background)',
-                borderRadius: '4px',
-                animation: 'skeleton-loading 1.5s ease-in-out infinite',
-                animationDelay: `${(rowIndex * columns + colIndex) * 0.05}s`
-              }}
-            />
+            <div key={`cell-${rowIndex}-${colIndex}`} className="loading-table-skeleton__cell" />
           ))}
         </div>
       ))}
@@ -124,47 +82,15 @@ export const TableSkeletonLoader = ({ rows = 5, columns = 4 }) => {
 
 export const CardSkeletonLoader = ({ count = 3 }) => {
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-      gap: '1rem',
-      width: '100%'
-    }}>
+    <div className="loading-card-skeleton">
       {Array.from({ length: count }).map((_, index) => (
-        <div
-          key={index}
-          style={{
-            padding: '1.5rem',
-            backgroundColor: 'var(--cds-layer-01)',
-            borderRadius: '4px',
-            minHeight: '200px'
-          }}
-        >
-          {/* Title */}
-          <div
-            style={{
-              height: '24px',
-              width: '60%',
-              backgroundColor: 'var(--cds-skeleton-background)',
-              borderRadius: '4px',
-              marginBottom: '1rem',
-              animation: 'skeleton-loading 1.5s ease-in-out infinite'
-            }}
-          />
+        <div key={index} className="loading-card-skeleton__item">
+          <div className="loading-card-skeleton__title" />
 
-          {/* Content lines */}
           {Array.from({ length: 3 }).map((_, lineIndex) => (
             <div
               key={lineIndex}
-              style={{
-                height: '16px',
-                width: lineIndex === 2 ? '40%' : '100%',
-                backgroundColor: 'var(--cds-skeleton-background)',
-                borderRadius: '4px',
-                marginBottom: '0.5rem',
-                animation: 'skeleton-loading 1.5s ease-in-out infinite',
-                animationDelay: `${lineIndex * 0.1}s`
-              }}
+              className={`loading-card-skeleton__line${lineIndex === 2 ? ' loading-card-skeleton__line--short' : ''}`}
             />
           ))}
         </div>
@@ -180,5 +106,4 @@ export default {
   TableSkeletonLoader,
   CardSkeletonLoader
 };
-
 

@@ -1,13 +1,139 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path');
+const { spawn } = require('child_process');
 const keyManager = require('./crypto/keyManager');
 const encryptor = require('./crypto/encryptor');
 const signer = require('./crypto/signer');
 const keyStorage = require('./crypto/keyStorage');
 const contractCli = require('./crypto/contractCli');
 
+const TOOL_INFO_TIMEOUT_MS = 5000;
+
+const firstNonEmptyLine = (value = '') => (
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) || ''
+);
+
+const runToolCommand = (command, args = []) => new Promise((resolve) => {
+  let stdout = '';
+  let stderr = '';
+  let timedOut = false;
+  let settled = false;
+
+  const child = spawn(command, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
+  });
+
+  const done = (payload) => {
+    if (settled) return;
+    settled = true;
+    resolve(payload);
+  };
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGKILL');
+  }, TOOL_INFO_TIMEOUT_MS);
+
+  child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+  child.on('error', (error) => {
+    clearTimeout(timeoutId);
+    done({
+      ok: false,
+      output: '',
+      error: error?.code === 'ENOENT'
+        ? `Command not found: ${command}`
+        : (error?.message || 'Unknown error')
+    });
+  });
+
+  child.on('close', (code) => {
+    clearTimeout(timeoutId);
+
+    if (timedOut) {
+      done({
+        ok: false,
+        output: '',
+        error: `Timed out after ${TOOL_INFO_TIMEOUT_MS}ms`
+      });
+      return;
+    }
+
+    const output = `${stdout}\n${stderr}`.trim();
+    if (code === 0) {
+      done({
+        ok: true,
+        output,
+        error: ''
+      });
+      return;
+    }
+
+    done({
+      ok: false,
+      output,
+      error: output || `Exited with code ${code}`
+    });
+  });
+});
+
+const getContractCliInfo = async () => {
+  const cliPath = process.env.CONTRACT_CLI_PATH || 'contract-cli';
+  const attempts = [
+    ['--version'],
+    ['version'],
+    ['-v']
+  ];
+
+  let lastFailure = { error: 'Unknown error', output: '' };
+  for (const args of attempts) {
+    const result = await runToolCommand(cliPath, args);
+    if (result.ok) {
+      return {
+        command: `${cliPath} ${args.join(' ')}`.trim(),
+        installed: true,
+        version: firstNonEmptyLine(result.output) || 'Unknown',
+        details: result.output || 'Version command succeeded with no output'
+      };
+    }
+    lastFailure = result;
+  }
+
+  return {
+    command: `${cliPath} --version`,
+    installed: false,
+    version: 'Not detected',
+    details: lastFailure.error || lastFailure.output || 'Unable to detect contract-cli'
+  };
+};
+
+const getOpensslInfo = async () => {
+  const result = await runToolCommand('openssl', ['version']);
+  if (result.ok) {
+    return {
+      command: 'openssl version',
+      installed: true,
+      version: firstNonEmptyLine(result.output) || 'Unknown',
+      details: result.output || 'Version command succeeded with no output'
+    };
+  }
+
+  return {
+    command: 'openssl version',
+    installed: false,
+    version: 'Not detected',
+    details: result.error || result.output || 'Unable to detect OpenSSL'
+  };
+};
+
 const createWindow = () => {
   const isDev = process.env.NODE_ENV === 'development';
+  const isMac = process.platform === 'darwin';
   
   const win = new BrowserWindow({
     width: 1280,
@@ -25,9 +151,19 @@ const createWindow = () => {
     title: 'IBM Confidential Computing Contract Generator',
     icon: path.join(__dirname, '../assets/icon.png'),
     frame: false,  // Remove the default title bar
-    titleBarStyle: 'hidden',  // Hide title bar on macOS
+    titleBarStyle: isMac ? 'hidden' : 'default',
     autoHideMenuBar: true  // Hide the menu bar
   });
+
+  const hideMacWindowButtons = () => {
+    if (!isMac || typeof win.setWindowButtonVisibility !== 'function') return;
+    // We render custom controls in the React titlebar.
+    win.setWindowButtonVisibility(false);
+  };
+
+  hideMacWindowButtons();
+  win.once('ready-to-show', hideMacWindowButtons);
+  win.on('focus', hideMacWindowButtons);
 
   if (isDev) {
     win.loadURL('http://localhost:5173');
@@ -655,6 +791,31 @@ ipcMain.handle('auditor:signContract', async (event, {
     child.stdin.write(contractYaml);
     child.stdin.end();
   });
+});
+
+// ============================================================================
+// IPC Handlers - App Information
+// ============================================================================
+
+ipcMain.handle('app:getClientToolInfo', async () => {
+  const [contractCliInfo, opensslInfo] = await Promise.all([
+    getContractCliInfo(),
+    getOpensslInfo()
+  ]);
+
+  return {
+    app: {
+      name: 'IBM CC Contract Builder',
+      version: app.getVersion(),
+      electron: process.versions.electron || 'Unknown',
+      chromium: process.versions.chrome || 'Unknown',
+      node: process.versions.node || 'Unknown',
+      platform: `${process.platform} (${process.arch})`
+    },
+    contractCli: contractCliInfo,
+    openssl: opensslInfo,
+    checkedAt: new Date().toISOString()
+  };
 });
 
 // ============================================================================

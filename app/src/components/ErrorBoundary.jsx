@@ -91,28 +91,14 @@ class ErrorBoundary extends React.Component {
 
       // Default error UI
       return (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: '100vh',
-          padding: '2rem',
-          backgroundColor: 'var(--cds-background)'
-        }}>
-          <div style={{
-            maxWidth: '600px',
-            width: '100%'
-          }}>
-            <div style={{
-              textAlign: 'center',
-              marginBottom: '2rem'
-            }}>
-              <WarningAlt size={64} style={{ color: 'var(--cds-support-error)' }} />
-              <h1 style={{ marginTop: '1rem', marginBottom: '0.5rem' }}>
+        <div className="error-boundary">
+          <div className="error-boundary__content">
+            <div className="error-boundary__header">
+              <WarningAlt size={64} className="error-boundary__icon" />
+              <h1 className="error-boundary__title">
                 Something went wrong
               </h1>
-              <p style={{ color: 'var(--cds-text-secondary)' }}>
+              <p className="error-boundary__copy">
                 The application encountered an unexpected error. Please try again.
               </p>
             </div>
@@ -123,38 +109,21 @@ class ErrorBoundary extends React.Component {
               subtitle={error?.toString() || 'Unknown error'}
               lowContrast
               hideCloseButton
-              style={{ marginBottom: '2rem' }}
+              className="error-boundary__notification"
             />
 
             {errorInfo && (
-              <details style={{
-                marginBottom: '2rem',
-                padding: '1rem',
-                backgroundColor: 'var(--cds-layer-01)',
-                borderRadius: '4px',
-                fontSize: '0.875rem',
-                fontFamily: 'monospace'
-              }}>
-                <summary style={{ cursor: 'pointer', marginBottom: '0.5rem' }}>
+              <details className="error-boundary__details">
+                <summary className="error-boundary__summary">
                   Component Stack Trace
                 </summary>
-                <pre style={{
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  margin: 0,
-                  color: 'var(--cds-text-secondary)'
-                }}>
+                <pre className="error-boundary__stack">
                   {errorInfo.componentStack}
                 </pre>
               </details>
             )}
 
-            <div style={{
-              display: 'flex',
-              gap: '1rem',
-              justifyContent: 'center',
-              flexWrap: 'wrap'
-            }}>
+            <div className="error-boundary__actions">
               <Button
                 kind="primary"
                 renderIcon={Renew}
@@ -184,7 +153,7 @@ class ErrorBoundary extends React.Component {
                 subtitle="This error has occurred multiple times. Please contact support if the issue persists."
                 lowContrast
                 hideCloseButton
-                style={{ marginTop: '2rem' }}
+                className="error-boundary__persistent"
               />
             )}
           </div>
@@ -197,5 +166,4 @@ class ErrorBoundary extends React.Component {
 }
 
 export default ErrorBoundary;
-
 

@@ -184,8 +184,8 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
 
   return (
     <div className="public-key-manager">
-      <Tile className="key-info-tile">
-        <div className="key-header">
+      <Tile className="public-key-manager__tile">
+        <div className="public-key-manager__header">
           <h4>
             {keyInfo ? <Locked size={20} /> : <Unlocked size={20} />}
             {' '}Public Key Status
@@ -194,25 +194,29 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
         </div>
 
         {keyInfo ? (
-          <div className="key-details">
-            <div className="key-detail-row">
-              <span className="label">Fingerprint:</span>
-              <CodeSnippet type="inline" feedback="Copied to clipboard">
+          <div className="public-key-manager__details">
+            <div className="public-key-manager__detail-row public-key-manager__detail-row--fingerprint">
+              <span className="public-key-manager__label">Fingerprint:</span>
+              <CodeSnippet
+                type="single"
+                feedback="Copied to clipboard"
+                className="public-key-manager__fingerprint-snippet"
+              >
                 {formatFingerprint(keyInfo.fingerprint)}
               </CodeSnippet>
             </div>
 
-            <div className="key-detail-row">
-              <span className="label">Registered:</span>
+            <div className="public-key-manager__detail-row">
+              <span className="public-key-manager__label">Registered:</span>
               <span>{new Date(keyInfo.created_at).toLocaleDateString()}</span>
             </div>
 
-            <div className="key-detail-row">
-              <span className="label">Expires:</span>
+            <div className="public-key-manager__detail-row">
+              <span className="public-key-manager__label">Expires:</span>
               <span>
                 {new Date(keyInfo.expires_at).toLocaleDateString()}
                 {keyStatus && (
-                  <span className="expiry-info">
+                  <span className="public-key-manager__expiry">
                     {' '}({keyStatus.daysUntilExpiry} days remaining)
                   </span>
                 )}
@@ -241,13 +245,13 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
               kind="tertiary"
               renderIcon={Renew}
               onClick={handleOpenModal}
-              className="rotate-key-button"
+              className="public-key-manager__rotate-button"
             >
               Rotate Key
             </Button>
           </div>
         ) : (
-          <div className="no-key">
+          <div className="public-key-manager__empty">
             <InlineNotification
               kind="warning"
               title="No Public Key Registered"
@@ -293,7 +297,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           />
         </ProgressIndicator>
 
-        <div className="modal-content">
+        <div className="public-key-manager__modal-content">
           {error && (
             <InlineNotification
               kind="error"
@@ -314,7 +318,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           )}
 
           {currentStep === 0 && (
-            <div className="step-content">
+            <div className="public-key-manager__step-content">
               <p>
                 This will generate a new RSA-4096 key pair for cryptographic operations.
                 The private key will be stored securely on your device, and the public key
@@ -333,10 +337,10 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           )}
 
           {currentStep === 1 && generatedKeyPair && (
-            <div className="step-content">
+            <div className="public-key-manager__step-content">
               <p>Key pair generated successfully!</p>
 
-              <div className="key-info-display">
+              <div className="public-key-manager__key-info-display">
                 <TextInput
                   id="fingerprint"
                   labelText="Public Key Fingerprint"
@@ -355,7 +359,7 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           )}
 
           {currentStep === 2 && (
-            <div className="step-content">
+            <div className="public-key-manager__step-content">
               <InlineNotification
                 kind="success"
                 title="Registration Complete"
@@ -366,80 +370,8 @@ const PublicKeyManager = ({ userId, isAdmin = false }) => {
           )}
         </div>
       </Modal>
-
-      <style>{`
-        .public-key-manager {
-          margin: 1rem 0;
-        }
-        
-        .key-info-tile {
-          padding: 1.5rem;
-        }
-        
-        .key-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1rem;
-        }
-        
-        .key-header h4 {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          margin: 0;
-        }
-        
-        .key-details {
-          display: flex;
-          flex-direction: column;
-          gap: 1rem;
-        }
-        
-        .key-detail-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        
-        .key-detail-row .label {
-          font-weight: 600;
-          color: var(--cds-text-secondary);
-        }
-        
-        .expiry-info {
-          color: var(--cds-text-secondary);
-          font-size: 0.875rem;
-        }
-        
-        .no-key {
-          display: flex;
-          flex-direction: column;
-          gap: 1rem;
-        }
-        
-        .rotate-key-button {
-          margin-top: 1rem;
-        }
-        
-        .modal-content {
-          margin-top: 2rem;
-        }
-        
-        .step-content {
-          margin-top: 1.5rem;
-        }
-        
-        .key-info-display {
-          margin-top: 1rem;
-          display: flex;
-          flex-direction: column;
-          gap: 1rem;
-        }
-      `}</style>
     </div>
   );
 };
 
 export default PublicKeyManager;
-

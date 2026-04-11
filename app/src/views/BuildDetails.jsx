@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Grid,
   Column,
@@ -12,83 +12,72 @@ import {
   BreadcrumbItem
 } from '@carbon/react';
 import { ArrowLeft } from '@carbon/icons-react';
-import { useAuthStore } from '../store/authStore';
 import BuildAssignments from '../components/BuildAssignments';
 import ContractExport from '../components/ContractExport';
 import AuditViewer from '../components/AuditViewer';
 import SectionSubmit from '../components/SectionSubmit';
 import FinaliseContract from '../components/FinaliseContract';
-import assignmentService from '../services/assignmentService';
+
+const TAB_LABELS = {
+  assignments: 'Assignments',
+  SOLUTION_PROVIDER: 'Add Workload',
+  DATA_OWNER: 'Add Environment',
+  AUDITOR: 'Sign & Add Attestation',
+  finalise: 'Finalise Contract',
+  export: 'Export Contract',
+  audit: 'Audit Trail'
+};
+
+const ROLE_BUILD_TAB_KEYS = {
+  ADMIN: ['assignments', 'audit'],
+  SOLUTION_PROVIDER: ['assignments', 'SOLUTION_PROVIDER', 'audit'],
+  DATA_OWNER: ['assignments', 'DATA_OWNER', 'audit'],
+  AUDITOR: ['assignments', 'AUDITOR', 'finalise', 'audit'],
+  ENV_OPERATOR: ['assignments', 'export', 'audit'],
+  VIEWER: ['assignments', 'audit']
+};
 
 /**
  * BuildDetails View
  * Integrated view for build management with assignments, section submission, export, and audit
  */
-const BuildDetails = ({ build, onBack, userRole, userRoles = [], advanceBuildState }) => {
-  const { user } = useAuthStore();
+const BuildDetails = ({ build, onBack, userRole, advanceBuildState }) => {
   const [selectedTab, setSelectedTab] = useState(0);
-  const [myRolesInBuild, setMyRolesInBuild] = useState([]);
   const [currentStatus, setCurrentStatus] = useState(build?.status);
 
   useEffect(() => { setCurrentStatus(build?.status); }, [build?.status]);
 
-  const handleStatusUpdate = (newStatus) => {
+  const handleStatusUpdate = useCallback((newStatus) => {
     setCurrentStatus(newStatus);
     advanceBuildState?.(build.id, newStatus);
-  };
+  }, [advanceBuildState, build?.id]);
 
-  const isAdmin = userRole === 'ADMIN' || user?.roles?.includes('ADMIN');
-  const allRoles = userRoles.length > 0 ? userRoles : [userRole];
-  const isEnvOperator = allRoles.includes('ENV_OPERATOR');
+  const tabs = useMemo(() => {
+    const tabKeys = ROLE_BUILD_TAB_KEYS[userRole] || ROLE_BUILD_TAB_KEYS.VIEWER;
+    return tabKeys.map((key) => ({
+      key,
+      label: TAB_LABELS[key] || key
+    }));
+  }, [userRole]);
 
   useEffect(() => {
-    if (!build) return;
-    loadMyAssignments();
-  }, [build?.id]);
-
-  const loadMyAssignments = async () => {
-    try {
-      const assignments = await assignmentService.getBuildAssignments(build.id);
-      const userId = user?.id;
-      const myAssignments = assignments
-        .filter(a => a.user_id === userId)
-        .map(a => a.role_name);
-      setMyRolesInBuild(myAssignments);
-    } catch (err) {
-      console.error('Failed to load assignments:', err);
+    if (selectedTab >= tabs.length) {
+      setSelectedTab(0);
     }
-  };
+  }, [selectedTab, tabs.length]);
 
   if (!build) {
     return (
-      <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '2rem' }}>
+      <div className="app-page app-page--wide app-page--padded">
         <p>Loading build details...</p>
       </div>
     );
   }
 
-  const isAuditor = allRoles.includes('AUDITOR');
-
-  // Determine which section tabs to show based on user's assignment in this build
-  const sectionTabs = [
-    { role: 'SOLUTION_PROVIDER', label: 'Add Workload' },
-    { role: 'DATA_OWNER',        label: 'Add Environment' },
-    { role: 'AUDITOR',           label: 'Sign & Add Attestation' },
-  ].filter(t => myRolesInBuild.includes(t.role));
-
-  // Build tab list dynamically
-  const tabs = [
-    ...(isAdmin ? [{ key: 'assignments', label: 'Assignments' }] : []),
-    ...sectionTabs.map(t => ({ key: t.role, label: t.label })),
-    ...(isAuditor || isAdmin ? [{ key: 'finalise', label: 'Finalise Contract' }] : []),
-    ...(isEnvOperator || isAdmin ? [{ key: 'export', label: 'Export Contract' }] : []),
-    { key: 'audit', label: 'Audit Trail' },
-  ];
-
   return (
-    <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '2rem' }}>
+    <div className="app-page app-page--wide app-page--padded">
       {/* Breadcrumb Navigation */}
-      <Breadcrumb noTrailingSlash style={{ marginBottom: '1rem' }}>
+      <Breadcrumb noTrailingSlash className="build-details-breadcrumb">
         <BreadcrumbItem>
           <a href="#" onClick={(e) => { e.preventDefault(); onBack?.(); }}>
             Builds
@@ -100,23 +89,20 @@ const BuildDetails = ({ build, onBack, userRole, userRoles = [], advanceBuildSta
       </Breadcrumb>
 
       {/* Header */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '2rem'
-      }}>
+      <div className="app-page__header">
         <div>
-          <h1 style={{ marginBottom: '0.5rem' }}>{build.name}</h1>
-          <p style={{ color: 'var(--cds-text-secondary)' }}>
+          <h1 className="app-page__title">{build.name}</h1>
+          <p className="app-page__subtitle">
             Build ID: {build.id} • Status: {currentStatus}
           </p>
         </div>
         <Button
-          kind="ghost"
-          renderIcon={ArrowLeft}
+          kind="tertiary"
+          size="md"
           onClick={onBack}
+          className="build-details-back-button"
         >
+          <ArrowLeft size={16} className="build-details-back-button__icon" />
           Back to Builds
         </Button>
       </div>
@@ -130,13 +116,12 @@ const BuildDetails = ({ build, onBack, userRole, userRoles = [], advanceBuildSta
         <TabPanels>
           {tabs.map(t => (
             <TabPanel key={t.key}>
-              <div style={{ padding: '2rem 0' }}>
+              <div className="build-details-tab-content">
                 <Grid narrow>
                   <Column lg={16}>
                     {t.key === 'assignments' && (
                       <BuildAssignments
                         buildId={build.id}
-                        userRole={userRole}
                         buildStatus={currentStatus}
                       />
                     )}
@@ -159,7 +144,7 @@ const BuildDetails = ({ build, onBack, userRole, userRoles = [], advanceBuildSta
                       <ContractExport buildId={build.id} buildStatus={currentStatus} />
                     )}
                     {t.key === 'audit' && (
-                      <AuditViewer buildId={build.id} />
+                      <AuditViewer buildId={build.id} userRole={userRole} />
                     )}
                   </Column>
                 </Grid>

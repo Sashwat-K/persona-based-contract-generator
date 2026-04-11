@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Tag,
   Accordion,
@@ -8,29 +8,125 @@ import {
   CodeSnippet,
   Tile,
   Loading,
-  Toggle
+  Toggle,
+  Modal
 } from '@carbon/react';
 import {
   CheckmarkFilled,
   ErrorFilled,
   WarningAlt,
-  View,
   Renew,
-  ChevronRight,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Information
 } from '@carbon/icons-react';
 import { useBuildStore } from '../store/buildStore';
 import buildService from '../services/buildService';
 import verificationService from '../services/verificationService';
-import cryptoService from '../services/cryptoService';
+import { formatDate } from '../utils/formatters';
+
+const EVENT_META = {
+  BUILD_CREATED: { tagType: 'blue', tagLabel: 'Created', title: 'Build Created' },
+  WORKLOAD_SUBMITTED: { tagType: 'green', tagLabel: 'Workload', title: 'Workload Submitted' },
+  ENVIRONMENT_STAGED: { tagType: 'teal', tagLabel: 'Environment', title: 'Environment Staged' },
+  AUDITOR_KEYS_REGISTERED: { tagType: 'purple', tagLabel: 'Attestation', title: 'Auditor Keys Registered' },
+  CONTRACT_ASSEMBLED: { tagType: 'cyan', tagLabel: 'Assembly', title: 'Contract Assembled' },
+  BUILD_FINALIZED: { tagType: 'magenta', tagLabel: 'Finalized', title: 'Build Finalized' },
+  CONTRACT_DOWNLOADED: { tagType: 'gray', tagLabel: 'Downloaded', title: 'Contract Downloaded' },
+  BUILD_CANCELLED: { tagType: 'red', tagLabel: 'Cancelled', title: 'Build Cancelled' },
+  ROLE_ASSIGNED: { tagType: 'cyan', tagLabel: 'Assignment', title: 'Role Assigned' },
+};
+
+const ASSIGNMENT_ROLE_LABELS = {
+  SOLUTION_PROVIDER: 'Solution Provider Assigned',
+  DATA_OWNER: 'Data Owner Assigned',
+  AUDITOR: 'Auditor Assigned',
+  ENV_OPERATOR: 'Environment Operator Assigned',
+  ADMIN: 'Administrator Assigned',
+  VIEWER: 'Viewer Assigned'
+};
+
+const EVENT_TYPES_REQUIRING_SIGNATURE = new Set([
+  'BUILD_FINALIZED',
+  'CONTRACT_DOWNLOADED',
+]);
+
+const VERIFIABLE_EVENT_TYPES = new Set([
+  'WORKLOAD_SUBMITTED',
+  'ENVIRONMENT_STAGED',
+  'AUDITOR_KEYS_REGISTERED',
+  'BUILD_FINALIZED'
+]);
+
+const STAGE_VERIFY_CONFIG = [
+  {
+    eventType: 'WORKLOAD_SUBMITTED',
+    title: 'Workload Submitted',
+    description: 'Confirms the workload submission event is linked correctly in the audit chain.',
+    requiresSignature: false,
+    personaRole: 'SOLUTION_PROVIDER'
+  },
+  {
+    eventType: 'ENVIRONMENT_STAGED',
+    title: 'Environment Staged',
+    description: 'Confirms the environment stage event is linked correctly in the audit chain.',
+    requiresSignature: false,
+    personaRole: 'DATA_OWNER'
+  },
+  {
+    eventType: 'AUDITOR_KEYS_REGISTERED',
+    title: 'Attestation Keys Registered',
+    description: 'Confirms attestation key registration is linked correctly in the audit chain.',
+    requiresSignature: false,
+    personaRole: 'AUDITOR'
+  },
+  {
+    eventType: 'BUILD_FINALIZED',
+    title: 'Build Finalized',
+    description: 'Confirms the finalization event is linked correctly and signature validation succeeds.',
+    requiresSignature: true,
+    personaRole: 'AUDITOR'
+  }
+];
+
+const buildHashLinkCheckCommand = (currentEvent, previousEvent) => {
+  if (!currentEvent) {
+    return 'This stage event is not available in the audit trail yet.';
+  }
+
+  if (!previousEvent) {
+    return 'No previous event found. Hash-link check needs this event and the one immediately before it.';
+  }
+
+  return [
+    `PREVIOUS_EVENT_HASH="${currentEvent.previous_event_hash || '<missing_previous_hash>'}"`,
+    `EXPECTED_HASH="${previousEvent.event_hash || '<missing_event_hash>'}"`,
+    '[ "$PREVIOUS_EVENT_HASH" = "$EXPECTED_HASH" ] && echo "PASS: hash link is correct" || echo "FAIL: hash link mismatch"'
+  ].join('\n');
+};
+
+const buildSignatureCheckCommand = (event) => {
+  if (!event?.signature) return null;
+
+  return [
+    `# Use values copied from Event #${event.sequence_no}`,
+    `EVENT_HASH="${event.event_hash || '<event_hash>'}"`,
+    '',
+    '# 1) Paste Signature value into event-signature.b64',
+    '# 2) Save the matching actor public key as actor-public.pem',
+    'openssl base64 -d -A -in event-signature.b64 -out event-signature.bin',
+    'printf \'%s\' "$EVENT_HASH" > event-hash.txt',
+    'openssl dgst -sha256 -verify actor-public.pem -signature event-signature.bin event-hash.txt',
+    'echo "If you see \\"Verified OK\\", signature validation passed."'
+  ].join('\n');
+};
 
 /**
  * AuditViewer Component
  * Displays audit trail with hash chain visualization and verification
  * Features: Timeline, hash chain, actor fingerprints, verification status
  */
-const AuditViewer = ({ buildId }) => {
-  const { getBuildAuditEvents, getBuildVerificationResult } = useBuildStore();
+const AuditViewer = ({ buildId, userRole = 'VIEWER' }) => {
+  const { getBuildVerificationResult } = useBuildStore();
 
   const [auditEvents, setAuditEvents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -39,30 +135,35 @@ const AuditViewer = ({ buildId }) => {
   // Verification state
   const [verificationResult, setVerificationResult] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [showVerifyInfo, setShowVerifyInfo] = useState(false);
+  const [showStageVerifyInfo, setShowStageVerifyInfo] = useState(false);
+  const [selectedStageType, setSelectedStageType] = useState(null);
 
   // Display options
   const [showHashChain, setShowHashChain] = useState(true);
   const [showSignatures, setShowSignatures] = useState(false);
-  const [expandedEvents, setExpandedEvents] = useState(new Set());
 
-  const EVENT_META = {
-    BUILD_CREATED: { tagType: 'blue', tagLabel: 'Created', title: 'Build Created' },
-    WORKLOAD_SUBMITTED: { tagType: 'green', tagLabel: 'Workload', title: 'Workload Submitted' },
-    ENVIRONMENT_STAGED: { tagType: 'teal', tagLabel: 'Environment', title: 'Environment Staged' },
-    AUDITOR_KEYS_REGISTERED: { tagType: 'purple', tagLabel: 'Attestation', title: 'Auditor Keys Registered' },
-    CONTRACT_ASSEMBLED: { tagType: 'cyan', tagLabel: 'Assembly', title: 'Contract Assembled' },
-    BUILD_FINALIZED: { tagType: 'magenta', tagLabel: 'Finalized', title: 'Build Finalized' },
-    CONTRACT_DOWNLOADED: { tagType: 'gray', tagLabel: 'Downloaded', title: 'Contract Downloaded' },
-    BUILD_CANCELLED: { tagType: 'red', tagLabel: 'Cancelled', title: 'Build Cancelled' },
-    ROLE_ASSIGNED: { tagType: 'cyan', tagLabel: 'Assignment', title: 'Role Assigned' },
+  const getAssignmentRoleName = (event) => {
+    const role = event?.event_data?.role_name
+      || event?.event_data?.persona_role
+      || event?.event_data?.assigned_role
+      || event?.event_data?.role;
+    return typeof role === 'string' ? role.toUpperCase() : '';
   };
 
-  const EVENT_TYPES_REQUIRING_SIGNATURE = new Set([
-    'BUILD_FINALIZED',
-    'CONTRACT_DOWNLOADED',
-  ]);
+  const formatEventTitle = (eventOrType) => {
+    const eventType = typeof eventOrType === 'string'
+      ? eventOrType
+      : eventOrType?.event_type;
+    if (!eventType) return 'Unknown';
 
-  const formatEventTitle = (eventType) => {
+    if (eventType === 'ROLE_ASSIGNED' && typeof eventOrType === 'object') {
+      const assignmentRole = getAssignmentRoleName(eventOrType);
+      if (assignmentRole && ASSIGNMENT_ROLE_LABELS[assignmentRole]) {
+        return ASSIGNMENT_ROLE_LABELS[assignmentRole];
+      }
+    }
+
     if (EVENT_META[eventType]?.title) return EVENT_META[eventType].title;
     return (eventType || 'UNKNOWN')
       .toLowerCase()
@@ -70,6 +171,129 @@ const AuditViewer = ({ buildId }) => {
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
       .join(' ');
   };
+
+  const sortedAuditEvents = useMemo(
+    () => [...auditEvents].sort((a, b) => (a.sequence_no || 0) - (b.sequence_no || 0)),
+    [auditEvents]
+  );
+
+  const hasVerifiableEvents = sortedAuditEvents.some((event) =>
+    VERIFIABLE_EVENT_TYPES.has(event.event_type)
+  );
+  const canVerify = hasVerifiableEvents && !isVerifying;
+
+  const verifyInfoContext = useMemo(() => {
+    const firstEvent = sortedAuditEvents[0] || null;
+    const lastEvent = sortedAuditEvents[sortedAuditEvents.length - 1] || null;
+    const previousEvent = sortedAuditEvents.length > 1
+      ? sortedAuditEvents[sortedAuditEvents.length - 2]
+      : null;
+    const lastSignedEvent = [...sortedAuditEvents].reverse().find((event) => !!event.signature) || null;
+    const sampleSequence = lastSignedEvent?.sequence_no ?? '<sequence_no>';
+    const sampleFingerprint = lastSignedEvent?.actor_key_fingerprint || '<actor_key_fingerprint>';
+
+    const hashLinkCheckCommand = previousEvent && lastEvent
+      ? [
+          `PREVIOUS_EVENT_HASH="${lastEvent.previous_event_hash || '<missing_previous_hash>'}"`,
+          `EXPECTED_HASH="${previousEvent.event_hash || '<missing_event_hash>'}"`,
+          '[ "$PREVIOUS_EVENT_HASH" = "$EXPECTED_HASH" ] && echo "PASS: hash link is correct" || echo "FAIL: hash link mismatch"'
+        ].join('\n')
+      : 'Need at least two events to run the hash-link check.';
+
+    const manualSignatureCommand = buildSignatureCheckCommand(lastSignedEvent)
+      || 'No signed events available yet. Run this check after a signed event appears.';
+
+    const keyFingerprintCheckCommand = lastSignedEvent
+      ? [
+          `# Use the actor public key for Event #${sampleSequence} in actor-public.pem`,
+          `EXPECTED_FINGERPRINT="${sampleFingerprint}"`,
+          'ACTUAL_FINGERPRINT=$(openssl pkey -pubin -in actor-public.pem -outform DER \\',
+          '  | openssl dgst -sha256 -binary \\',
+          '  | xxd -p -c 256 \\',
+          '  | tr \'[:lower:]\' \'[:upper:]\' \\',
+          '  | sed -E \'s/(..)/\\1:/g; s/:$//\')',
+          '',
+          'echo "Expected: $EXPECTED_FINGERPRINT"',
+          'echo "Actual:   $ACTUAL_FINGERPRINT"',
+          '[ "$EXPECTED_FINGERPRINT" = "$ACTUAL_FINGERPRINT" ] && echo "PASS: actor key matches event" || echo "FAIL: actor key mismatch"'
+        ].join('\n')
+      : 'No signed events available yet. Run this check after a signed event appears.';
+
+    return {
+      firstEvent,
+      lastEvent,
+      previousEvent,
+      lastSignedEvent,
+      hashLinkCheckCommand,
+      keyFingerprintCheckCommand,
+      manualSignatureCommand
+    };
+  }, [sortedAuditEvents]);
+
+  const stageVerificationGuides = useMemo(() => (
+    STAGE_VERIFY_CONFIG.map((stage) => {
+      const stageEvent = [...sortedAuditEvents]
+        .reverse()
+        .find((event) => event.event_type === stage.eventType) || null;
+
+      if (!stageEvent) {
+        return {
+          ...stage,
+          stageEvent: null,
+          previousEvent: null,
+          hashLinkCheckCommand: buildHashLinkCheckCommand(null, null),
+          signatureCheckCommand: stage.requiresSignature
+            ? null
+            : 'This stage does not require a signature check.',
+          signatureCheckStatusMessage: stage.requiresSignature
+            ? 'This stage signature check will be available once the stage event is recorded.'
+            : 'This stage does not require a signature check.',
+        };
+      }
+
+      const stageIndex = sortedAuditEvents.findIndex((event) => {
+        if (event?.id != null && stageEvent?.id != null) {
+          return event.id === stageEvent.id;
+        }
+        return event?.sequence_no === stageEvent?.sequence_no
+          && event?.event_type === stageEvent?.event_type;
+      });
+      const previousEvent = stageIndex > 0 ? sortedAuditEvents[stageIndex - 1] : null;
+      const hashLinkCheckCommand = buildHashLinkCheckCommand(stageEvent, previousEvent);
+
+      const signatureCheckCommand = stage.requiresSignature
+        ? buildSignatureCheckCommand(stageEvent)
+        : null;
+      const signatureCheckStatusMessage = stage.requiresSignature
+        ? (
+          signatureCheckCommand
+            ? ''
+            : 'No signature is present on this stage event. Signature verification cannot be completed.'
+        )
+        : 'This stage does not require a signature check. Hash-link check is the expected manual validation.';
+
+      return {
+        ...stage,
+        stageEvent,
+        previousEvent,
+        hashLinkCheckCommand,
+        signatureCheckCommand,
+        signatureCheckStatusMessage
+      };
+    })
+  ), [sortedAuditEvents]);
+
+  const selectedStageGuide = useMemo(
+    () => stageVerificationGuides.find((stage) => stage.eventType === selectedStageType) || null,
+    [selectedStageType, stageVerificationGuides]
+  );
+
+  const visibleStageVerificationGuides = useMemo(
+    () => stageVerificationGuides.filter((stage) => stage.personaRole === userRole),
+    [stageVerificationGuides, userRole]
+  );
+
+  const hasVisibleStageGuides = visibleStageVerificationGuides.length > 0;
 
   useEffect(() => {
     loadAuditEvents();
@@ -80,6 +304,22 @@ const AuditViewer = ({ buildId }) => {
       setVerificationResult(cached);
     }
   }, [buildId]);
+
+  useEffect(() => {
+    if (!canVerify && showVerifyInfo) {
+      setShowVerifyInfo(false);
+    }
+  }, [canVerify, showVerifyInfo]);
+
+  useEffect(() => {
+    if (!selectedStageType) return;
+    const stageStillVisible = visibleStageVerificationGuides
+      .some((stage) => stage.eventType === selectedStageType);
+    if (!stageStillVisible) {
+      setShowStageVerifyInfo(false);
+      setSelectedStageType(null);
+    }
+  }, [selectedStageType, visibleStageVerificationGuides]);
 
   const loadAuditEvents = async () => {
     setLoading(true);
@@ -96,6 +336,8 @@ const AuditViewer = ({ buildId }) => {
   };
 
   const handleVerify = async () => {
+    if (!canVerify) return;
+
     setIsVerifying(true);
     setError(null);
 
@@ -155,18 +397,6 @@ const AuditViewer = ({ buildId }) => {
     }
   };
 
-  const toggleEventExpansion = (eventId) => {
-    setExpandedEvents(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(eventId)) {
-        newSet.delete(eventId);
-      } else {
-        newSet.add(eventId);
-      }
-      return newSet;
-    });
-  };
-
   const getEventTypeTag = (eventType) => {
     const config = EVENT_META[eventType]
       ? { type: EVENT_META[eventType].tagType, label: EVENT_META[eventType].tagLabel }
@@ -208,15 +438,15 @@ const AuditViewer = ({ buildId }) => {
             </div>
           </div>
 
-          {auditEvents.map((event, index) => (
+          {auditEvents.map((event) => (
             <React.Fragment key={event.id}>
               <div className="chain-link">
                 <LinkIcon size={16} />
               </div>
               <div className="chain-item">
                 <div className="chain-node">
-                  <span className="node-label" style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)' }}>
-                    #{event.sequence_no} · {formatEventTitle(event.event_type)}
+                  <span className="node-label node-label--secondary">
+                    #{event.sequence_no} · {formatEventTitle(event)}
                   </span>
                   <CodeSnippet type="inline" feedback="Copied">
                     {formatHash(event.event_hash)}
@@ -282,6 +512,41 @@ const AuditViewer = ({ buildId }) => {
     );
   };
 
+  const renderStageVerificationGuides = () => (
+    <div className="audit-stage-guides">
+      <h5 className="audit-stage-guides__title">Stage Verification Guides</h5>
+      <div className="audit-stage-guides__grid">
+        {visibleStageVerificationGuides.map((stage) => (
+          <Tile key={stage.eventType} className="audit-stage-guide">
+            <div className="audit-stage-guide__header">
+              <div className="audit-stage-guide__meta">
+                <h6>{stage.title}</h6>
+                <p>{stage.description}</p>
+              </div>
+              <Tag type={stage.stageEvent ? 'green' : 'gray'}>
+                {stage.stageEvent ? `Event #${stage.stageEvent.sequence_no}` : 'Pending'}
+              </Tag>
+            </div>
+            <p className="audit-stage-guide__expectation">
+              {stage.requiresSignature ? 'Hash-chain + signature check' : 'Hash-chain check only'}
+            </p>
+            <Button
+              kind="ghost"
+              size="sm"
+              renderIcon={Information}
+              onClick={() => {
+                setSelectedStageType(stage.eventType);
+                setShowStageVerifyInfo(true);
+              }}
+            >
+              How to verify this stage
+            </Button>
+          </Tile>
+        ))}
+      </div>
+    </div>
+  );
+
   const renderEventDetails = (event) => {
     return (
       <div className="event-details">
@@ -298,7 +563,9 @@ const AuditViewer = ({ buildId }) => {
             </div>
             <div className="detail-item">
               <span className="detail-label">Timestamp:</span>
-              <span className="detail-value">{new Date(event.created_at).toLocaleString()}</span>
+              <span className="detail-value">
+                {formatDate(event.created_at, { second: '2-digit', timeZoneName: 'short' })}
+              </span>
             </div>
           </div>
         </div>
@@ -339,7 +606,7 @@ const AuditViewer = ({ buildId }) => {
           </div>
         )}
 
-        {showSignatures && (
+        {showSignatures && (event.signature || EVENT_TYPES_REQUIRING_SIGNATURE.has(event.event_type)) && (
           <div className="detail-section">
             <h6>Cryptographic Signature</h6>
             {event.signature ? (
@@ -351,15 +618,11 @@ const AuditViewer = ({ buildId }) => {
                 <InlineNotification
                   kind="warning"
                   title="Missing Signature"
-                  subtitle={`Event type "${formatEventTitle(event.event_type)}" should be signed, but signature is missing.`}
+                  subtitle={`Event type "${formatEventTitle(event)}" should be signed, but signature is missing.`}
                   lowContrast
                   hideCloseButton
                 />
-              ) : (
-                <span style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
-                  Not signed. This event type is administrative and does not require a cryptographic signature.
-                </span>
-              )
+              ) : null
             )}
           </div>
         )}
@@ -408,7 +671,7 @@ const AuditViewer = ({ buildId }) => {
             />
             <Button
               kind="tertiary"
-              size="sm"
+              size="md"
               renderIcon={Renew}
               onClick={loadAuditEvents}
               disabled={loading}
@@ -416,13 +679,20 @@ const AuditViewer = ({ buildId }) => {
               Refresh
             </Button>
             <Button
+              kind="ghost"
+              size="md"
+              hasIconOnly
+              renderIcon={Information}
+              iconDescription="How verification works"
+              disabled={!canVerify}
+              onClick={() => setShowVerifyInfo(true)}
+            />
+            <Button
               kind="primary"
               size="sm"
               renderIcon={CheckmarkFilled}
               onClick={handleVerify}
-              disabled={isVerifying || !auditEvents.some(e =>
-                ['WORKLOAD_SUBMITTED', 'ENVIRONMENT_STAGED', 'AUDITOR_KEYS_REGISTERED', 'BUILD_FINALIZED'].includes(e.event_type)
-              )}
+              disabled={!canVerify}
             >
               {isVerifying ? 'Verifying...' : 'Verify'}
             </Button>
@@ -432,6 +702,170 @@ const AuditViewer = ({ buildId }) => {
 
       {renderVerificationSummary()}
       {renderHashChain()}
+
+      <Modal
+        open={showVerifyInfo}
+        passiveModal
+        modalHeading="How Verify Works"
+        onRequestClose={() => setShowVerifyInfo(false)}
+      >
+        <div className="audit-viewer-verify-info">
+          <p>
+            This guide helps you manually confirm the same checks done by the <strong>Verify</strong> button.
+            You only need values shown in this screen and a terminal.
+          </p>
+          {hasVisibleStageGuides && (
+            <p>
+              Need stage-specific instructions? Use <strong>How to verify this stage</strong> in the
+              Stage Verification Guides section.
+            </p>
+          )}
+          <p>
+            Goal: confirm the event chain is linked correctly and that a signed event was signed by the expected actor key.
+          </p>
+          <div className="audit-viewer-verify-info__meta">
+            <div>
+              <strong>Build:</strong> <code>{buildId}</code>
+            </div>
+            <div>
+              <strong>Total events:</strong> {sortedAuditEvents.length}
+            </div>
+            <div>
+              <strong>First event:</strong>{' '}
+              {verifyInfoContext.firstEvent ? `#${verifyInfoContext.firstEvent.sequence_no}` : 'N/A'}
+            </div>
+            <div>
+              <strong>Latest event:</strong>{' '}
+              {verifyInfoContext.lastEvent ? `#${verifyInfoContext.lastEvent.sequence_no}` : 'N/A'}
+            </div>
+            <div>
+              <strong>Recommended signed event:</strong>{' '}
+              {verifyInfoContext.lastSignedEvent ? `#${verifyInfoContext.lastSignedEvent.sequence_no}` : 'N/A'}
+            </div>
+          </div>
+          <p>
+            Manual verification steps:
+          </p>
+          <ol>
+            <li>
+              <strong>Check one hash-chain link.</strong>{' '}
+              Compare the latest event&apos;s <code>Previous Hash</code> with the event hash just before it.
+              If output says <code>PASS</code>, the chain link is valid.
+            </li>
+          </ol>
+          <CodeSnippet type="multi" feedback="Copied">
+            {verifyInfoContext.hashLinkCheckCommand}
+          </CodeSnippet>
+          <ol start={2}>
+            <li>
+              <strong>Confirm the actor public key matches the event fingerprint.</strong>{' '}
+              Use the same signed event for all values. If output says <code>PASS</code>,
+              the key file you are using matches that event.
+            </li>
+          </ol>
+          <CodeSnippet type="multi" feedback="Copied">
+            {verifyInfoContext.keyFingerprintCheckCommand}
+          </CodeSnippet>
+          <ol start={3}>
+            <li>
+              <strong>Validate the event signature.</strong>{' '}
+              Use the same event&apos;s <code>Event Hash</code>, <code>Signature</code>, and actor public key.
+              If OpenSSL prints <code>Verified OK</code>, signature validation passed.
+            </li>
+          </ol>
+          <CodeSnippet type="multi" feedback="Copied">
+            {verifyInfoContext.manualSignatureCommand}
+          </CodeSnippet>
+          <ol start={4}>
+            <li>
+              <strong>Read the result.</strong>{' '}
+              If steps 1 and 2 show <code>PASS</code> and step 3 shows <code>Verified OK</code>,
+              the manual verification for that event is successful.
+            </li>
+          </ol>
+          <p>
+            You can repeat steps 2 and 3 for any other signed event if you want additional spot checks.
+          </p>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showStageVerifyInfo}
+        passiveModal
+        modalHeading={selectedStageGuide ? `Verify: ${selectedStageGuide.title}` : 'Verify Stage'}
+        onRequestClose={() => setShowStageVerifyInfo(false)}
+      >
+        <div className="audit-viewer-verify-info">
+          {!selectedStageGuide ? (
+            <p>Select a stage to view manual verification steps.</p>
+          ) : (
+            <>
+              <p>{selectedStageGuide.description}</p>
+              <div className="audit-viewer-verify-info__meta">
+                <div>
+                  <strong>Build:</strong> <code>{buildId}</code>
+                </div>
+                <div>
+                  <strong>Stage status:</strong>{' '}
+                  {selectedStageGuide.stageEvent ? 'Recorded' : 'Pending'}
+                </div>
+                <div>
+                  <strong>Event number:</strong>{' '}
+                  {selectedStageGuide.stageEvent ? `#${selectedStageGuide.stageEvent.sequence_no}` : 'N/A'}
+                </div>
+                <div>
+                  <strong>Recorded at:</strong>{' '}
+                  {selectedStageGuide.stageEvent
+                    ? formatDate(selectedStageGuide.stageEvent.created_at, { second: '2-digit', timeZoneName: 'short' })
+                    : 'N/A'}
+                </div>
+                <div>
+                  <strong>Signature expected:</strong>{' '}
+                  {selectedStageGuide.requiresSignature ? 'Yes' : 'No'}
+                </div>
+              </div>
+
+              <ol>
+                <li>
+                  <strong>Check this stage hash link.</strong>{' '}
+                  If output says <code>PASS</code>, the stage event is correctly linked to the previous event.
+                </li>
+              </ol>
+              <CodeSnippet type="multi" feedback="Copied">
+                {selectedStageGuide.hashLinkCheckCommand}
+              </CodeSnippet>
+
+              {selectedStageGuide.requiresSignature ? (
+                <>
+                  <ol start={2}>
+                    <li>
+                      <strong>Validate this stage signature.</strong>{' '}
+                      If OpenSSL prints <code>Verified OK</code>, signature validation passed.
+                    </li>
+                  </ol>
+                  {selectedStageGuide.signatureCheckCommand ? (
+                    <CodeSnippet type="multi" feedback="Copied">
+                      {selectedStageGuide.signatureCheckCommand}
+                    </CodeSnippet>
+                  ) : (
+                    <InlineNotification
+                      kind="warning"
+                      title="Signature check unavailable"
+                      subtitle={selectedStageGuide.signatureCheckStatusMessage}
+                      lowContrast
+                      hideCloseButton
+                    />
+                  )}
+                </>
+              ) : (
+                <p>
+                  {selectedStageGuide.signatureCheckStatusMessage}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </Modal>
 
       {loading ? (
         <Loading description="Loading audit events..." withOverlay={false} />
@@ -450,10 +884,10 @@ const AuditViewer = ({ buildId }) => {
                 <div className="event-title">
                   {getEventTypeTag(event.event_type)}
                   <span className="event-sequence">#{event.sequence_no}</span>
-                  <span className="event-title-text">{formatEventTitle(event.event_type)}</span>
+                  <span className="event-title-text">{formatEventTitle(event)}</span>
                   <span className="event-actor">{event.actor_name}</span>
                   <span className="event-time">
-                    {new Date(event.created_at).toLocaleString()}
+                    {formatDate(event.created_at, { second: '2-digit', timeZoneName: 'short' })}
                   </span>
                 </div>
               }
@@ -463,205 +897,7 @@ const AuditViewer = ({ buildId }) => {
           ))}
         </Accordion>
       )}
-
-      <style>{`
-        .audit-viewer {
-          margin: 1rem 0;
-        }
-        
-        .viewer-header {
-          margin-bottom: 1rem;
-        }
-        
-        .header-content {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        
-        .header-content h4 {
-          margin: 0;
-        }
-        
-        .header-actions {
-          display: flex;
-          gap: 1rem;
-          align-items: center;
-        }
-        
-        .hash-chain {
-          margin: 1.5rem 0;
-          padding: 1rem;
-          background: var(--cds-layer-01);
-          border-radius: 4px;
-        }
-        
-        .hash-chain h5 {
-          margin-bottom: 1rem;
-        }
-        
-        .chain-container {
-          display: flex;
-          align-items: center;
-          overflow-x: auto;
-          padding: 1rem 0;
-        }
-        
-        .chain-item {
-          flex-shrink: 0;
-        }
-        
-        .chain-item.genesis .chain-node {
-          background: var(--cds-support-success);
-          color: var(--cds-text-inverse);
-        }
-        
-        .chain-node {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 1rem;
-          background: var(--cds-layer-02);
-          border-radius: 4px;
-          min-width: 150px;
-        }
-        
-        .node-label {
-          font-size: 0.875rem;
-          font-weight: 600;
-        }
-        
-        .chain-link {
-          display: flex;
-          align-items: center;
-          padding: 0 0.5rem;
-          color: var(--cds-text-secondary);
-        }
-        
-        .error-icon {
-          color: var(--cds-support-error);
-        }
-        
-        .verification-summary {
-          margin: 1rem 0;
-          padding: 1.5rem;
-        }
-        
-        .summary-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1rem;
-        }
-        
-        .summary-header h5 {
-          margin: 0;
-        }
-        
-        .verification-checks {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 1rem;
-          margin-bottom: 1rem;
-        }
-        
-        .check-item {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 0.5rem;
-          background: var(--cds-layer-02);
-          border-radius: 4px;
-        }
-        
-        .check-label {
-          font-weight: 600;
-        }
-        
-        .verification-stats {
-          display: flex;
-          gap: 2rem;
-          padding-top: 1rem;
-          border-top: 1px solid var(--cds-border-subtle);
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-        
-        .event-title {
-          display: flex;
-          align-items: center;
-          gap: 1rem;
-          width: 100%;
-        }
-        
-        .event-sequence {
-          font-weight: 600;
-          color: var(--cds-text-secondary);
-        }
-        
-        .event-actor {
-          flex: 1;
-        }
-        
-        .event-time {
-          font-size: 0.875rem;
-          color: var(--cds-text-secondary);
-        }
-        
-        .event-details {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-          padding: 1rem 0;
-        }
-        
-        .detail-section h6 {
-          margin-bottom: 0.5rem;
-          font-size: 0.875rem;
-          text-transform: uppercase;
-          color: var(--cds-text-secondary);
-        }
-        
-        .detail-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 1rem;
-        }
-        
-        .detail-item {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-        }
-        
-        .detail-label {
-          font-size: 0.875rem;
-          font-weight: 600;
-          color: var(--cds-text-secondary);
-        }
-        
-        .detail-value {
-          font-weight: 500;
-        }
-        
-        .empty-state {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 3rem;
-          text-align: center;
-        }
-        
-        .empty-state h5 {
-          margin: 1rem 0 0.5rem;
-        }
-        
-        .empty-state p {
-          color: var(--cds-text-secondary);
-        }
-      `}</style>
+      {hasVisibleStageGuides && renderStageVerificationGuides()}
     </div>
   );
 };

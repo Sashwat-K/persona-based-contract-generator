@@ -20,16 +20,33 @@ const ConfirmDialog = ({
   loading = false,
   children
 }) => {
+  const handleRequestClose = (event) => {
+    if (loading) return;
+    onCancel?.(event);
+  };
+
+  const handleSecondarySubmit = (event) => {
+    if (loading) return;
+    onCancel?.(event);
+  };
+
+  const getIconClassName = () => {
+    if (type === 'danger') return 'confirm-dialog__icon confirm-dialog__icon--danger';
+    if (type === 'warning' || type === 'rotate') return 'confirm-dialog__icon confirm-dialog__icon--warning';
+    if (type === 'lock') return 'confirm-dialog__icon confirm-dialog__icon--info';
+    return 'confirm-dialog__icon';
+  };
+
   const getIcon = () => {
     switch (type) {
       case 'danger':
-        return <TrashCan size={32} style={{ color: 'var(--cds-support-error)' }} />;
+        return <TrashCan size={32} className={getIconClassName()} />;
       case 'warning':
-        return <WarningAlt size={32} style={{ color: 'var(--cds-support-warning)' }} />;
+        return <WarningAlt size={32} className={getIconClassName()} />;
       case 'rotate':
-        return <Renew size={32} style={{ color: 'var(--cds-support-warning)' }} />;
+        return <Renew size={32} className={getIconClassName()} />;
       case 'lock':
-        return <Locked size={32} style={{ color: 'var(--cds-support-info)' }} />;
+        return <Locked size={32} className={getIconClassName()} />;
       default:
         return null;
     }
@@ -42,18 +59,17 @@ const ConfirmDialog = ({
       primaryButtonText={primaryButtonText}
       secondaryButtonText={secondaryButtonText}
       onRequestSubmit={onConfirm}
-      onRequestClose={onCancel}
-      onSecondarySubmit={onCancel}
+      onRequestClose={handleRequestClose}
+      onSecondarySubmit={handleSecondarySubmit}
       danger={type === 'danger'}
       preventCloseOnClickOutside={loading}
       primaryButtonDisabled={loading}
-      secondaryButtonDisabled={loading}
     >
-      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+      <div className="confirm-dialog__content">
         {getIcon()}
-        <div style={{ flex: 1 }}>
+        <div className="confirm-dialog__body">
           {message && (
-            <p style={{ marginBottom: children ? '1rem' : 0 }}>
+            <p className={`confirm-dialog__message${children ? ' confirm-dialog__message--spaced' : ''}`}>
               {message}
             </p>
           )}
@@ -126,18 +142,18 @@ export const RotateKeyConfirmDialog = ({
     loading={loading}
   >
     <div>
-      <p style={{ marginBottom: '1rem' }}>
+      <p className="confirm-dialog__paragraph">
         This will generate a new RSA-4096 keypair and register the public key with the server.
       </p>
-      <p style={{ marginBottom: '1rem', fontWeight: 600 }}>
+      <p className="confirm-dialog__paragraph confirm-dialog__paragraph--strong">
         Important:
       </p>
-      <ul style={{ marginLeft: '1.5rem', marginBottom: '1rem' }}>
+      <ul className="confirm-dialog__list">
         <li>Your old private key will no longer be valid</li>
         <li>You will need to re-sign any pending contracts</li>
         <li>The new private key will be encrypted with your passphrase</li>
       </ul>
-      <p style={{ color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>
+      <p className="confirm-dialog__note">
         Make sure you have your passphrase ready before proceeding.
       </p>
     </div>
@@ -162,19 +178,19 @@ export const FinalizeContractConfirmDialog = ({
     loading={loading}
   >
     <div>
-      <p style={{ marginBottom: '1rem' }}>
+      <p className="confirm-dialog__paragraph">
         You are about to finalize the contract for build "{buildName}".
       </p>
-      <p style={{ marginBottom: '1rem', fontWeight: 600 }}>
+      <p className="confirm-dialog__paragraph confirm-dialog__paragraph--strong">
         After finalization:
       </p>
-      <ul style={{ marginLeft: '1.5rem', marginBottom: '1rem' }}>
+      <ul className="confirm-dialog__list">
         <li>The contract will be locked and cannot be modified</li>
         <li>All signatures will be verified and recorded</li>
         <li>The contract will be ready for deployment</li>
         <li>An audit trail entry will be created</li>
       </ul>
-      <p style={{ color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>
+      <p className="confirm-dialog__note">
         Please ensure all sections are complete and reviewed before finalizing.
       </p>
     </div>
@@ -243,13 +259,13 @@ export const ChangeRoleConfirmDialog = ({
     loading={loading}
   >
     <div>
-      <p style={{ marginBottom: '1rem' }}>
+      <p className="confirm-dialog__paragraph">
         You are about to change {userName}'s role from <strong>{oldRole}</strong> to <strong>{newRole}</strong>.
       </p>
-      <p style={{ marginBottom: '1rem' }}>
+      <p className="confirm-dialog__paragraph">
         This will affect their permissions and access to builds.
       </p>
-      <p style={{ color: 'var(--cds-text-secondary)', fontSize: '0.875rem' }}>
+      <p className="confirm-dialog__note">
         The user will be notified of this change.
       </p>
     </div>
@@ -257,5 +273,3 @@ export const ChangeRoleConfirmDialog = ({
 );
 
 export default ConfirmDialog;
-
-

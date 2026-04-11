@@ -25,21 +25,7 @@ import buildService from '../services/buildService';
 import sectionService from '../services/sectionService';
 import cryptoService from '../services/cryptoService';
 import { useAuthStore } from '../store/authStore';
-
-// ── Terminal colours ──────────────────────────────────────────────────────────
-
-const TC = {
-  cmd:     '#78a9ff',
-  info:    '#a8a8a8',
-  stdout:  '#f4f4f4',
-  stderr:  '#f1c21b',
-  success: '#42be65',
-  result:  '#42be65',
-  error:   '#fa4d56',
-  muted:   '#6f6f6f',
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
+import { formatDate } from '../utils/formatters';
 
 const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate }) => {
   const user = useAuthStore((s) => s.user);
@@ -513,37 +499,47 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
   const isDisabled = !isCorrectStatus || isTerminalLocked;
 
   const certOptions = getCertsByPlatform(hpcrPlatformId);
+  const bodyClassName = `workflow-body${isDisabled ? ' workflow-body--disabled' : ''}`;
+  const step2ClassName = `workflow-step-card${step1Done ? '' : ' workflow-step-card--blocked'}`;
+  const step3ClassName = `workflow-step-card${step2Done ? '' : ' workflow-step-card--blocked'}`;
+  const step4ClassName = `workflow-step-card${step3Done ? '' : ' workflow-step-card--blocked'}`;
+
+  const getTerminalLineClass = (type) => {
+    const supportedTypes = ['cmd', 'info', 'stdout', 'stderr', 'success', 'result', 'error', 'muted'];
+    const normalizedType = supportedTypes.includes(type) ? type : 'stdout';
+    return `workflow-terminal__line workflow-terminal__line--${normalizedType}`;
+  };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div ref={topRef}>
-      <h3 style={{ marginBottom: '0.5rem' }}>Sign & Add Attestation</h3>
-      <p style={{ color: 'var(--cds-text-secondary)', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
+      <h3 className="workflow-title">Sign & Add Attestation</h3>
+      <p className="workflow-description">
         Generate signing and attestation artifacts, then confirm attestation readiness.
       </p>
 
       {error && (
         <InlineNotification kind="error" title="Error" subtitle={error}
-          onCloseButtonClick={() => setError(null)} lowContrast style={{ marginBottom: '1rem' }} />
+          onCloseButtonClick={() => setError(null)} lowContrast className="workflow-notification" />
       )}
       {success && (
         <InlineNotification kind="success" title="Success" subtitle={success}
-          onCloseButtonClick={() => setSuccess(null)} lowContrast style={{ marginBottom: '1rem' }} />
+          onCloseButtonClick={() => setSuccess(null)} lowContrast className="workflow-notification" />
       )}
 
       {!loadingSection && existingSection && (
-        <Tile style={{ marginBottom: '1.5rem', padding: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <CheckmarkFilled size={20} style={{ color: 'var(--cds-support-success)' }} />
+        <Tile className="workflow-complete-tile">
+          <div className="workflow-complete-tile__row">
+            <CheckmarkFilled size={20} className="workflow-complete-tile__icon" />
             <div>
               <strong>Attestation keys registered</strong>
-              <div style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)', marginTop: '0.25rem' }}>
+              <div className="workflow-complete-tile__meta">
                 Registered at: {existingSection.submitted_at
-                  ? new Date(existingSection.submitted_at).toLocaleString() : 'N/A'}
+                  ? formatDate(existingSection.submitted_at, { second: '2-digit', timeZoneName: 'short' }) : 'N/A'}
               </div>
             </div>
-            <Tag type="green" style={{ marginLeft: 'auto' }}>Keys Registered</Tag>
+            <Tag type="green" className="workflow-complete-tile__tag">Keys Registered</Tag>
           </div>
         </Tile>
       )}
@@ -551,19 +547,15 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
       {!isCorrectStatus && !existingSection && (
         <InlineNotification kind="info" title="Not yet available"
           subtitle={`This section requires build status "ENVIRONMENT_STAGED". Current: ${liveStatus}.`}
-          lowContrast hideCloseButton style={{ marginBottom: '1rem' }} />
+          lowContrast hideCloseButton className="workflow-notification" />
 
       )}
 
-      <div style={{
-        display: 'flex', flexDirection: 'column', gap: '2rem',
-        opacity: isDisabled ? 0.6 : 1,
-        pointerEvents: isDisabled ? 'none' : 'auto',
-      }}>
+      <div className={bodyClassName}>
 
         {/* ── Step 1: Signing key or cert ───────────────────────────────── */}
         <div>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h4 className="workflow-step-heading">
             <Certificate size={18} />
             Step 1 — Generate Signing Key or Certificate
             {step1Done && <Tag type="green" size="sm">Done</Tag>}
@@ -583,21 +575,13 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
               setStep3Result(null);
               setAttestationConfirmed(false);
             }}
-            style={{ marginBottom: '1rem' }}
+            className="workflow-radio-group"
           >
             <RadioButton labelText="Signing key (RSA-4096)" value="key" id="signing-key" />
             <RadioButton labelText="Signing certificate (self-signed X.509)" value="cert" id="signing-cert" />
           </RadioButtonGroup>
 
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '1rem', flexWrap: 'wrap' }}>
-            <TextInput
-              id="signing-folder"
-              labelText="Output folder path"
-              placeholder="/path/to/keys"
-              value={signingFolder}
-              onChange={(e) => setSigningFolder(e.target.value)}
-              style={{ flex: 1, minWidth: '260px' }}
-            />
+          <div className="workflow-inline-actions workflow-form-row--spaced">
             <Button
               kind="ghost"
               size="md"
@@ -609,6 +593,9 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
             >
               Browse
             </Button>
+            <span className="workflow-upload-meta">
+              {signingFolder ? `Selected folder: ${signingFolder}` : 'No output folder selected yet.'}
+            </span>
           </div>
 
           <PasswordInput
@@ -617,11 +604,11 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
             placeholder="Enter passphrase"
             value={signingPassphrase}
             onChange={(e) => setSigningPassphrase(e.target.value)}
-            style={{ marginBottom: '1rem', maxWidth: '400px' }}
+            className="workflow-input workflow-input--password"
           />
 
           {signingMode === 'cert' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem', maxWidth: '700px' }}>
+            <div className="workflow-grid-form">
               <TextInput id="cert-country" labelText="Country (2-letter code)" placeholder="US"
                 value={certCountry} onChange={e => setCertCountry(e.target.value)} />
               <TextInput id="cert-state" labelText="State / Province" placeholder="California"
@@ -636,7 +623,7 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
                 value={certDomain} onChange={e => setCertDomain(e.target.value)} />
               <TextInput id="cert-email" labelText="Email" placeholder="auditor@example.com"
                 value={certEmail} onChange={e => setCertEmail(e.target.value)}
-                style={{ gridColumn: '1 / -1' }} />
+                className="workflow-grid-form__full" />
             </div>
           )}
 
@@ -656,23 +643,15 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
         </div>
 
         {/* ── Step 2: Attestation key ───────────────────────────────────── */}
-        <div style={{ opacity: step1Done ? 1 : 0.45, pointerEvents: step1Done ? 'auto' : 'none' }}>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className={step2ClassName}>
+          <h4 className="workflow-step-heading">
             <Key size={18} />
             Step 2 — Generate Attestation Key
             {step2Done && <Tag type="green" size="sm">Done</Tag>}
             {!step1Done && <Tag type="gray" size="sm">Waiting for Step 1</Tag>}
           </h4>
 
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '1rem', flexWrap: 'wrap' }}>
-            <TextInput
-              id="att-folder"
-              labelText="Output folder path"
-              placeholder="/path/to/keys"
-              value={attFolder}
-              onChange={(e) => setAttFolder(e.target.value)}
-              style={{ flex: 1, minWidth: '260px' }}
-            />
+          <div className="workflow-inline-actions workflow-form-row--spaced">
             <Button
               kind="ghost"
               size="md"
@@ -684,6 +663,9 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
             >
               Browse
             </Button>
+            <span className="workflow-upload-meta">
+              {attFolder ? `Selected folder: ${attFolder}` : 'No output folder selected yet.'}
+            </span>
           </div>
 
           <PasswordInput
@@ -692,7 +674,7 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
             placeholder="Enter passphrase"
             value={attPassphrase}
             onChange={(e) => setAttPassphrase(e.target.value)}
-            style={{ marginBottom: '1rem', maxWidth: '400px' }}
+            className="workflow-input workflow-input--password"
           />
 
           <Button
@@ -706,15 +688,15 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
         </div>
 
         {/* ── Step 3: Generate encrypted env preview ────────────────────── */}
-        <div style={{ opacity: step2Done ? 1 : 0.45, pointerEvents: step2Done ? 'auto' : 'none' }}>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className={step3ClassName}>
+          <h4 className="workflow-step-heading">
             <Terminal size={18} />
             Step 3 — Generate Encrypted Environment Preview
             {step3Done && <Tag type="green" size="sm">Done</Tag>}
             {!step2Done && <Tag type="gray" size="sm">Waiting for Step 2</Tag>}
           </h4>
 
-          <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', marginBottom: '1rem' }}>
+          <p className="workflow-step-copy">
             Select the HPCR encryption certificate used to generate encrypted environment preview.
           </p>
 
@@ -728,14 +710,14 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
               setStep3Result(null);
               setAttestationConfirmed(false);
             }}
-            style={{ marginBottom: '1rem' }}
+            className="workflow-radio-group"
           >
             <RadioButton labelText="Upload custom certificate" value="custom" id="hpcr-cert-custom" />
             <RadioButton labelText="Use built-in certificate" value="builtin" id="hpcr-cert-builtin" />
           </RadioButtonGroup>
 
           {hpcrCertSource === 'builtin' ? (
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '1rem' }}>
+            <div className="workflow-form-row workflow-form-row--spaced">
               <Select
                 id="hpcr-platform"
                 labelText="Platform"
@@ -747,7 +729,7 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
                   setStep3Result(null);
                   setAttestationConfirmed(false);
                 }}
-                style={{ minWidth: '320px' }}
+                className="workflow-select workflow-select--medium"
               >
                 {PLATFORMS.map(p => <SelectItem key={p.id} value={p.id} text={p.label} />)}
               </Select>
@@ -762,13 +744,13 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
                   setStep3Result(null);
                   setAttestationConfirmed(false);
                 }}
-                style={{ minWidth: '120px' }}
+                className="workflow-select workflow-select--version"
               >
                 {certOptions.map(c => <SelectItem key={c.id} value={c.id} text={c.version} />)}
               </Select>
             </div>
           ) : (
-            <div style={{ marginBottom: '1rem' }}>
+            <div className="workflow-form-row--spaced">
               <FileUploader
                 labelDescription="Upload HPCR certificate (.crt / .pem)"
                 buttonLabel="Choose file"
@@ -790,7 +772,7 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
                 }}
               />
               {hpcrCustomCertName && (
-                <p style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)', marginTop: '0.5rem' }}>
+                <p className="workflow-upload-meta">
                   {hpcrCustomCertName} loaded
                 </p>
               )}
@@ -808,14 +790,14 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
         </div>
 
         {/* ── Step 4: Confirm Sign & Add Attestation ───────────────────── */}
-        <div style={{ opacity: step3Done ? 1 : 0.45, pointerEvents: step3Done ? 'auto' : 'none' }}>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className={step4ClassName}>
+          <h4 className="workflow-step-heading">
             <Upload size={18} />
             Step 4 — Confirm Sign & Add Attestation
             {attestationConfirmed && <Tag type="green" size="sm">Done</Tag>}
             {!step3Done && <Tag type="gray" size="sm">Waiting for Step 3</Tag>}
           </h4>
-          <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', marginBottom: '1rem' }}>
+          <p className="workflow-step-copy">
             Encrypt attestation public key and confirm attestation readiness on backend.
           </p>
           <Button
@@ -831,52 +813,36 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
         {attestationConfirmed && (
           <InlineNotification kind="success" title="Ready to finalize"
             subtitle="Attestation is confirmed. Go to the Finalise Contract tab to generate and submit the final contract."
-            lowContrast hideCloseButton />
+            lowContrast hideCloseButton className="workflow-notification" />
         )}
 
         {/* ── Terminal output ───────────────────────────────────────────── */}
         <div>
-          <h4 style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h4 className="workflow-step-heading">
             <Terminal size={18} /> Terminal Output
           </h4>
           <div
             ref={terminalRef}
-            style={{
-              background: '#161616',
-              borderRadius: '4px',
-              padding: '1rem',
-              fontFamily: '"IBM Plex Mono", "Courier New", monospace',
-              fontSize: '0.8125rem',
-              lineHeight: '1.7',
-              minHeight: '200px',
-              maxHeight: '400px',
-              overflowY: 'auto',
-              border: '1px solid #393939',
-              color: TC.stdout,
-            }}
+            className="workflow-terminal workflow-terminal--tall"
           >
             {terminalLines.length === 0 ? (
-              <span style={{ color: TC.muted }}>
+              <span className="workflow-terminal__line workflow-terminal__line--muted">
                 Terminal output will appear here as operations run...
               </span>
             ) : (
               terminalLines.map((l, i) => (
-                <div key={i} style={{ color: TC[l.type] || TC.stdout, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                <div key={i} className={getTerminalLineClass(l.type)}>
                   {l.line}
                 </div>
               ))
             )}
             {(step1Running || step2Running || envPreviewRunning || step3Running) && (
-              <span style={{ color: TC.info }}>|</span>
+              <span className="workflow-terminal__cursor">|</span>
             )}
           </div>
         </div>
 
       </div>
-
-      <style>{`
-        @keyframes blink { 50% { opacity: 0; } }
-      `}</style>
     </div>
   );
 };

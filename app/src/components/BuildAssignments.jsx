@@ -8,65 +8,36 @@ import {
   TableHeader,
   TableBody,
   TableCell,
-  TableToolbar,
-  TableToolbarContent,
-  TableToolbarSearch,
   Button,
-  Modal,
-  ComboBox,
   InlineNotification,
   Tag,
 } from '@carbon/react';
 import {
-  Add,
   UserMultiple,
   CheckmarkFilled,
   WarningAlt,
   Renew
 } from '@carbon/icons-react';
-import { useAuthStore } from '../store/authStore';
 import assignmentService from '../services/assignmentService';
 import sectionService from '../services/sectionService';
-import userService from '../services/userService';
 import buildService from '../services/buildService';
+import { formatDate } from '../utils/formatters';
 
 /**
  * BuildAssignments Component
  * Manages user-to-build-to-role assignments for two-layer access control
  * Features: Assignment table, creation dialog, deletion, validation
  */
-const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
-  const { user } = useAuthStore();
-
+const BuildAssignments = ({ buildId, buildStatus }) => {
   const [assignments, setAssignments] = useState([]);
   const [sections, setSections] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
-  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  // Modal state
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [selectedRole, setSelectedRole] = useState(null);
-
-  // Search state
-  const [searchValue, setSearchValue] = useState('');
-
-  const isAdmin = userRole === 'ADMIN' || user?.roles?.includes('ADMIN');
-  const canManageAssignments = isAdmin;
-
-  const personaRoles = [
-    { id: 'SOLUTION_PROVIDER', label: 'Solution Provider', description: 'Submits workload section' },
-    { id: 'DATA_OWNER', label: 'Data Owner', description: 'Submits environment section' },
-    { id: 'AUDITOR', label: 'Auditor', description: 'Submits attestation section' },
-    { id: 'ENV_OPERATOR', label: 'Environment Operator', description: 'Manages environment configuration' }
-  ];
-
   useEffect(() => {
     loadAssignments();
-    loadUsers();
   }, [buildId]);
 
   const loadAssignments = async () => {
@@ -87,59 +58,6 @@ const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadUsers = async () => {
-    try {
-      const data = await userService.listUsers();
-      setUsers(data);
-    } catch (err) {
-      console.error('Failed to load users:', err);
-    }
-  };
-
-  const handleCreateAssignment = async () => {
-    if (!selectedUser || !selectedRole) {
-      setError('Please select both user and role');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      await assignmentService.createAssignment(buildId, selectedUser.id, selectedRole.id);
-      setSuccess(`Successfully assigned ${selectedUser.label} as ${selectedRole.label}`);
-
-      // Reload assignments
-      await loadAssignments();
-
-      // Close modal
-      setIsModalOpen(false);
-      resetModal();
-
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err) {
-      setError(`Failed to create assignment: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resetModal = () => {
-    setSelectedUser(null);
-    setSelectedRole(null);
-  };
-
-  const handleOpenModal = () => {
-    resetModal();
-    setIsModalOpen(true);
-  };
-
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-    resetModal();
   };
 
   const getRoleTag = (role) => {
@@ -189,33 +107,6 @@ const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
     return <Tag type="gray">Assigned</Tag>;
   };
 
-  const getUserOptions = () => {
-    return users.map(u => ({
-      id: u.id,
-      label: `${u.name} (${u.email})`,
-      email: u.email
-    }));
-  };
-
-  const getRoleOptions = () => {
-    return personaRoles.map(r => ({
-      id: r.id,
-      label: r.label,
-      description: r.description
-    }));
-  };
-
-  const getFilteredAssignments = () => {
-    if (!searchValue) return assignments;
-
-    const search = searchValue.toLowerCase();
-    return assignments.filter(a =>
-      a.user_name?.toLowerCase().includes(search) ||
-      a.user_email?.toLowerCase().includes(search) ||
-      a.role_name?.toLowerCase().includes(search)
-    );
-  };
-
   const getAssignmentSummary = () => {
     const summary = {
       SOLUTION_PROVIDER: 0,
@@ -244,7 +135,7 @@ const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
 
   const roleOrder = ['SOLUTION_PROVIDER', 'DATA_OWNER', 'AUDITOR', 'ENV_OPERATOR'];
 
-  const rows = getFilteredAssignments()
+  const rows = assignments
     .slice()
     .sort((a, b) => {
       const ai = roleOrder.indexOf(a.role_name);
@@ -257,7 +148,9 @@ const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
     user_email: assignment.user_email,
     persona_role: getRoleTag(assignment.role_name),
     status: getAssignmentStatus(assignment),
-    assigned_at: assignment.assigned_at ? new Date(assignment.assigned_at).toLocaleDateString() : 'N/A'
+    assigned_at: assignment.assigned_at
+      ? formatDate(assignment.assigned_at, { second: '2-digit', timeZoneName: 'short' })
+      : 'N/A'
   }));
 
   const summary = getAssignmentSummary();
@@ -285,58 +178,45 @@ const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
       )}
 
 
-      <div className="assignment-summary">
-        <div className="summary-item">
+      <div className="build-assignments__summary">
+        <div className="build-assignments__summary-item">
           <UserMultiple size={20} />
-          <span className="summary-label">Total Assignments:</span>
-          <span className="summary-value">{assignments.length}</span>
+          <span className="build-assignments__summary-label">Total Assignments:</span>
+          <span className="build-assignments__summary-value">{assignments.length}</span>
         </div>
-        <div className="summary-item">
-          <span className="summary-label">Solution Providers:</span>
-          <span className="summary-value">{summary.SOLUTION_PROVIDER}</span>
+        <div className="build-assignments__summary-item">
+          <span className="build-assignments__summary-label">Solution Providers:</span>
+          <span className="build-assignments__summary-value">{summary.SOLUTION_PROVIDER}</span>
         </div>
-        <div className="summary-item">
-          <span className="summary-label">Data Owners:</span>
-          <span className="summary-value">{summary.DATA_OWNER}</span>
+        <div className="build-assignments__summary-item">
+          <span className="build-assignments__summary-label">Data Owners:</span>
+          <span className="build-assignments__summary-value">{summary.DATA_OWNER}</span>
         </div>
-        <div className="summary-item">
-          <span className="summary-label">Auditors:</span>
-          <span className="summary-value">{summary.AUDITOR}</span>
+        <div className="build-assignments__summary-item">
+          <span className="build-assignments__summary-label">Auditors:</span>
+          <span className="build-assignments__summary-value">{summary.AUDITOR}</span>
         </div>
-        <div className="summary-item">
-          <span className="summary-label">Env Operators:</span>
-          <span className="summary-value">{summary.ENV_OPERATOR}</span>
+        <div className="build-assignments__summary-item">
+          <span className="build-assignments__summary-label">Env Operators:</span>
+          <span className="build-assignments__summary-value">{summary.ENV_OPERATOR}</span>
         </div>
+      </div>
+
+      <div className="build-assignments__actions">
+        <Button
+          kind="tertiary"
+          size="md"
+          renderIcon={Renew}
+          onClick={loadAssignments}
+          disabled={loading}
+        >
+          Refresh
+        </Button>
       </div>
 
       <DataTable rows={rows} headers={headers}>
         {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
           <TableContainer title="Build Assignments" description="User-to-role assignments for this build">
-            <TableToolbar>
-              <TableToolbarContent>
-                <TableToolbarSearch
-                  onChange={(e) => setSearchValue(e.target.value)}
-                  placeholder="Search assignments..."
-                />
-                <Button
-                  kind="tertiary"
-                  renderIcon={Renew}
-                  onClick={loadAssignments}
-                  disabled={loading}
-                >
-                  Refresh
-                </Button>
-                {canManageAssignments && (
-                  <Button
-                    kind="primary"
-                    renderIcon={Add}
-                    onClick={handleOpenModal}
-                  >
-                    Add Assignment
-                  </Button>
-                )}
-              </TableToolbarContent>
-            </TableToolbar>
             <Table {...getTableProps()}>
               <TableHead>
                 <TableRow>
@@ -362,130 +242,12 @@ const BuildAssignments = ({ buildId, userRole, buildStatus }) => {
       </DataTable>
 
       {assignments.length === 0 && !loading && (
-        <div className="empty-state">
+        <div className="build-assignments__empty-state">
           <UserMultiple size={48} />
           <h4>No Assignments Yet</h4>
-          <p>Add user assignments to allow section submissions.</p>
-          {canManageAssignments && (
-            <Button kind="primary" renderIcon={Add} onClick={handleOpenModal}>
-              Add First Assignment
-            </Button>
-          )}
+          <p>No role assignments are currently configured for this build.</p>
         </div>
       )}
-
-      <Modal
-        open={isModalOpen}
-        onRequestClose={handleCloseModal}
-        modalHeading="Add Build Assignment"
-        modalLabel="Two-Layer Access Control"
-        primaryButtonText="Add Assignment"
-        secondaryButtonText="Cancel"
-        onRequestSubmit={handleCreateAssignment}
-        onSecondarySubmit={handleCloseModal}
-        primaryButtonDisabled={!selectedUser || !selectedRole || loading}
-        size="md"
-      >
-        <div className="modal-content">
-          <p className="modal-description">
-            Assign a user to a specific role for this build. Users must be assigned
-            to submit sections for their role.
-          </p>
-
-          <ComboBox
-            id="user-select"
-            titleText="Select User"
-            placeholder="Choose a user..."
-            items={getUserOptions()}
-            selectedItem={selectedUser}
-            onChange={({ selectedItem }) => setSelectedUser(selectedItem)}
-            itemToString={(item) => item ? item.label : ''}
-          />
-
-          <ComboBox
-            id="role-select"
-            titleText="Select Role"
-            placeholder="Choose a role..."
-            items={getRoleOptions()}
-            selectedItem={selectedRole}
-            onChange={({ selectedItem }) => setSelectedRole(selectedItem)}
-            itemToString={(item) => item ? item.label : ''}
-            helperText={selectedRole?.description}
-          />
-
-          {selectedUser && selectedRole && (
-            <InlineNotification
-              kind="info"
-              title="Assignment Preview"
-              subtitle={`${selectedUser.label} will be assigned as ${selectedRole.label}`}
-              lowContrast
-              hideCloseButton
-            />
-          )}
-        </div>
-      </Modal>
-
-      <style>{`
-        .build-assignments {
-          margin: 1rem 0;
-        }
-        
-        .assignment-summary {
-          display: flex;
-          gap: 2rem;
-          padding: 1rem;
-          background: var(--cds-layer-01);
-          border-radius: 4px;
-          margin-bottom: 1rem;
-        }
-        
-        .summary-item {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        
-        .summary-label {
-          font-weight: 600;
-          color: var(--cds-text-secondary);
-        }
-        
-        .summary-value {
-          font-weight: 700;
-          color: var(--cds-text-primary);
-        }
-        
-        .empty-state {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 3rem;
-          text-align: center;
-          background: var(--cds-layer-01);
-          border-radius: 4px;
-          margin-top: 1rem;
-        }
-        
-        .empty-state h4 {
-          margin: 1rem 0 0.5rem;
-        }
-        
-        .empty-state p {
-          color: var(--cds-text-secondary);
-          margin-bottom: 1.5rem;
-        }
-        
-        .modal-content {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-        }
-        
-        .modal-description {
-          color: var(--cds-text-secondary);
-        }
-      `}</style>
     </div>
   );
 };

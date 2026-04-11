@@ -9,7 +9,8 @@ import {
   Tile,
   Checkbox,
   Loading,
-  Tag
+  Tag,
+  Modal
 } from '@carbon/react';
 import { LogoGithub, Document, WarningAlt, Settings, CheckmarkFilled, ErrorFilled, Renew } from '@carbon/icons-react';
 import { useAuthStore } from '../store/authStore';
@@ -17,6 +18,8 @@ import { useConfigStore } from '../store/configStore';
 import authService from '../services/authService';
 import apiClient from '../services/apiClient';
 import HyperProtectIcon from '../components/HyperProtectIcon';
+import DesktopTitleBar from '../components/DesktopTitleBar';
+import { getPrimaryRole } from '../utils/roles';
 
 const Login = ({ onLogin }) => {
   const [username, setUsername] = useState('');
@@ -26,6 +29,9 @@ const Login = ({ onLogin }) => {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [tempServerUrl, setTempServerUrl] = useState('http://localhost:8080');
+  const [lastTestedUrl, setLastTestedUrl] = useState('');
+  const [lastTestPassed, setLastTestPassed] = useState(false);
+  const [connectionLogs, setConnectionLogs] = useState([]);
   const [error, setError] = useState('');
 
   // Server status
@@ -54,13 +60,54 @@ const Login = ({ onLogin }) => {
     checkServerStatus(savedUrl);
   }, []);
 
-  const checkServerStatus = async (url) => {
-    setIsCheckingServer(true);
-    setServerStatus('checking');
+  const formatLogTimestamp = () => new Date().toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+
+  const appendConnectionLog = (line) => {
+    const timestamp = formatLogTimestamp();
+    setConnectionLogs((previous) => {
+      const next = [...previous, `[${timestamp}] ${line}`];
+      return next.length > 200 ? next.slice(next.length - 200) : next;
+    });
+  };
+
+  const normalizeServerUrl = (value) => value.trim().replace(/\/+$/, '');
+
+  const validateServerUrlInput = (value) => {
+    const normalizedUrl = normalizeServerUrl(value);
+    if (!normalizedUrl) {
+      return { valid: false, error: 'Server URL cannot be empty' };
+    }
 
     try {
-      // Try to reach the health endpoint with proper CORS handling
-      const response = await fetch(`${url}/health`, {
+      const urlObj = new URL(normalizedUrl);
+      if (!['http:', 'https:'].includes(urlObj.protocol)) {
+        return { valid: false, error: 'Server URL must use HTTP or HTTPS protocol' };
+      }
+    } catch (_err) {
+      return {
+        valid: false,
+        error: 'Invalid URL format. Please enter a valid URL (e.g., http://localhost:8080)'
+      };
+    }
+
+    return { valid: true, url: normalizedUrl };
+  };
+
+  const runServerHealthCheck = async (url, { withLogs = false } = {}) => {
+    const healthUrl = `${url}/health`;
+    const startedAt = Date.now();
+
+    if (withLogs) {
+      appendConnectionLog(`Testing connectivity: GET ${healthUrl}`);
+    }
+
+    try {
+      const response = await fetch(healthUrl, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -68,26 +115,66 @@ const Login = ({ onLogin }) => {
         },
         mode: 'cors',
         credentials: 'omit',
-        signal: AbortSignal.timeout(5000) // 5 second timeout
+        signal: AbortSignal.timeout(5000)
       });
 
-      if (response.ok) {
-        const data = await response.json();
+      const latency = Date.now() - startedAt;
+      if (withLogs) {
+        appendConnectionLog(`Received HTTP ${response.status} in ${latency} ms`);
+      }
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          message: `Server returned status ${response.status}. Please check the URL.`
+        };
+      }
+
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (_err) {
+        payload = {};
+      }
+
+      if (withLogs) {
+        appendConnectionLog(`Connection test passed. Reported version: ${payload.version || 'Unknown'}`);
+      }
+
+      return { ok: true, payload };
+    } catch (err) {
+      if (withLogs) {
+        appendConnectionLog(`Connection test failed: ${err.message}`);
+      }
+      return {
+        ok: false,
+        message: `Cannot reach server at ${url}. Please verify the URL and ensure the server is running.`
+      };
+    }
+  };
+
+  const checkServerStatus = async (url) => {
+    const validation = validateServerUrlInput(url);
+    if (!validation.valid) {
+      setServerStatus('offline');
+      setServerVersion(null);
+      return;
+    }
+
+    setIsCheckingServer(true);
+    setServerStatus('checking');
+
+    try {
+      const result = await runServerHealthCheck(validation.url);
+      if (result.ok) {
         setServerStatus('online');
-        setServerVersion(data.version || 'Unknown');
-        console.log('Server health check successful:', data);
+        setServerVersion(result.payload?.version || 'Unknown');
       } else {
-        console.warn('Server returned non-OK status:', response.status);
         setServerStatus('offline');
         setServerVersion(null);
       }
     } catch (err) {
       console.error('Server health check failed:', err);
-      console.error('Error details:', {
-        name: err.name,
-        message: err.message,
-        url: `${url}/health`
-      });
       setServerStatus('offline');
       setServerVersion(null);
     } finally {
@@ -110,8 +197,7 @@ const Login = ({ onLogin }) => {
       // Persist auth to localStorage so App.jsx can read role/email on re-render
       localStorage.setItem('auth_token', response.token);
       const allRoles = response.user.roles || [];
-      const rolePriority = ['ADMIN', 'AUDITOR', 'ENV_OPERATOR', 'SOLUTION_PROVIDER', 'DATA_OWNER', 'VIEWER'];
-      const primaryRole = rolePriority.find(r => allRoles.includes(r)) || allRoles[0] || 'VIEWER';
+      const primaryRole = getPrimaryRole(allRoles);
       localStorage.setItem('user_role', primaryRole);
       localStorage.setItem('user_roles', JSON.stringify(allRoles));
       localStorage.setItem('user_email', response.user.email);
@@ -134,62 +220,81 @@ const Login = ({ onLogin }) => {
     }
   };
 
-  const handleServerUrlChange = async () => {
-    const newUrl = tempServerUrl.trim();
-
-    if (!newUrl) {
-      setError('Server URL cannot be empty');
-      return;
-    }
-
-    // Validate URL format
-    try {
-      const urlObj = new URL(newUrl);
-      if (!['http:', 'https:'].includes(urlObj.protocol)) {
-        setError('Server URL must use HTTP or HTTPS protocol');
-        return;
-      }
-    } catch (err) {
-      setError('Invalid URL format. Please enter a valid URL (e.g., http://localhost:8080)');
-      return;
-    }
-
-    // Check if server is reachable before applying
-    setIsCheckingServer(true);
+  const openServerConfigModal = () => {
+    const savedUrl = localStorage.getItem('server_url') || 'http://localhost:8080';
+    setTempServerUrl(savedUrl);
+    setLastTestedUrl('');
+    setLastTestPassed(false);
+    setConnectionLogs([`[${formatLogTimestamp()}] Opened server configuration dialog.`]);
     setError('');
+    setShowServerConfig(true);
+  };
 
-    try {
-      const response = await fetch(`${newUrl}/health`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        mode: 'cors',
-        credentials: 'omit',
-        signal: AbortSignal.timeout(5000)
-      });
+  const closeServerConfigModal = () => {
+    setShowServerConfig(false);
+    setTempServerUrl(localStorage.getItem('server_url') || 'http://localhost:8080');
+    setLastTestedUrl('');
+    setLastTestPassed(false);
+    setConnectionLogs([]);
+    setError('');
+  };
 
-      if (response.ok) {
-        // Server is reachable, apply the change
-        localStorage.setItem('server_url', newUrl);
-        setServerUrl(newUrl);
-        apiClient.setBaseURL(newUrl);
-        setServerStatus('online');
-        setShowServerConfig(false);
-
-        const data = await response.json();
-        setServerVersion(data.version || 'Unknown');
-      } else {
-        setError(`Server returned status ${response.status}. Please check the URL.`);
-        setServerStatus('offline');
-      }
-    } catch (err) {
-      setError(`Cannot reach server at ${newUrl}. Please verify the URL and ensure the server is running.`);
-      setServerStatus('offline');
-    } finally {
-      setIsCheckingServer(false);
+  const handleTestServerConnection = async () => {
+    const validation = validateServerUrlInput(tempServerUrl);
+    if (!validation.valid) {
+      setLastTestPassed(false);
+      setLastTestedUrl('');
+      setError(validation.error);
+      appendConnectionLog(`Validation error: ${validation.error}`);
+      return;
     }
+
+    setError('');
+    setLastTestPassed(false);
+    setLastTestedUrl(validation.url);
+    setIsCheckingServer(true);
+
+    appendConnectionLog(`Running test for ${validation.url}`);
+    const result = await runServerHealthCheck(validation.url, { withLogs: true });
+
+    if (result.ok) {
+      setLastTestPassed(true);
+      setServerStatus('online');
+      setServerVersion(result.payload?.version || 'Unknown');
+      appendConnectionLog('Test finished successfully.');
+    } else {
+      setLastTestPassed(false);
+      setServerStatus('offline');
+      setServerVersion(null);
+      setError(result.message);
+      appendConnectionLog('Test finished with errors.');
+    }
+
+    setIsCheckingServer(false);
+  };
+
+  const handleSaveServerUrl = () => {
+    const validation = validateServerUrlInput(tempServerUrl);
+    if (!validation.valid) {
+      setError(validation.error);
+      appendConnectionLog(`Save blocked: ${validation.error}`);
+      return;
+    }
+
+    if (!lastTestPassed || lastTestedUrl !== validation.url) {
+      const validationMessage = 'Run Test Connection successfully before saving this server URL.';
+      setError(validationMessage);
+      appendConnectionLog(`Save blocked: ${validationMessage}`);
+      return;
+    }
+
+    localStorage.setItem('server_url', validation.url);
+    setServerUrl(validation.url);
+    apiClient.setBaseURL(validation.url);
+    setServerStatus('online');
+    appendConnectionLog(`Saved server URL: ${validation.url}`);
+    setShowServerConfig(false);
+    setError('');
   };
 
   // Function to open links in external browser
@@ -204,187 +309,42 @@ const Login = ({ onLogin }) => {
 
   return (
     <Theme theme="g100">
-      {/* Custom Title Bar */}
-      <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: '40px',
-        background: 'rgba(22, 22, 22, 0.95)',
-        backdropFilter: 'blur(10px)',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 1rem',
-        WebkitAppRegion: 'drag',
-        zIndex: 9999
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <HyperProtectIcon size={18} />
-          <span style={{
-            fontSize: '0.875rem',
-            color: 'rgba(255, 255, 255, 0.9)',
-            fontWeight: 500,
-            letterSpacing: '0.02em'
-          }}>
-            HPCR Contract Builder
-          </span>
-        </div>
+      <DesktopTitleBar
+        zIndex={9999}
+        showConnectionStatus
+      />
 
-        {/* Window Controls */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.25rem',
-          WebkitAppRegion: 'no-drag'
-        }}>
-          <button
-            onClick={() => window.electron?.minimizeWindow?.()}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              width: '46px',
-              height: '32px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'rgba(255, 255, 255, 0.7)',
-              transition: 'all 0.2s ease',
-              borderRadius: '4px'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.95)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-            }}
-            title="Minimize"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </button>
-          <button
-            onClick={() => window.electron?.maximizeWindow?.()}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              width: '46px',
-              height: '32px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'rgba(255, 255, 255, 0.7)',
-              transition: 'all 0.2s ease',
-              borderRadius: '4px'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.95)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-            }}
-            title="Maximize"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <rect x="1" y="1" width="10" height="10" stroke="currentColor" strokeWidth="1.5" fill="none" rx="1" />
-            </svg>
-          </button>
-          <button
-            onClick={() => window.electron?.closeWindow?.()}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              width: '46px',
-              height: '32px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'rgba(255, 255, 255, 0.7)',
-              transition: 'all 0.2s ease',
-              borderRadius: '4px'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#da1e28';
-              e.currentTarget.style.color = 'white';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-            }}
-            title="Close"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <div style={{
-        height: '100vh',
-        width: '100vw',
-        display: 'flex',
-        backgroundColor: 'var(--cds-background)',
-        backgroundImage: 'linear-gradient(135deg, rgba(0, 122, 255, 0.05) 0%, rgba(138, 43, 226, 0.05) 100%)',
-        paddingTop: '40px'
-      }}>
+      <div className="login-page">
         {/* Left Section - Login Card */}
-        <div style={{
-          width: '50%',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: '2rem'
-        }}>
-          <div style={{ width: '100%', maxWidth: '420px' }}>
+        <div className="login-page__left">
+          <div className="login-page__left-content">
             {/* Logo/Icon */}
-            <div style={{ marginBottom: '2rem' }}>
+            <div className="login-logo">
               <HyperProtectIcon size={48} />
             </div>
 
             {/* Title */}
-            <h1 style={{
-              fontSize: '2rem',
-              fontWeight: '400',
-              marginBottom: '0.5rem',
-              color: 'var(--cds-text-primary)'
-            }}>
+            <h1 className="login-section-title">
               Log in to <strong>IBM Confidential Computing Contract Generator</strong>
             </h1>
 
-            <p style={{
-              fontSize: '0.875rem',
-              color: 'var(--cds-text-secondary)',
-              marginBottom: '2rem'
-            }}>
+            <p className="login-section-subtitle">
               Don't have an account? Contact system administrator
             </p>
 
             {/* Login Card */}
-            <Tile style={{ padding: '2rem', marginBottom: '1rem' }}>
+            <Tile className="login-card">
               {isLoggingIn ? (
-                <div style={{ margin: '2rem 0', textAlign: 'center' }}>
+                <div className="login-loading">
                   <Loading description="Authenticating..." withOverlay={false} />
-                  <p style={{ marginTop: '1rem', color: 'var(--cds-text-secondary)' }}>
+                  <p className="login-loading__text">
                     Connecting to backend server...
                   </p>
                 </div>
               ) : (
                 <Form onSubmit={handleSubmit}>
                   {error && !showServerConfig && (
-                    <div style={{ marginBottom: '1rem' }}>
+                    <div className="login-form-group">
                       <InlineNotification
                         kind="error"
                         title="Login Failed"
@@ -395,7 +355,7 @@ const Login = ({ onLogin }) => {
                     </div>
                   )}
 
-                  <div style={{ marginBottom: '1rem' }}>
+                  <div className="login-form-group">
                     <TextInput
                       id="login-username"
                       labelText="Email"
@@ -403,22 +363,20 @@ const Login = ({ onLogin }) => {
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       required
-                      style={{ width: '100%' }}
                     />
                   </div>
 
-                  <div style={{ marginBottom: '1rem' }}>
+                  <div className="login-form-group">
                     <PasswordInput
                       id="login-password"
                       labelText="Password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
-                      style={{ width: '100%' }}
                     />
                   </div>
 
-                  <div style={{ marginBottom: '1.5rem' }}>
+                  <div className="login-form-group login-form-group--spacious">
                     <Checkbox
                       id="remember-email"
                       labelText="Remember email"
@@ -427,12 +385,12 @@ const Login = ({ onLogin }) => {
                     />
                   </div>
 
-                  <Button type="submit" size="lg" style={{ width: '100%', marginBottom: '1rem' }}>
+                  <Button type="submit" size="lg" className="login-submit-button">
                     Continue
                   </Button>
 
-                  <div style={{ textAlign: 'center', marginTop: '1rem' }}>
-                    <span style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+                  <div className="login-help-text">
+                    <span>
                       Forgot password? Contact system administrator
                     </span>
                   </div>
@@ -441,29 +399,14 @@ const Login = ({ onLogin }) => {
             </Tile>
 
             {/* Server Configuration Card */}
-            <Tile style={{ padding: '1.5rem' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                justifyContent: 'space-between',
-                marginBottom: showServerConfig ? '1rem' : '0'
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    marginBottom: '0.75rem',
-                    flexWrap: 'wrap'
-                  }}>
-                    <span style={{
-                      fontSize: '0.875rem',
-                      color: 'var(--cds-text-secondary)',
-                      fontWeight: 500
-                    }}>
+            <Tile className="login-server-card">
+              <div className="login-server-card__header">
+                <div className="login-server-card__details">
+                  <div className="login-server-card__status-row">
+                    <span className="login-server-card__label">
                       Server Configuration
                     </span>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <div className="login-server-card__tag">
                       {isCheckingServer ? (
                         <Tag type="gray" size="sm">Checking...</Tag>
                       ) : serverStatus === 'online' ? (
@@ -473,30 +416,16 @@ const Login = ({ onLogin }) => {
                       ) : null}
                     </div>
                   </div>
-                  <div style={{
-                    fontSize: '0.875rem',
-                    color: 'var(--cds-text-primary)',
-                    marginBottom: '0.25rem',
-                    wordBreak: 'break-all'
-                  }}>
+                  <div className="login-server-card__url">
                     {tempServerUrl}
                   </div>
                   {serverVersion && (
-                    <div style={{
-                      fontSize: '0.75rem',
-                      color: 'var(--cds-text-secondary)',
-                      marginTop: '0.25rem'
-                    }}>
+                    <div className="login-server-card__version">
                       Version: {serverVersion}
                     </div>
                   )}
                 </div>
-                <div style={{
-                  display: 'flex',
-                  gap: '0.5rem',
-                  marginLeft: '1rem',
-                  flexShrink: 0
-                }}>
+                <div className="login-server-card__actions">
                   <Button
                     kind="ghost"
                     size="sm"
@@ -510,127 +439,114 @@ const Login = ({ onLogin }) => {
                     kind="ghost"
                     size="sm"
                     renderIcon={Settings}
-                    onClick={() => setShowServerConfig(!showServerConfig)}
+                    onClick={openServerConfigModal}
                   >
-                    {showServerConfig ? 'Cancel' : 'Change'}
+                    Change
                   </Button>
                 </div>
               </div>
-
-              {/* Server URL Change Form */}
-              {showServerConfig && (
-                <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--cds-border-subtle)' }}>
-                  {error && (
-                    <div style={{ marginBottom: '1rem' }}>
-                      <InlineNotification
-                        kind="error"
-                        title="Configuration Error"
-                        subtitle={error}
-                        hideCloseButton={false}
-                        onCloseButtonClick={() => setError('')}
-                        lowContrast
-                      />
-                    </div>
-                  )}
-                  <div style={{ marginBottom: '1rem' }}>
-                    <TextInput
-                      id="server-url"
-                      labelText="Server URL"
-                      placeholder="http://localhost:8080"
-                      value={tempServerUrl}
-                      onChange={(e) => setTempServerUrl(e.target.value)}
-                      helperText="Enter the backend API server URL"
-                    />
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <Button
-                      size="sm"
-                      onClick={handleServerUrlChange}
-                      disabled={!tempServerUrl.trim() || isCheckingServer}
-                    >
-                      {isCheckingServer ? 'Checking...' : 'Test & Save'}
-                    </Button>
-                    <Button
-                      kind="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setShowServerConfig(false);
-                        setTempServerUrl(localStorage.getItem('server_url') || 'http://localhost:8080');
-                        setError('');
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
             </Tile>
           </div>
 
+          <Modal
+            open={showServerConfig}
+            modalHeading="Server Configuration"
+            primaryButtonText="Save"
+            secondaryButtonText="Cancel"
+            onRequestSubmit={handleSaveServerUrl}
+            onRequestClose={closeServerConfigModal}
+            onSecondarySubmit={closeServerConfigModal}
+            primaryButtonDisabled={
+              isCheckingServer ||
+              !lastTestPassed ||
+              normalizeServerUrl(tempServerUrl) !== lastTestedUrl
+            }
+            size="md"
+          >
+            <div className="login-server-modal">
+              {error && (
+                <div className="login-form-group">
+                  <InlineNotification
+                    kind="error"
+                    title="Configuration Error"
+                    subtitle={error}
+                    hideCloseButton={false}
+                    onCloseButtonClick={() => setError('')}
+                    lowContrast
+                  />
+                </div>
+              )}
+
+              <div className="login-form-group">
+                <TextInput
+                  id="server-url"
+                  labelText="Server URL"
+                  placeholder="http://localhost:8080"
+                  value={tempServerUrl}
+                  onChange={(e) => {
+                    setTempServerUrl(e.target.value);
+                    setLastTestPassed(false);
+                  }}
+                  helperText="Enter the backend API server URL"
+                />
+              </div>
+
+              <div className="login-server-modal__actions">
+                <Button
+                  kind="secondary"
+                  size="sm"
+                  onClick={handleTestServerConnection}
+                  disabled={isCheckingServer || !tempServerUrl.trim()}
+                >
+                  {isCheckingServer ? 'Testing...' : 'Test Connection'}
+                </Button>
+                {lastTestPassed && (
+                  <Tag type="green" size="sm" renderIcon={CheckmarkFilled}>
+                    Test Passed
+                  </Tag>
+                )}
+              </div>
+
+              <div className="login-server-terminal" role="log" aria-live="polite">
+                <div className="login-server-terminal__header">Connection Test Log</div>
+                <pre className="login-server-terminal__content">
+                  {connectionLogs.length > 0 ? connectionLogs.join('\n') : 'No logs yet. Run a connection test.'}
+                </pre>
+              </div>
+            </div>
+          </Modal>
+
           {/* Footer */}
-          <footer style={{
-            position: 'absolute',
-            bottom: '1rem',
-            left: '1rem',
-            color: 'var(--cds-text-secondary)',
-            fontSize: '0.75rem'
-          }}>
+          <footer className="login-footer">
             Powered by IBM Confidential Computing
           </footer>
         </div>
 
         {/* Right Section - Information Panel */}
-        <div style={{
-          width: '50%',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          padding: '4rem'
-        }}>
-          <div style={{ maxWidth: '600px' }}>
+        <div className="login-page__right">
+          <div className="login-page__right-content">
             {/* Main Heading */}
-            <h2 style={{
-              fontSize: '2.5rem',
-              fontWeight: '300',
-              marginBottom: '1rem',
-              color: 'var(--cds-text-primary)',
-              lineHeight: '1.2'
-            }}>
+            <h2 className="login-right-title">
               IBM Confidential Computing Contract Generator
             </h2>
 
-            <p style={{
-              fontSize: '1rem',
-              color: 'var(--cds-text-secondary)',
-              marginBottom: '0.5rem',
-              fontStyle: 'italic'
-            }}>
+            <p className="login-right-powered-by">
               Powered by IBM Confidential Computing Team
             </p>
 
-            <p style={{
-              fontSize: '1.125rem',
-              color: 'var(--cds-text-secondary)',
-              marginBottom: '2.5rem',
-              lineHeight: '1.6'
-            }}>
+            <p className="login-right-description">
               A collaborative desktop application for building secure, auditable contracts for confidential computing workloads with multi-party collaboration and cryptographic verification.
             </p>
 
             {/* Features */}
-            <div style={{ marginBottom: '3rem' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                marginBottom: '1.5rem',
-                gap: '1rem'
-              }}>
-                <HyperProtectIcon size={24} style={{ flexShrink: 0, marginTop: '0.25rem' }} />
+            <div className="login-feature-list">
+              <div className="login-feature-item">
+                <HyperProtectIcon size={24} className="login-feature-icon" />
                 <div>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--cds-text-primary)' }}>
+                  <h4 className="login-feature-title">
                     Multi-Persona Workflow
                   </h4>
-                  <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', lineHeight: '1.5', marginBottom: '0.5rem' }}>
+                  <p className="login-feature-description">
                     Six distinct roles (Admin, Solution Provider, Data Owner, Auditor, Environment Operator, Viewer) ensure proper separation of duties and secure collaboration.
                   </p>
                   <a
@@ -639,30 +555,20 @@ const Login = ({ onLogin }) => {
                       e.preventDefault();
                       openExternalLink('https://github.com/Sashwat-K/persona-based-contract-generator#multi-persona-workflow');
                     }}
-                    style={{
-                      fontSize: '0.875rem',
-                      color: 'var(--cds-link-primary)',
-                      textDecoration: 'none',
-                      cursor: 'pointer'
-                    }}
+                    className="login-inline-link"
                   >
                     Learn more →
                   </a>
                 </div>
               </div>
 
-              <div style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                marginBottom: '1.5rem',
-                gap: '1rem'
-              }}>
-                <Document size={24} style={{ fill: 'var(--cds-icon-primary)', flexShrink: 0, marginTop: '0.25rem' }} />
+              <div className="login-feature-item">
+                <Document size={24} className="login-feature-icon" />
                 <div>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--cds-text-primary)' }}>
+                  <h4 className="login-feature-title">
                     Cryptographic Security
                   </h4>
-                  <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', lineHeight: '1.5', marginBottom: '0.5rem' }}>
+                  <p className="login-feature-description">
                     RSA-4096 key pairs, AES-256-GCM encryption, and SHA-256 hashing protect sensitive workload configurations and environment data throughout the build process.
                   </p>
                   <a
@@ -671,29 +577,20 @@ const Login = ({ onLogin }) => {
                       e.preventDefault();
                       openExternalLink('https://github.com/Sashwat-K/persona-based-contract-generator#cryptographic-security');
                     }}
-                    style={{
-                      fontSize: '0.875rem',
-                      color: 'var(--cds-link-primary)',
-                      textDecoration: 'none',
-                      cursor: 'pointer'
-                    }}
+                    className="login-inline-link"
                   >
                     Learn more →
                   </a>
                 </div>
               </div>
 
-              <div style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '1rem'
-              }}>
-                <WarningAlt size={24} style={{ fill: 'var(--cds-icon-primary)', flexShrink: 0, marginTop: '0.25rem' }} />
+              <div className="login-feature-item login-feature-item--last">
+                <WarningAlt size={24} className="login-feature-icon" />
                 <div>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--cds-text-primary)' }}>
+                  <h4 className="login-feature-title">
                     Immutable Audit Trail
                   </h4>
-                  <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)', lineHeight: '1.5', marginBottom: '0.5rem' }}>
+                  <p className="login-feature-description">
                     Every action is cryptographically signed and chained with SHA-256 hashes, creating a tamper-proof, verifiable record of all contract modifications.
                   </p>
                   <a
@@ -702,12 +599,7 @@ const Login = ({ onLogin }) => {
                       e.preventDefault();
                       openExternalLink('https://github.com/Sashwat-K/persona-based-contract-generator#audit-trail');
                     }}
-                    style={{
-                      fontSize: '0.875rem',
-                      color: 'var(--cds-link-primary)',
-                      textDecoration: 'none',
-                      cursor: 'pointer'
-                    }}
+                    className="login-inline-link"
                   >
                     Learn more →
                   </a>
@@ -716,40 +608,19 @@ const Login = ({ onLogin }) => {
             </div>
 
             {/* Version and Links */}
-            <div style={{
-              padding: '1.5rem',
-              backgroundColor: 'var(--cds-layer-01)',
-              borderRadius: '4px',
-              borderLeft: '4px solid var(--cds-border-interactive)'
-            }}>
-              <div style={{
-                fontSize: '0.875rem',
-                color: 'var(--cds-text-secondary)',
-                marginBottom: '1rem'
-              }}>
-                <strong style={{ color: 'var(--cds-text-primary)' }}>Version:</strong> 1.0.0-beta
+            <div className="login-info-card">
+              <div className="login-info-card__version">
+                <strong className="login-info-card__version-label">Version:</strong> 1.0.0-beta
               </div>
 
-              <div style={{
-                display: 'flex',
-                gap: '1.5rem',
-                flexWrap: 'wrap'
-              }}>
+              <div className="login-info-card__links">
                 <a
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
                     openExternalLink('https://github.com/Sashwat-K/persona-based-contract-generator/blob/main/README.md');
                   }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    fontSize: '0.875rem',
-                    color: 'var(--cds-link-primary)',
-                    textDecoration: 'none',
-                    cursor: 'pointer'
-                  }}
+                  className="login-link"
                 >
                   <Document size={16} />
                   Documentation
@@ -761,15 +632,7 @@ const Login = ({ onLogin }) => {
                     e.preventDefault();
                     openExternalLink('https://github.com/Sashwat-K/persona-based-contract-generator/issues');
                   }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    fontSize: '0.875rem',
-                    color: 'var(--cds-link-primary)',
-                    textDecoration: 'none',
-                    cursor: 'pointer'
-                  }}
+                  className="login-link"
                 >
                   <WarningAlt size={16} />
                   Report Issues
@@ -781,15 +644,7 @@ const Login = ({ onLogin }) => {
                     e.preventDefault();
                     openExternalLink('https://github.com/Sashwat-K/persona-based-contract-generator');
                   }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    fontSize: '0.875rem',
-                    color: 'var(--cds-link-primary)',
-                    textDecoration: 'none',
-                    cursor: 'pointer'
-                  }}
+                  className="login-link"
                 >
                   <LogoGithub size={16} />
                   GitHub Repository
@@ -798,15 +653,8 @@ const Login = ({ onLogin }) => {
             </div>
 
             {/* Additional Info */}
-            <div style={{
-              marginTop: '2rem',
-              padding: '1rem',
-              backgroundColor: 'rgba(0, 122, 255, 0.1)',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-              color: 'var(--cds-text-secondary)'
-            }}>
-              <strong style={{ color: 'var(--cds-text-primary)' }}>Note:</strong> This is a development build.
+            <div className="login-dev-note">
+              <strong className="login-dev-note__label">Note:</strong> This is a development build.
               For production deployment, ensure all security configurations are properly set and reviewed by your security team.
             </div>
           </div>
@@ -817,5 +665,3 @@ const Login = ({ onLogin }) => {
 };
 
 export default Login;
-
-

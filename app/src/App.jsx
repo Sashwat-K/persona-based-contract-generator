@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import AppShell from './components/AppShell';
 import Home from './views/Home';
 import BuildManagement from './views/BuildManagement';
@@ -10,16 +10,45 @@ import SystemLogs from './views/SystemLogs';
 import Login from './views/Login';
 import NotFound from './views/NotFound';
 import ErrorBoundary from './components/ErrorBoundary';
-import { ToastProvider, useToast } from './components/ToastManager';
+import { ToastProvider } from './components/ToastManager';
 import { PERSONAS } from './store/mockData';
 import buildService from './services/buildService';
 import { useAuthStore } from './store/authStore';
+import { getPrimaryRole, ROLE_LABELS } from './utils/roles';
 import { ProgressBar, Theme, Modal } from '@carbon/react';
 import '@carbon/charts/styles.css';
 
-// Priority order — highest privilege wins for persona/nav decisions
-const ROLE_PRIORITY = ['ADMIN', 'AUDITOR', 'ENV_OPERATOR', 'SOLUTION_PROVIDER', 'DATA_OWNER', 'VIEWER'];
-const getPrimaryRole = (roles) => ROLE_PRIORITY.find(r => roles.includes(r)) || roles[0] || 'VIEWER';
+const ROLE_PERSONA_MAP = {
+  'ADMIN': PERSONAS.ADMIN,
+  'SOLUTION_PROVIDER': PERSONAS.SOLUTION_PROVIDER,
+  'DATA_OWNER': PERSONAS.DATA_OWNER,
+  'AUDITOR': PERSONAS.AUDITOR,
+  'ENV_OPERATOR': PERSONAS.ENV_OPERATOR,
+  'VIEWER': PERSONAS.VIEWER
+};
+
+const normalizeRoles = (roles = []) => {
+  if (!Array.isArray(roles)) return [];
+
+  return Array.from(
+    new Set(
+      roles
+        .map((role) => (typeof role === 'string' ? role : (role?.role_name || role?.name || '')))
+        .filter(Boolean)
+    )
+  );
+};
+
+const getSafeStoredRoles = (rolesJson, role) => {
+  if (!rolesJson) return role ? [role] : ['VIEWER'];
+  try {
+    const parsed = JSON.parse(rolesJson);
+    const normalized = normalizeRoles(parsed);
+    return normalized.length > 0 ? normalized : (role ? [role] : ['VIEWER']);
+  } catch {
+    return role ? [role] : ['VIEWER'];
+  }
+};
 
 function App() {
   const [isBooting, setIsBooting] = useState(true);
@@ -34,9 +63,32 @@ function App() {
   const [activePersona, setActivePersona] = useState(PERSONAS.ADMIN);
   const [activeNav, setActiveNav] = useState('HOME'); // Default to home for all users
   const [builds, setBuilds] = useState([]);
-  const [buildsLoading, setBuildsLoading] = useState(false);
   const [selectedBuildId, setSelectedBuildId] = useState(null);
   const setupRequired = useAuthStore((state) => state.isSetupRequired());
+
+  const resetAuthState = useCallback(() => {
+    setIsAuthenticated(false);
+    setUserRole('ADMIN');
+    setUserRoles(['ADMIN']);
+    setUserEmail('');
+    setActivePersona(PERSONAS.ADMIN);
+    setActiveNav('HOME');
+    setBuilds([]);
+    setSelectedBuildId(null);
+    setShowWelcomeModal(false);
+  }, []);
+
+  const applyStoredAuthState = useCallback(({ role, rolesJson, email }) => {
+    const roles = getSafeStoredRoles(rolesJson, role);
+    const primaryRole = getPrimaryRole(roles);
+    const effectiveRole = roles.includes(role) ? role : primaryRole;
+
+    setUserRoles(roles);
+    setUserRole(effectiveRole);
+    setActivePersona(ROLE_PERSONA_MAP[effectiveRole] || PERSONAS.ADMIN);
+    setActiveNav(effectiveRole === 'VIEWER' && roles.length === 1 ? 'BUILDS' : 'HOME');
+    setUserEmail(email || '');
+  }, []);
 
   useEffect(() => {
     // Clear any stale session data on mount
@@ -58,21 +110,7 @@ function App() {
 
     if (token) {
       setIsAuthenticated(true);
-      const roles = rolesJson ? JSON.parse(rolesJson) : (role ? [role] : ['VIEWER']);
-      const primaryRole = getPrimaryRole(roles);
-      setUserRoles(roles);
-      setUserRole(primaryRole);
-      const personaMap = {
-        'ADMIN': PERSONAS.ADMIN,
-        'SOLUTION_PROVIDER': PERSONAS.SOLUTION_PROVIDER,
-        'DATA_OWNER': PERSONAS.DATA_OWNER,
-        'AUDITOR': PERSONAS.AUDITOR,
-        'ENV_OPERATOR': PERSONAS.ENV_OPERATOR,
-        'VIEWER': PERSONAS.VIEWER
-      };
-      setActivePersona(personaMap[primaryRole] || PERSONAS.ADMIN);
-      setActiveNav(primaryRole === 'VIEWER' && roles.length === 1 ? 'BUILDS' : 'HOME');
-      if (email) setUserEmail(email);
+      applyStoredAuthState({ role, rolesJson, email });
     }
     
     // Cleanup on unmount (app close)
@@ -80,26 +118,50 @@ function App() {
       // Clear session storage
       sessionStorage.clear();
     };
-  }, []);
+  }, [applyStoredAuthState]);
 
   useEffect(() => {
     const onForcedLogout = () => {
-      setIsAuthenticated(false);
-      setUserRole('ADMIN');
-      setUserRoles(['ADMIN']);
-      setUserEmail('');
-      setActivePersona(PERSONAS.ADMIN);
-      setActiveNav('HOME');
-      setBuilds([]);
-      setSelectedBuildId(null);
-      setShowWelcomeModal(false);
+      resetAuthState();
     };
 
     window.addEventListener('auth:forced-logout', onForcedLogout);
     return () => window.removeEventListener('auth:forced-logout', onForcedLogout);
-  }, []);
+  }, [resetAuthState]);
 
-  const loadBuilds = async () => {
+  useEffect(() => {
+    const onSessionUpdated = (event) => {
+      const detail = event?.detail || {};
+      const roleFromStorage = detail.role || localStorage.getItem('user_role');
+      const rolesJson = detail.rolesJson || localStorage.getItem('user_roles');
+      const email = detail.email || localStorage.getItem('user_email') || '';
+      const roles = getSafeStoredRoles(rolesJson, roleFromStorage);
+      const nextRole = roles.includes(roleFromStorage) ? roleFromStorage : getPrimaryRole(roles);
+
+      setUserRoles(roles);
+      setUserRole(nextRole);
+      setActivePersona(ROLE_PERSONA_MAP[nextRole] || PERSONAS.VIEWER);
+      setUserEmail(email);
+      setSelectedBuildId(null);
+
+      const canAccessAnalytics = nextRole === 'ADMIN';
+      const canAccessUsers = nextRole === 'ADMIN';
+      const canAccessLogs = nextRole === 'ADMIN' || nextRole === 'AUDITOR';
+      const blockedAdminPage =
+        (activeNav === 'ANALYTICS' && !canAccessAnalytics) ||
+        (activeNav === 'USERS' && !canAccessUsers) ||
+        (activeNav === 'LOGS' && !canAccessLogs);
+
+      if (blockedAdminPage || (activeNav === 'HOME' && nextRole === 'VIEWER')) {
+        setActiveNav(nextRole === 'VIEWER' ? 'BUILDS' : 'HOME');
+      }
+    };
+
+    window.addEventListener('auth:session-updated', onSessionUpdated);
+    return () => window.removeEventListener('auth:session-updated', onSessionUpdated);
+  }, [activeNav]);
+
+  const loadBuilds = useCallback(async () => {
     if (setupRequired) {
       setBuilds([]);
       return;
@@ -110,21 +172,32 @@ function App() {
       return;
     }
     try {
-      setBuildsLoading(true);
       const builds = await buildService.getBuilds();
       setBuilds(builds || []);
     } catch (error) {
       console.error('Failed to load builds:', error);
       setBuilds([]);
-    } finally {
-      setBuildsLoading(false);
     }
-  };
+  }, [setupRequired]);
 
   // Load builds when authenticated
   useEffect(() => {
-    if (isAuthenticated) loadBuilds();
-  }, [isAuthenticated, setupRequired]);
+    if (isAuthenticated) {
+      loadBuilds();
+    }
+  }, [isAuthenticated, loadBuilds]);
+
+  useEffect(() => {
+    if (setupRequired && activeNav !== 'SETTINGS') {
+      setActiveNav('SETTINGS');
+    }
+  }, [setupRequired, activeNav]);
+
+  useEffect(() => {
+    if (activeNav === 'HOME' && userRoles.length <= 1 && userRole === 'VIEWER') {
+      setActiveNav('BUILDS');
+    }
+  }, [activeNav, userRole, userRoles]);
 
   useEffect(() => {
     if (!isBooting) return;
@@ -145,104 +218,118 @@ function App() {
     return () => clearInterval(interval);
   }, [isBooting]);
 
-  const advanceBuildState = (buildId, newState) => {
+  const advanceBuildState = useCallback((buildId, newState) => {
     setBuilds(prev => prev.map(b => 
       b.id === buildId ? { ...b, status: newState } : b
     ));
-  };
+  }, []);
 
-  const handleLogin = (isFreshLogin) => {
+  const handleLogin = useCallback((isFreshLogin) => {
     const role = localStorage.getItem('user_role');
     const rolesJson = localStorage.getItem('user_roles');
     const email = localStorage.getItem('user_email');
 
     setIsAuthenticated(true);
-    const roles = rolesJson ? JSON.parse(rolesJson) : (role ? [role] : ['VIEWER']);
-    const primaryRole = getPrimaryRole(roles);
-    setUserRoles(roles);
-    setUserRole(primaryRole);
-    const personaMap = {
-      'ADMIN': PERSONAS.ADMIN,
-      'SOLUTION_PROVIDER': PERSONAS.SOLUTION_PROVIDER,
-      'DATA_OWNER': PERSONAS.DATA_OWNER,
-      'AUDITOR': PERSONAS.AUDITOR,
-      'ENV_OPERATOR': PERSONAS.ENV_OPERATOR,
-      'VIEWER': PERSONAS.VIEWER
-    };
-    setActivePersona(personaMap[primaryRole] || PERSONAS.ADMIN);
-    setActiveNav(primaryRole === 'VIEWER' && roles.length === 1 ? 'BUILDS' : 'HOME');
-    if (email) setUserEmail(email);
+    applyStoredAuthState({ role, rolesJson, email });
     if (isFreshLogin) setShowWelcomeModal(true);
-  };
+  }, [applyStoredAuthState]);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     // Clear all storage
     localStorage.clear();
     sessionStorage.clear();
-    
-    // Reset state
-    setIsAuthenticated(false);
-    setUserRole('ADMIN');
-    setUserRoles(['ADMIN']);
-    setUserEmail('');
-    setActivePersona(PERSONAS.ADMIN);
-    setActiveNav('HOME');
-    setBuilds([]);
+
+    resetAuthState();
+  }, [resetAuthState]);
+
+  const handleRoleChange = useCallback((nextRole) => {
+    if (!nextRole || !userRoles.includes(nextRole)) return;
+
+    localStorage.setItem('user_role', nextRole);
+    setUserRole(nextRole);
+    setActivePersona(ROLE_PERSONA_MAP[nextRole] || PERSONAS.VIEWER);
     setSelectedBuildId(null);
-  };
 
-  const selectedBuild = builds.find(b => b.id === selectedBuildId);
+    const canAccessAnalytics = nextRole === 'ADMIN';
+    const canAccessUsers = nextRole === 'ADMIN';
+    const canAccessLogs = nextRole === 'ADMIN' || nextRole === 'AUDITOR';
+    const shouldMoveToBuilds = activeNav === 'HOME' && nextRole === 'VIEWER';
+    const blockedAdminPage =
+      (activeNav === 'ANALYTICS' && !canAccessAnalytics) ||
+      (activeNav === 'USERS' && !canAccessUsers) ||
+      (activeNav === 'LOGS' && !canAccessLogs);
 
-  const renderActiveView = () => {
-    if (setupRequired && activeNav !== 'SETTINGS') {
-      setActiveNav('SETTINGS');
-      return null;
+    if (shouldMoveToBuilds || blockedAdminPage) {
+      setActiveNav(nextRole === 'VIEWER' ? 'BUILDS' : 'HOME');
     }
-    // Redirect pure VIEWERs from HOME to BUILDS
-    if (activeNav === 'HOME' && userRoles.length <= 1 && userRole === 'VIEWER') {
-      setActiveNav('BUILDS');
-      return null;
-    }
-    
+  }, [activeNav, userRoles]);
+
+  const selectedBuild = useMemo(
+    () => builds.find(b => b.id === selectedBuildId),
+    [builds, selectedBuildId]
+  );
+  const handleSelectBuild = useCallback((buildId) => setSelectedBuildId(buildId), []);
+  const handleBackToBuilds = useCallback(() => setSelectedBuildId(null), []);
+
+  const activeView = useMemo(() => {
     if (activeNav === 'HOME') {
-      return <Home
+      return (
+        <Home
         userEmail={userEmail}
         userRole={userRole}
         onNavigate={setActiveNav}
-        onSelectBuild={(buildId) => setSelectedBuildId(buildId)}
-      />;
+        onSelectBuild={handleSelectBuild}
+        />
+      );
     }
     if (activeNav === 'ANALYTICS') return <AdminAnalytics />;
     if (activeNav === 'USERS') return <UserManagement />;
     if (activeNav === 'LOGS') return <SystemLogs />;
-    if (activeNav === 'SETTINGS') return <AccountSettings userRole={userRole} />;
+    if (activeNav === 'SETTINGS') return <AccountSettings />;
     
     if (activeNav === 'BUILDS') {
        if (selectedBuildId && selectedBuild) {
           return (
             <BuildDetails
               build={selectedBuild}
-              onBack={() => setSelectedBuildId(null)}
+              onBack={handleBackToBuilds}
               activePersona={activePersona}
               userRole={userRole}
-              userRoles={userRoles}
               advanceBuildState={advanceBuildState}
             />
           );
        }
-       return <BuildManagement builds={builds} onSelectBuild={(buildId) => setSelectedBuildId(buildId)} userRole={userRole} userRoles={userRoles} onBuildCreated={loadBuilds} />;
+       return <BuildManagement builds={builds} onSelectBuild={handleSelectBuild} userRole={userRole} onBuildCreated={loadBuilds} />;
     }
     
     // Default to 404 page for unknown routes
     return <NotFound onNavigate={setActiveNav} />;
-  };
+  }, [
+    activeNav,
+    userEmail,
+    userRole,
+    selectedBuildId,
+    selectedBuild,
+    activePersona,
+    userRoles,
+    builds,
+    loadBuilds,
+    advanceBuildState,
+    handleBackToBuilds,
+    handleSelectBuild
+  ]);
+
+  const welcomeMessage = useMemo(
+    () => `Welcome Back, ${ROLE_LABELS[userRole] || 'User'}`,
+    [userRole]
+  );
 
   if (isBooting) {
     return (
       <Theme theme="g100">
-        <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--cds-background)', color: 'var(--cds-text-primary)'}}>
-          <h1 style={{ marginBottom: '1.5rem', fontWeight: 300, letterSpacing: '0.5px', textAlign: 'center' }}>IBM <br /> Confidential Computing Contract Builder</h1>
-          <div style={{ width: '400px' }}>
+        <div className="app-boot-screen">
+          <h1 className="app-boot-screen__title">IBM <br /> Confidential Computing Contract Builder</h1>
+          <div className="app-boot-screen__progress">
             <ProgressBar label="Loading" value={bootProgress} max={100} />
           </div>
         </div>
@@ -254,18 +341,6 @@ function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  const getWelcomeMessage = () => {
-    const roleNames = {
-      'ADMIN': 'Administrator',
-      'SOLUTION_PROVIDER': 'Solution Provider',
-      'DATA_OWNER': 'Data Owner',
-      'AUDITOR': 'Auditor',
-      'ENV_OPERATOR': 'Environment Operator',
-      'VIEWER': 'Viewer'
-    };
-    return `Welcome Back, ${roleNames[userRole] || 'User'}`;
-  };
-
   return (
     <ErrorBoundary>
       <ToastProvider>
@@ -276,19 +351,20 @@ function App() {
            userRole={userRole}
            userRoles={userRoles}
            userEmail={userEmail}
+           onRoleChange={handleRoleChange}
         >
           <Modal
             open={showWelcomeModal}
-            modalHeading={getWelcomeMessage()}
+            modalHeading={welcomeMessage}
             primaryButtonText="Get Started"
             onRequestSubmit={() => setShowWelcomeModal(false)}
             onRequestClose={() => setShowWelcomeModal(false)}
           >
-            <p style={{ marginBottom: '1rem' }}>
+            <p className="app-welcome-copy">
               You have successfully authenticated into the IBM Confidential Computing Contract Builder. Your cryptographic identity has been verified and active workflows are ready for review.
             </p>
           </Modal>
-          {renderActiveView()}
+          {activeView}
         </AppShell>
       </ToastProvider>
     </ErrorBoundary>

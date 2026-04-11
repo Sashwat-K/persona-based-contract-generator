@@ -87,13 +87,13 @@ function ServerConfigSettings() {
   };
 
   return (
-    <div style={{ maxWidth: '800px', padding: '2rem' }}>
-      <h2 style={{ marginBottom: '1rem' }}>Server Configuration</h2>
-      <p style={{ marginBottom: '2rem', color: 'var(--cds-text-secondary)' }}>
-        Configure the backend server URL for thisIBM Confidential Computing Contract Generator instance.
+    <div className="app-page app-page--narrow app-page--padded">
+      <h2 className="server-config-title">Server Configuration</h2>
+      <p className="server-config-subtitle">
+        Configure the backend server URL for this IBM Confidential Computing Contract Generator instance.
       </p>
 
-      <Tile style={{ marginBottom: '2rem' }}>
+      <Tile className="server-config-card">
         <Form>
           <Stack gap={6}>
             <TextInput
@@ -107,7 +107,7 @@ function ServerConfigSettings() {
               helperText="Enter the HTTPS URL of your backend server (e.g., https://192.168.1.100:8443 or https://server.example.com:8443)"
             />
 
-            <div style={{ display: 'flex', gap: '1rem' }}>
+            <div className="server-config-actions">
               <Button
                 kind="secondary"
                 onClick={testConnection}
@@ -115,7 +115,7 @@ function ServerConfigSettings() {
               >
                 {testing ? (
                   <>
-                    <Loading small withOverlay={false} style={{ marginRight: '0.5rem' }} />
+                    <Loading small withOverlay={false} className="server-config-button-loader" />
                     Testing...
                   </>
                 ) : (
@@ -138,7 +138,7 @@ function ServerConfigSettings() {
             kind="success"
             title="Connection Successful"
             subtitle="The server is reachable and responding correctly."
-            style={{ marginTop: '1rem', maxWidth: '100%' }}
+            className="server-config-notification"
             hideCloseButton
             lowContrast
           />
@@ -149,14 +149,14 @@ function ServerConfigSettings() {
             kind="error"
             title="Connection Failed"
             subtitle={error}
-            style={{ marginTop: '1rem', maxWidth: '100%' }}
+            className="server-config-notification"
             hideCloseButton
             lowContrast
           />
         )}
       </Tile>
 
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
+      <div className="server-config-footer-actions">
         <Button
           kind="primary"
           onClick={handleSave}
@@ -166,24 +166,24 @@ function ServerConfigSettings() {
         </Button>
       </div>
 
-      <Tile style={{ backgroundColor: 'var(--cds-layer-02)' }}>
-        <h4 style={{ marginBottom: '1rem' }}>Current Configuration</h4>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <Tile className="server-config-summary">
+        <h4 className="server-config-summary__title">Current Configuration</h4>
+        <div className="server-config-summary__content">
           <div>
             <strong>Server URL:</strong> {serverUrl}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div className="server-config-summary__status-row">
             <strong>Status:</strong>
             {connectionStatus === 'connected' ? (
-              <span style={{ color: 'var(--cds-support-success)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <span className="server-config-status server-config-status--connected">
                 <Checkmark size={16} /> Connected
               </span>
             ) : connectionStatus === 'failed' ? (
-              <span style={{ color: 'var(--cds-support-error)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <span className="server-config-status server-config-status--failed">
                 <Error size={16} /> Failed
               </span>
             ) : (
-              <span style={{ color: 'var(--cds-text-secondary)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <span className="server-config-status server-config-status--unknown">
                 <WarningAlt size={16} /> Unknown
               </span>
             )}
@@ -200,7 +200,7 @@ function ServerConfigSettings() {
         kind="info"
         title="Security Notice"
         subtitle="Only HTTPS connections are allowed. Ensure your server has a valid SSL/TLS certificate."
-        style={{ marginTop: '2rem', maxWidth: '100%' }}
+        className="server-config-security-note"
         lowContrast
         hideCloseButton
       />
@@ -209,5 +209,3 @@ function ServerConfigSettings() {
 }
 
 export default ServerConfigSettings;
-
-

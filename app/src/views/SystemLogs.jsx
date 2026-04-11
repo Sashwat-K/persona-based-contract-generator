@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   DataTable,
   TableContainer,
@@ -15,10 +15,12 @@ import {
   Tag,
   Button
 } from '@carbon/react';
-import { Download, Filter } from '@carbon/icons-react';
+import { Download, Renew } from '@carbon/icons-react';
 import systemLogService from '../services/systemLogService';
 import userService from '../services/userService';
 import { FullPageLoader } from '../components/LoadingSpinner';
+import { formatDate } from '../utils/formatters';
+import { ErrorStatePanel } from '../components/StatePanel';
 
 const headers = [
   { key: 'timestamp', header: 'Timestamp' },
@@ -46,38 +48,49 @@ const getStatusTagType = (status) => {
 const SystemLogs = () => {
   const [logs, setLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [searchValue, setSearchValue] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadLogs = useCallback(async ({ showLoader = false } = {}) => {
+    try {
+      if (showLoader) {
+        setIsLoading(true);
+      } else {
+        setRefreshing(true);
+      }
+      setError(null);
+      const [data, users] = await Promise.all([
+        systemLogService.getSystemLogs(200, 0),
+        userService.listUsers().catch(() => [])
+      ]);
+
+      // Build email → full name lookup from the users list
+      const emailToName = {};
+      (users || []).forEach(u => {
+        if (u.email) emailToName[u.email] = u.name || u.email;
+      });
+
+      const formattedData = data.map(log => ({
+        ...log,
+        timestamp: formatDate(log.timestamp),
+        actor_name: emailToName[log.actor_email] || log.actor_email
+      }));
+      setLogs(formattedData);
+    } catch (loadError) {
+      console.error("Failed to load system logs:", loadError);
+      setError(loadError.message || 'Failed to load system logs');
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchLogs = async () => {
-      try {
-        const [data, users] = await Promise.all([
-          systemLogService.getSystemLogs(200, 0),
-          userService.listUsers().catch(() => [])
-        ]);
-
-        // Build email → full name lookup from the users list
-        const emailToName = {};
-        (users || []).forEach(u => {
-          if (u.email) emailToName[u.email] = u.name || u.email;
-        });
-
-        const formattedData = data.map(log => ({
-          ...log,
-          timestamp: new Date(log.timestamp).toLocaleString(),
-          actor_name: emailToName[log.actor_email] || log.actor_email
-        }));
-        setLogs(formattedData);
-      } catch (error) {
-        console.error("Failed to load system logs:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchLogs();
-  }, []);
+    loadLogs({ showLoader: true });
+  }, [loadLogs]);
 
   const filteredLogs = logs.filter(log =>
     Object.values(log).some(value =>
@@ -104,19 +117,45 @@ const SystemLogs = () => {
     a.href = url;
     a.download = `system-logs-${new Date().toISOString()}.csv`;
     a.click();
+    window.URL.revokeObjectURL(url);
   };
 
   if (isLoading) {
     return <FullPageLoader description="Loading system logs..." />;
   }
 
+  if (error) {
+    return (
+      <div className="app-page">
+        <ErrorStatePanel
+          title="Failed to Load System Logs"
+          description={error}
+          action={<Button onClick={() => loadLogs({ showLoader: true })}>Retry</Button>}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-      <div style={{ marginBottom: '2rem' }}>
-        <h1 style={{ marginBottom: '0.5rem' }}>System Logs</h1>
-        <p style={{ color: 'var(--cds-text-secondary)' }}>
-          System-wide audit logs for user activities, authentication, and administrative actions
-        </p>
+    <div className="app-page">
+      <div className="app-page__header">
+        <div>
+          <h1 className="app-page__title">System Logs</h1>
+          <p className="app-page__subtitle">
+            System-wide audit logs for user activities, authentication, and administrative actions
+          </p>
+        </div>
+        <div className="app-page__actions">
+          <Button
+            kind="tertiary"
+            size="md"
+            renderIcon={Renew}
+            onClick={() => loadLogs({ showLoader: false })}
+            disabled={refreshing}
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </div>
       </div>
 
       <DataTable rows={paginatedLogs} headers={headers}>
@@ -139,13 +178,6 @@ const SystemLogs = () => {
                   placeholder="Search system logs..."
                   onChange={(e) => setSearchValue(e.target.value)}
                 />
-                <Button
-                  kind="ghost"
-                  renderIcon={Filter}
-                  iconDescription="Filter"
-                >
-                  Filter
-                </Button>
                 <Button
                   kind="primary"
                   renderIcon={Download}
@@ -196,12 +228,10 @@ const SystemLogs = () => {
           setPage(page);
           setPageSize(pageSize);
         }}
-        style={{ marginTop: '1rem' }}
+        className="system-logs-pagination"
       />
     </div>
   );
 };
 
 export default SystemLogs;
-
-

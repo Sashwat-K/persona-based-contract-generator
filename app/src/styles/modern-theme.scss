@@ -1,10 +1,7 @@
 // Modern IBM Cloud-inspired theme enhancements
 // Works with both light (white) and dark (g100) Carbon themes
 
-// Smooth transitions for theme switching
-* {
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
+// Keep transitions scoped to interactive components to avoid global repaint churn.
 
 // Enhanced header styling
 .cds--header {
@@ -346,5 +343,4 @@
     transition-duration: 0.01ms !important;
   }
 }
-
 

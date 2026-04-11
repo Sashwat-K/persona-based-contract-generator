@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Grid,
   Column,
   Tile,
   Tag,
-  Button,
-  ProgressBar
+  Button
 } from '@carbon/react';
 import {
   Checkmark,
@@ -13,11 +12,53 @@ import {
   WarningAlt,
   Locked,
   Unlocked,
-  Time
+  Time,
+  Renew
 } from '@carbon/icons-react';
 import buildService from '../services/buildService';
 import { FullPageLoader } from '../components/LoadingSpinner';
 import { useAuthStore } from '../store/authStore';
+import { formatDateOnly } from '../utils/formatters';
+import { getRoleLabel } from '../utils/roles';
+
+const ALERT_CLASS_BY_TYPE = {
+  critical: 'home-alert-item--critical',
+  warning: 'home-alert-item--warning',
+  info: 'home-alert-item--info'
+};
+
+const BUILD_ACTION_RULES = [
+  {
+    role: 'SOLUTION_PROVIDER',
+    status: 'CREATED',
+    title: 'Upload Workload & Certificate',
+    description: 'Upload workload definition and encryption certificate to proceed.'
+  },
+  {
+    role: 'DATA_OWNER',
+    status: 'WORKLOAD_SUBMITTED',
+    title: 'Stage Environment Configuration',
+    description: 'Upload environment file with secrets for encryption.'
+  },
+  {
+    role: 'AUDITOR',
+    status: 'ENVIRONMENT_STAGED',
+    title: 'Sign & Add Attestation',
+    description: 'Generate signing and attestation artifacts, then confirm attestation readiness.'
+  },
+  {
+    role: 'AUDITOR',
+    status: 'AUDITOR_KEYS_REGISTERED',
+    title: 'Finalize Contract',
+    description: 'Assemble final contract and sign with your keys.'
+  },
+  {
+    role: 'ENV_OPERATOR',
+    status: 'FINALIZED',
+    title: 'Download Contract',
+    description: 'Download final contract and acknowledge receipt.'
+  }
+];
 
 const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   const authUser = useAuthStore((state) => state.user);
@@ -27,59 +68,68 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
   const isKeyExpired = useAuthStore((state) => state.isKeyExpired());
   const isPasswordExpired = useAuthStore((state) => state.isPasswordExpired());
   const isSetupRequired = useAuthStore((state) => state.isSetupRequired());
-  const setupPending = useAuthStore((state) => state.getSetupPending());
   const mustChangePassword = useAuthStore((state) => state.mustChangePassword);
 
   const [myBuilds, setMyBuilds] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const defaultUserName = useMemo(() => {
+    const localPart = (userEmail || '').split('@')[0];
+    return localPart || 'User';
+  }, [userEmail]);
 
   // Prepare current user data from authStore
-  const currentUser = {
-    name: authUser?.full_name || authUser?.name || userEmail.split('@')[0],
+  const currentUser = useMemo(() => ({
+    name: authUser?.full_name || authUser?.name || defaultUserName,
     email: authUser?.email || userEmail,
     role: userRole,
     keyStatus: !(publicKeyExpiry || authUser?.public_key_fingerprint) ? 'Not Registered' : (isKeyExpired ? 'Expired' : 'Active'),
     keyExpiresAt: publicKeyExpiry || null,
     passwordExpired: mustChangePassword || isPasswordExpired
-  };
+  }), [
+    authUser,
+    defaultUserName,
+    userEmail,
+    userRole,
+    publicKeyExpiry,
+    isKeyExpired,
+    mustChangePassword,
+    isPasswordExpired
+  ]);
+
+  const loadBuilds = useCallback(async ({ showLoader = false } = {}) => {
+    try {
+      if (showLoader) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
+
+      if (isSetupRequired) {
+        setMyBuilds([]);
+        return;
+      }
+
+      // Load builds assigned to current user
+      const builds = await buildService.getBuilds();
+      setMyBuilds(builds);
+    } catch (err) {
+      console.error('Failed to load builds:', err);
+      setMyBuilds([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [isSetupRequired]);
 
   // Load builds on mount
   useEffect(() => {
-    const loadBuilds = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        if (isSetupRequired) {
-          setError(`Account setup is required (${setupPending.join(', ')}). Complete setup from Account Settings.`);
-          setMyBuilds([]);
-          return;
-        }
-
-        // Load builds assigned to current user
-        const builds = await buildService.getBuilds();
-        setMyBuilds(builds);
-
-      } catch (err) {
-        console.error('Failed to load builds:', err);
-        setError(err.message || 'Failed to load builds');
-        setMyBuilds([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadBuilds();
-  }, [isSetupRequired, setupPending.join(',')]);
-
-  // Show loading state only for builds
-  if (loading) {
-    return <FullPageLoader description="Loading builds..." />;
-  }
+    loadBuilds({ showLoader: true });
+  }, [loadBuilds]);
 
   // Calculate pending actions
-  const getPendingActions = () => {
+  const pendingActions = useMemo(() => {
     const actions = [];
 
     // Check password status
@@ -113,7 +163,7 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
           type: 'warning',
           icon: Time,
           title: 'Key Expiring Soon',
-          description: `Your public key expires in ${daysUntilExpiry} days (${new Date(currentUser.keyExpiresAt).toLocaleDateString()}).`,
+          description: `Your public key expires in ${daysUntilExpiry} days (${formatDateOnly(currentUser.keyExpiresAt)}).`,
           action: 'Rotate Keys',
           onClick: () => onNavigate('SETTINGS')
         });
@@ -121,64 +171,38 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
     }
 
     return actions;
-  };
+  }, [currentUser, onNavigate]);
 
   // Get build actions separately
-  const getBuildActions = () => {
-    const buildActions = [];
+  const buildActions = useMemo(() => {
+    const dedupe = new Set();
+    const nextActions = [];
 
-    myBuilds.forEach(build => {
-      if (userRole === 'SOLUTION_PROVIDER' && build.status === 'CREATED') {
-        buildActions.push({
+    myBuilds.forEach((build) => {
+      const buildStatus = (build.status || '').toUpperCase();
+
+      BUILD_ACTION_RULES.forEach((rule) => {
+        if (rule.role !== userRole || buildStatus !== rule.status) return;
+        const dedupeKey = `${build.id}-${rule.role}-${rule.status}`;
+        if (dedupe.has(dedupeKey)) return;
+        dedupe.add(dedupeKey);
+
+        nextActions.push({
           buildId: build.id,
           buildName: build.name,
-          title: 'Upload Workload & Certificate',
-          description: 'Upload workload definition and encryption certificate to proceed.',
-          status: build.status
+          title: rule.title,
+          description: rule.description,
+          status: build.status,
+          role: rule.role
         });
-      } else if (userRole === 'DATA_OWNER' && build.status === 'WORKLOAD_SUBMITTED') {
-        buildActions.push({
-          buildId: build.id,
-          buildName: build.name,
-          title: 'Stage Environment Configuration',
-          description: 'Upload environment file with secrets for encryption.',
-          status: build.status
-        });
-      } else if (userRole === 'AUDITOR' && build.status === 'ENVIRONMENT_STAGED') {
-        buildActions.push({
-          buildId: build.id,
-          buildName: build.name,
-          title: 'Sign & Add Attestation',
-          description: 'Generate signing and attestation artifacts, then confirm attestation readiness.',
-          status: build.status
-        });
-      } else if (userRole === 'AUDITOR' && build.status === 'AUDITOR_KEYS_REGISTERED') {
-        buildActions.push({
-          buildId: build.id,
-          buildName: build.name,
-          title: 'Finalize Contract',
-          description: 'Assemble final contract and sign with your keys.',
-          status: build.status
-        });
-      } else if (userRole === 'ENV_OPERATOR' && build.status === 'FINALIZED') {
-        buildActions.push({
-          buildId: build.id,
-          buildName: build.name,
-          title: 'Download Contract',
-          description: 'Download final contract and acknowledge receipt.',
-          status: build.status
-        });
-      }
+      });
     });
 
-    return buildActions;
-  };
-
-  const pendingActions = getPendingActions();
-  const buildActions = getBuildActions();
+    return nextActions;
+  }, [myBuilds, userRole]);
 
   // Get status color and icon
-  const getStatusDisplay = (status) => {
+  const getStatusDisplay = useCallback((status) => {
     if (status === 'Active') {
       return { color: 'green', icon: Checkmark, text: 'Active' };
     } else if (status === 'Expired') {
@@ -187,70 +211,77 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
       return { color: 'gray', icon: Unlocked, text: 'Not Registered' };
     }
     return { color: 'gray', icon: Warning, text: status };
-  };
+  }, []);
 
   const keyStatusDisplay = getStatusDisplay(currentUser.keyStatus);
   const passwordStatusDisplay = currentUser.passwordExpired
     ? { color: 'red', icon: WarningAlt, text: 'Expired' }
     : { color: 'green', icon: Checkmark, text: 'Valid' };
 
-  return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '0.5rem' }}>Welcome, {currentUser.name}</h1>
-      <p style={{ marginBottom: '2rem', color: 'var(--cds-text-secondary)' }}>
-        {currentUser.email} • {userRole.replace(/_/g, ' ')}
-      </p>
+  // Show loading state only for builds
+  if (loading) {
+    return <FullPageLoader description="Loading builds..." />;
+  }
 
-      {/* Section Title for Row 1 */}
-      <h2 style={{
-        marginBottom: '1rem',
-        paddingBottom: '0.5rem',
-        borderBottom: '1px solid var(--cds-border-subtle)'
-      }}>
-        Account Overview
-      </h2>
+  return (
+    <div className="app-page home-page">
+      <div className="app-page__header">
+        <div>
+          <h1 className="app-page__title">Welcome, {currentUser.name}</h1>
+          <p className="app-page__subtitle">
+            {currentUser.email} • {getRoleLabel(userRole)}
+          </p>
+        </div>
+        <div className="app-page__actions">
+          <Button
+            kind="tertiary"
+            size="md"
+            renderIcon={Renew}
+            disabled={refreshing}
+            onClick={() => loadBuilds({ showLoader: false })}
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </div>
+      </div>
+
+      <h2 className="app-section-title">Account Overview</h2>
 
       <Grid>
-        {/* Row 1: Account Status & Account Alerts */}
-        {/* Account Status Section */}
-        <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
-          <Tile style={{ height: '100%' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>Account Status</h3>
+        <Column lg={8} md={4} sm={4} className="home-grid-column">
+          <Tile className="home-tile">
+            <h3 className="home-tile__title">Account Status</h3>
 
-            {/* Password Status */}
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <Locked size={20} style={{ marginRight: '0.5rem' }} />
+            <div className="home-status-section">
+              <div className="home-status-section__header">
+                <Locked size={20} className="home-status-icon" />
                 <strong>Password Status</strong>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', marginTop: '0.5rem' }}>
-                <Tag type={passwordStatusDisplay.color} style={{ marginRight: '0.5rem' }}>
+              <div className="home-tag-row">
+                <Tag type={passwordStatusDisplay.color} className="home-status-tag">
                   {passwordStatusDisplay.text}
                 </Tag>
                 {currentUser.passwordExpired && (
-                  <span style={{ color: 'var(--cds-text-error)', fontSize: '0.875rem' }}>
-                    Action required
-                  </span>
+                  <span className="home-status-action-required">Action required</span>
                 )}
               </div>
             </div>
 
-            {/* Public Key Status */}
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <div className="home-status-section">
+              <div className="home-status-section__header">
                 {currentUser.keyStatus === 'Active' ? (
-                  <Locked size={20} style={{ marginRight: '0.5rem' }} />
+                  <Locked size={20} className="home-status-icon" />
                 ) : (
-                  <Unlocked size={20} style={{ marginRight: '0.5rem' }} />
+                  <Unlocked size={20} className="home-status-icon" />
                 )}
                 <strong>Public Key Status</strong>
               </div>
-              <div style={{ marginTop: '0.5rem' }}>
-                <Tag type={keyStatusDisplay.color} style={{ marginRight: '0.5rem' }}>
+              <div className="home-key-status-content">
+                <Tag type={keyStatusDisplay.color} className="home-status-tag">
                   {keyStatusDisplay.text}
                 </Tag>
-                <div style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
-                  Expires: {currentUser.keyExpiresAt ? new Date(currentUser.keyExpiresAt).toLocaleDateString() : 'N/A'}
+                <div className="home-muted-text">
+                  Expires: {formatDateOnly(currentUser.keyExpiresAt)}
                 </div>
               </div>
             </div>
@@ -265,44 +296,22 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
           </Tile>
         </Column>
 
-        {/* Account & System Pending Actions - Always visible */}
-        <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
-          <Tile style={{ height: '100%' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>Account & System Alerts</h3>
+        <Column lg={8} md={4} sm={4} className="home-grid-column">
+          <Tile className="home-tile">
+            <h3 className="home-tile__title">Account & System Alerts</h3>
 
             {pendingActions.length > 0 ? (
-
               <div>
                 {pendingActions.map((action, index) => {
                   const Icon = action.icon;
-                  const bgColor = action.type === 'critical' ? 'var(--cds-support-error)' :
-                    action.type === 'warning' ? 'var(--cds-support-warning)' :
-                      'var(--cds-support-info)';
+                  const typeClass = ALERT_CLASS_BY_TYPE[action.type] || ALERT_CLASS_BY_TYPE.info;
 
                   return (
-                    <div key={index} style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      padding: '1rem',
-                      marginBottom: '1rem',
-                      backgroundColor: 'var(--cds-layer-01)',
-                      borderLeft: `4px solid ${bgColor}`
-                    }}>
-                      <Icon size={24} style={{
-                        marginRight: '1rem',
-                        marginTop: '0.25rem',
-                        flexShrink: 0,
-                        color: bgColor
-                      }} />
-                      <div style={{ flex: 1 }}>
-                        <h4 style={{ marginBottom: '0.5rem' }}>{action.title}</h4>
-                        <p style={{
-                          marginBottom: '1rem',
-                          fontSize: '0.875rem',
-                          color: 'var(--cds-text-secondary)'
-                        }}>
-                          {action.description}
-                        </p>
+                    <div key={index} className={`home-alert-item ${typeClass}`}>
+                      <Icon size={24} className="home-alert-item__icon" />
+                      <div className="home-alert-item__body">
+                        <h4 className="home-alert-item__title">{action.title}</h4>
+                        <p className="home-alert-item__description">{action.description}</p>
                         <Button
                           size="sm"
                           onClick={action.onClick}
@@ -315,67 +324,43 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                 })}
               </div>
             ) : (
-              <div style={{
-                padding: '2rem',
-                textAlign: 'center',
-                backgroundColor: 'var(--cds-layer-01)',
-                borderRadius: '4px'
-              }}>
-                <Checkmark size={32} style={{
-                  color: 'var(--cds-support-success)',
-                  marginBottom: '0.5rem'
-                }} />
-                <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>All Clear</p>
-                <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+              <div className="home-empty-state">
+                <Checkmark size={32} className="home-empty-state__icon" />
+                <p className="home-empty-state__title">All Clear</p>
+                <p className="home-empty-state__description">
                   No account or system alerts at this time.
                 </p>
               </div>
             )}
           </Tile>
         </Column>
-
       </Grid>
 
-      {/* Section Title for Row 2 */}
-      <h2 style={{
-        marginTop: '1.5rem',
-        marginBottom: '1rem',
-        paddingBottom: '0.5rem',
-        borderBottom: '1px solid var(--cds-border-subtle)'
-      }}>
+      <h2 className="app-section-title home-section-title-spacing">
         Build Overview
       </h2>
 
       <Grid>
-        {/* Row 2: My Builds & Build Actions */}
-        {/* My Builds Section */}
-        <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
-          <Tile style={{ height: '100%' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>My Builds</h3>
+        <Column lg={8} md={4} sm={4} className="home-grid-column">
+          <Tile className="home-tile">
+            <h3 className="home-tile__title">My Builds</h3>
 
             {myBuilds.length > 0 ? (
               <>
-                <div style={{ marginBottom: '1rem' }}>
-                  <div style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--cds-text-primary)' }}>
-                    {myBuilds.length}
-                  </div>
-                  <div style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+                <div className="home-build-count">
+                  <div className="home-build-count__value">{myBuilds.length}</div>
+                  <div className="home-muted-text">
                     Active builds assigned to you
                   </div>
                 </div>
 
-                <div style={{ marginBottom: '1rem' }}>
-                  {myBuilds.map(build => (
-                    <div key={build.id} style={{
-                      padding: '0.75rem',
-                      marginBottom: '0.5rem',
-                      backgroundColor: 'var(--cds-layer-01)',
-                      borderLeft: '3px solid var(--cds-border-interactive)'
-                    }}>
-                      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                <div className="home-build-list">
+                  {myBuilds.map((build) => (
+                    <div key={build.id} className="home-build-list-item">
+                      <div className="home-build-list-item__name">
                         {build.name}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--cds-text-secondary)' }}>
+                      <div className="home-build-list-item__meta">
                         Status: {build.status.replace(/_/g, ' ')}
                       </div>
                     </div>
@@ -391,50 +376,37 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                 </Button>
               </>
             ) : (
-              <div style={{
-                padding: '2rem',
-                textAlign: 'center',
-                color: 'var(--cds-text-secondary)'
-              }}>
+              <div className="home-text-empty">
                 <p>No builds assigned to you yet.</p>
               </div>
             )}
           </Tile>
         </Column>
 
-        {/* Build Actions Section - Always visible */}
-        <Column lg={8} md={4} sm={4} style={{ marginBottom: '1rem' }}>
-          <Tile style={{ height: '100%' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>Build Actions Required</h3>
+        <Column lg={8} md={4} sm={4} className="home-grid-column">
+          <Tile className="home-tile">
+            <h3 className="home-tile__title">Build Actions Required</h3>
 
             {buildActions.length > 0 ? (
               <div>
                 {buildActions.map((action, index) => (
-                  <div key={index} style={{
-                    padding: '1rem',
-                    marginBottom: '1rem',
-                    backgroundColor: 'var(--cds-layer-01)',
-                    borderLeft: '4px solid var(--cds-support-info)',
-                    borderRadius: '4px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                  <div key={index} className="home-build-action-card">
+                    <div className="home-build-action-card__header">
                       <div>
-                        <h4 style={{ marginBottom: '0.25rem' }}>{action.buildName}</h4>
-                        <Tag type="blue" size="sm" style={{ marginTop: '0.25rem' }}>
+                        <h4 className="home-build-action-card__build-name">{action.buildName}</h4>
+                        <Tag type="blue" size="sm" className="home-build-action-card__status-tag">
                           {action.status.replace(/_/g, ' ')}
                         </Tag>
                       </div>
                     </div>
-                    <div style={{
-                      padding: '0.75rem',
-                      backgroundColor: 'var(--cds-layer-02)',
-                      borderRadius: '4px',
-                      marginBottom: '1rem'
-                    }}>
-                      <div style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+                    <div className="home-build-action-card__details">
+                      <div className="home-build-action-card__title">
                         {action.title}
                       </div>
-                      <div style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+                      <div className="home-build-action-card__description">
+                        Role: {getRoleLabel(action.role)}
+                      </div>
+                      <div className="home-build-action-card__description">
                         {action.description}
                       </div>
                     </div>
@@ -451,18 +423,10 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
                 ))}
               </div>
             ) : (
-              <div style={{
-                padding: '2rem',
-                textAlign: 'center',
-                backgroundColor: 'var(--cds-layer-01)',
-                borderRadius: '4px'
-              }}>
-                <Checkmark size={32} style={{
-                  color: 'var(--cds-support-success)',
-                  marginBottom: '0.5rem'
-                }} />
-                <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>All Clear</p>
-                <p style={{ fontSize: '0.875rem', color: 'var(--cds-text-secondary)' }}>
+              <div className="home-empty-state">
+                <Checkmark size={32} className="home-empty-state__icon" />
+                <p className="home-empty-state__title">All Clear</p>
+                <p className="home-empty-state__description">
                   No build actions required at this time.
                 </p>
               </div>
