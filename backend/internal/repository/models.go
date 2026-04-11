@@ -76,6 +76,7 @@ const (
 	BuildStatusAUDITORKEYSREGISTERED BuildStatus = "AUDITOR_KEYS_REGISTERED"
 	BuildStatusCONTRACTASSEMBLED     BuildStatus = "CONTRACT_ASSEMBLED"
 	BuildStatusFINALIZED             BuildStatus = "FINALIZED"
+	BuildStatusCONTRACTDOWNLOADED    BuildStatus = "CONTRACT_DOWNLOADED"
 	BuildStatusCANCELLED             BuildStatus = "CANCELLED"
 )
 

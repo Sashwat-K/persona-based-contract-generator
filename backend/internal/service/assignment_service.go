@@ -194,8 +194,8 @@ func (s *AssignmentService) DeleteBuildAssignments(ctx context.Context, buildID 
 	}
 
 	buildStatus := model.BuildStatus(build.Status)
-	if buildStatus == model.StatusFinalized {
-		return model.ErrInvalidRequest("cannot delete assignments from finalized build")
+	if buildStatus.IsTerminal() {
+		return model.ErrInvalidRequest(fmt.Sprintf("cannot delete assignments from %s build", buildStatus))
 	}
 
 	// Delete assignments

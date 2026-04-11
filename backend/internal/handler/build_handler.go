@@ -141,8 +141,18 @@ func (h *BuildHandler) TransitionStatus(w http.ResponseWriter, r *http.Request) 
 	actorID, _ := middleware.GetUserID(r.Context())
 	roles := middleware.GetUserRoles(r.Context())
 	ip := r.RemoteAddr
+	requestSignature := middleware.GetRequestSignature(r.Context())
+	requestSignatureHash := middleware.GetRequestSignatureHash(r.Context())
+	var sigPtr *string
+	var sigHashPtr *string
+	if requestSignature != "" {
+		sigPtr = &requestSignature
+	}
+	if requestSignatureHash != "" {
+		sigHashPtr = &requestSignatureHash
+	}
 
-	err = h.buildService.TransitionStatus(r.Context(), buildID, newStatus, actorID, ip, roles)
+	err = h.buildService.TransitionStatus(r.Context(), buildID, newStatus, actorID, ip, roles, sigPtr, sigHashPtr)
 	if err != nil {
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
@@ -206,6 +216,16 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 	actorID, _ := middleware.GetUserID(r.Context())
 	roles := middleware.GetUserRoles(r.Context())
 	ip := r.RemoteAddr
+	requestSignature := middleware.GetRequestSignature(r.Context())
+	requestSignatureHash := middleware.GetRequestSignatureHash(r.Context())
+	var sigPtr *string
+	var sigHashPtr *string
+	if requestSignature != "" {
+		sigPtr = &requestSignature
+	}
+	if requestSignatureHash != "" {
+		sigHashPtr = &requestSignatureHash
+	}
 
 	// Idempotent behavior:
 	// If attestation is already registered (or build already progressed beyond it),
@@ -215,7 +235,8 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 		current := model.BuildStatus(build.Status)
 		if current == model.StatusAuditorKeysRegistered ||
 			current == model.StatusContractAssembled ||
-			current == model.StatusFinalized {
+			current == model.StatusFinalized ||
+			current == model.StatusContractDownloaded {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"status":             current.String(),
 				"already_registered": true,
@@ -224,7 +245,16 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	err = h.buildService.TransitionStatus(r.Context(), buildID, model.StatusAuditorKeysRegistered, actorID, ip, roles)
+	err = h.buildService.TransitionStatus(
+		r.Context(),
+		buildID,
+		model.StatusAuditorKeysRegistered,
+		actorID,
+		ip,
+		roles,
+		sigPtr,
+		sigHashPtr,
+	)
 	if err != nil {
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)
@@ -250,7 +280,7 @@ func (h *BuildHandler) CancelBuild(w http.ResponseWriter, r *http.Request) {
 	ip := r.RemoteAddr
 
 	// Transition to Cancelled
-	err = h.buildService.TransitionStatus(r.Context(), buildID, model.StatusCancelled, actorID, ip, roles)
+	err = h.buildService.TransitionStatus(r.Context(), buildID, model.StatusCancelled, actorID, ip, roles, nil, nil)
 	if err != nil {
 		if appErr, ok := err.(*model.AppError); ok {
 			writeError(w, appErr)

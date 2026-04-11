@@ -16,20 +16,21 @@ import (
 )
 
 func signatureHashForEvent(eventType string, eventData []byte, defaultHash string) string {
-	switch eventType {
-	case "BUILD_FINALIZED", "CONTRACT_DOWNLOADED", "BUILD_CREATED", "ROLE_ASSIGNED":
-		var payload map[string]interface{}
-		if err := json.Unmarshal(eventData, &payload); err == nil {
-			if (eventType == "BUILD_FINALIZED" || eventType == "CONTRACT_DOWNLOADED") {
-				if v, ok := payload["contract_hash"].(string); ok && v != "" {
-					return v
-				}
-			}
-			if v, ok := payload["request_signature_hash"].(string); ok && v != "" {
-				return v
-			}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(eventData, &payload); err != nil {
+		return defaultHash
+	}
+
+	if eventType == "BUILD_FINALIZED" || eventType == "CONTRACT_DOWNLOADED" {
+		if v, ok := payload["contract_hash"].(string); ok && v != "" {
+			return v
 		}
 	}
+
+	if v, ok := payload["request_signature_hash"].(string); ok && v != "" {
+		return v
+	}
+
 	return defaultHash
 }
 
@@ -213,8 +214,12 @@ func (s *VerificationService) VerifyBuildAuditChain(ctx context.Context, buildID
 func requiresSignature(eventType string) bool {
 	// Events that should always be signed by the actor
 	signedEvents := map[string]bool{
-		"BUILD_FINALIZED":     true,
-		"CONTRACT_DOWNLOADED": true,
+		"WORKLOAD_SUBMITTED":      true,
+		"ENVIRONMENT_STAGED":      true,
+		"AUDITOR_KEYS_REGISTERED": true,
+		"CONTRACT_ASSEMBLED":      true,
+		"BUILD_FINALIZED":         true,
+		"CONTRACT_DOWNLOADED":     true,
 	}
 	return signedEvents[eventType]
 }
@@ -229,7 +234,7 @@ func (s *VerificationService) VerifyContractIntegrity(ctx context.Context, build
 
 	result := &ContractIntegrityResult{
 		BuildID:     buildID.String(),
-		IsFinalized: model.BuildStatus(build.Status) == model.StatusFinalized,
+		IsFinalized: model.BuildStatus(build.Status) == model.StatusFinalized || model.BuildStatus(build.Status) == model.StatusContractDownloaded,
 		IsImmutable: build.IsImmutable,
 	}
 

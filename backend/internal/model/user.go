@@ -35,4 +35,5 @@ var RequiredRoleForTransition = map[BuildStatus]PersonaRole{
 	StatusAuditorKeysRegistered: RoleAuditor,
 	StatusContractAssembled:     RoleAuditor,
 	StatusFinalized:             RoleAuditor,
+	StatusContractDownloaded:    RoleEnvOperator,
 }

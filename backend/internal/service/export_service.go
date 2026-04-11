@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
@@ -52,6 +53,24 @@ func NewExportService(queries repository.Querier, auditService *AuditService, as
 	}
 }
 
+func (s *ExportService) hasDownloadAcknowledgment(ctx context.Context, buildID uuid.UUID) (bool, error) {
+	buildIDPg := pgtype.UUID{
+		Bytes: buildID,
+		Valid: true,
+	}
+	events, err := s.queries.GetAuditEventsByBuildID(ctx, buildIDPg)
+	if err != nil {
+		return false, err
+	}
+
+	for _, event := range events {
+		if event.EventType == model.EventContractDownloaded.String() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ExportContractOutput contains the exported contract data.
 type ExportContractOutput struct {
 	ContractYAML string `json:"contract_yaml"` // base64-encoded
@@ -70,9 +89,21 @@ func (s *ExportService) ExportContract(ctx context.Context, buildID, userID uuid
 		return nil, model.ErrBuildNotFound(buildID.String())
 	}
 
-	// 2. Verify build is finalized
-	if model.BuildStatus(build.Status) != model.StatusFinalized {
+	// 2. Verify build is in exportable state
+	buildStatus := model.BuildStatus(build.Status)
+	if buildStatus == model.StatusContractDownloaded {
+		return nil, model.ErrInvalidRequest("contract has already been downloaded and acknowledged")
+	}
+	if buildStatus != model.StatusFinalized {
 		return nil, model.ErrInvalidRequest("build must be finalized before export")
+	}
+
+	alreadyDownloaded, err := s.hasDownloadAcknowledgment(ctx, buildID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check prior download acknowledgment: %w", err)
+	}
+	if alreadyDownloaded {
+		return nil, model.ErrInvalidRequest("contract has already been downloaded and acknowledged")
 	}
 
 	// 3. Verify contract exists
@@ -118,9 +149,21 @@ func (s *ExportService) AcknowledgeDownload(ctx context.Context, input Acknowled
 		return model.ErrBuildNotFound(input.BuildID.String())
 	}
 
-	// 2. Verify build is finalized
-	if model.BuildStatus(build.Status) != model.StatusFinalized {
+	// 2. Verify build is in downloadable state
+	buildStatus := model.BuildStatus(build.Status)
+	if buildStatus == model.StatusContractDownloaded {
+		return model.ErrInvalidRequest("contract has already been downloaded and acknowledged")
+	}
+	if buildStatus != model.StatusFinalized {
 		return model.ErrInvalidRequest("build must be finalized")
+	}
+
+	alreadyDownloaded, err := s.hasDownloadAcknowledgment(ctx, input.BuildID)
+	if err != nil {
+		return fmt.Errorf("failed to check prior download acknowledgment: %w", err)
+	}
+	if alreadyDownloaded {
+		return model.ErrInvalidRequest("contract has already been downloaded and acknowledged")
 	}
 
 	// 3. Verify contract hash matches
@@ -175,6 +218,15 @@ func (s *ExportService) AcknowledgeDownload(ctx context.Context, input Acknowled
 		return fmt.Errorf("failed to log download acknowledgment: %w", err)
 	}
 
+	// 9. Move build into terminal "downloaded" status to prevent re-download.
+	err = s.queries.UpdateBuildStatus(ctx, repository.UpdateBuildStatusParams{
+		ID:     input.BuildID,
+		Status: model.StatusContractDownloaded.String(),
+	})
+	if err != nil {
+		return fmt.Errorf("download acknowledged but failed to update build status: %w", err)
+	}
+
 	return nil
 }
 
@@ -194,9 +246,21 @@ func (s *ExportService) GetUserData(ctx context.Context, buildID, userID uuid.UU
 		return nil, model.ErrBuildNotFound(buildID.String())
 	}
 
-	// 2. Verify build is finalized
-	if model.BuildStatus(build.Status) != model.StatusFinalized {
+	// 2. Verify build is in downloadable state
+	buildStatus := model.BuildStatus(build.Status)
+	if buildStatus == model.StatusContractDownloaded {
+		return nil, model.ErrInvalidRequest("contract has already been downloaded and acknowledged")
+	}
+	if buildStatus != model.StatusFinalized {
 		return nil, model.ErrInvalidRequest("build must be finalized")
+	}
+
+	alreadyDownloaded, err := s.hasDownloadAcknowledgment(ctx, buildID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check prior download acknowledgment: %w", err)
+	}
+	if alreadyDownloaded {
+		return nil, model.ErrInvalidRequest("contract has already been downloaded and acknowledged")
 	}
 
 	// 3. Verify contract exists

@@ -46,8 +46,10 @@ type SubmitSectionInput struct {
 	SectionHash           string
 	Signature             string
 	// For auto-transitioning build status after submission
-	ActorRoles []string
-	ActorIP    string
+	ActorRoles           []string
+	ActorIP              string
+	RequestSignature     *string
+	RequestSignatureHash *string
 }
 
 // requiredBuildStatusForRole maps each submitting role to the build status that must be current.
@@ -151,7 +153,16 @@ func (s *SectionService) SubmitSection(ctx context.Context, input SubmitSectionI
 
 	// 6. Auto-transition build status based on the submitting role
 	if nextStatus, ok := roleToNextStatus[resolvedRole]; ok {
-		if transErr := s.buildService.TransitionStatus(ctx, input.BuildID, nextStatus, input.SubmittedBy, input.ActorIP, input.ActorRoles); transErr != nil {
+		if transErr := s.buildService.TransitionStatus(
+			ctx,
+			input.BuildID,
+			nextStatus,
+			input.SubmittedBy,
+			input.ActorIP,
+			input.ActorRoles,
+			input.RequestSignature,
+			input.RequestSignatureHash,
+		); transErr != nil {
 			return nil, fmt.Errorf("section stored but status transition to %s failed: %w", nextStatus, transErr)
 		}
 	}

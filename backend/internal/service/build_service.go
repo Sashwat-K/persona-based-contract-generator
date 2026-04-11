@@ -132,6 +132,8 @@ func mapStatusToEvent(status model.BuildStatus) model.AuditEventType {
 		return model.EventContractAssembled
 	case model.StatusFinalized:
 		return model.EventBuildFinalized
+	case model.StatusContractDownloaded:
+		return model.EventContractDownloaded
 	case model.StatusCancelled:
 		return model.EventBuildCancelled
 	default:
@@ -139,8 +141,33 @@ func mapStatusToEvent(status model.BuildStatus) model.AuditEventType {
 	}
 }
 
+func statusEventRequiresRequestSignature(eventType model.AuditEventType) bool {
+	switch eventType {
+	case model.EventWorkloadSubmitted,
+		model.EventEnvironmentStaged,
+		model.EventAuditorKeysRegistered,
+		model.EventContractAssembled:
+		return true
+	default:
+		return false
+	}
+}
+
 // TransitionStatus securely advances the build state.
-func (s *BuildService) TransitionStatus(ctx context.Context, buildID uuid.UUID, newStatus model.BuildStatus, actorID uuid.UUID, ip string, userRoles []string) error {
+func (s *BuildService) TransitionStatus(
+	ctx context.Context,
+	buildID uuid.UUID,
+	newStatus model.BuildStatus,
+	actorID uuid.UUID,
+	ip string,
+	userRoles []string,
+	requestSignature *string,
+	requestSignatureHash *string,
+) error {
+	if newStatus == model.StatusContractDownloaded {
+		return model.ErrInvalidRequest("CONTRACT_DOWNLOADED is set by the acknowledge-download endpoint")
+	}
+
 	// 1. Get current build
 	row, err := s.queries.GetBuildByID(ctx, buildID)
 	if err != nil {
@@ -174,7 +201,18 @@ func (s *BuildService) TransitionStatus(ctx context.Context, buildID uuid.UUID, 
 		}
 	}
 
-	// 4. Update the build status in DB
+	// 4. Resolve the event type and validate signature requirements before mutating state.
+	eventType := mapStatusToEvent(newStatus)
+	if statusEventRequiresRequestSignature(eventType) {
+		if requestSignature == nil || *requestSignature == "" {
+			return model.ErrInvalidRequest(fmt.Sprintf("request signature is required for status %s", newStatus))
+		}
+		if requestSignatureHash == nil || *requestSignatureHash == "" {
+			return model.ErrInvalidRequest(fmt.Sprintf("request signature hash is required for status %s", newStatus))
+		}
+	}
+
+	// 5. Update the build status in DB
 	err = s.queries.UpdateBuildStatus(ctx, repository.UpdateBuildStatusParams{
 		ID:     buildID,
 		Status: newStatus.String(),
@@ -183,18 +221,27 @@ func (s *BuildService) TransitionStatus(ctx context.Context, buildID uuid.UUID, 
 		return fmt.Errorf("failed to update build status: %w", err)
 	}
 
-	// 5. Audit log
-	eventType := mapStatusToEvent(newStatus)
+	// 6. Audit log
 	if eventType != "" {
+		eventData := map[string]string{
+			"previous_status": currentStatus.String(),
+			"new_status":      newStatus.String(),
+		}
+		signature := requestSignature
+		if statusEventRequiresRequestSignature(eventType) {
+			eventData["request_signature_hash"] = *requestSignatureHash
+		} else {
+			// Do not attach request signatures to events that verify against event_hash.
+			signature = nil
+		}
+
 		_, err = s.auditService.LogEvent(ctx, LogEventInput{
 			BuildID:     buildID,
 			EventType:   eventType,
 			ActorUserID: actorID,
 			IpAddress:   ip,
-			EventData: map[string]string{
-				"previous_status": currentStatus.String(),
-				"new_status":      newStatus.String(),
-			},
+			EventData:   eventData,
+			Signature:   signature,
 		})
 		if err != nil {
 			return fmt.Errorf("status updated but failed to log audit event: %w", err)

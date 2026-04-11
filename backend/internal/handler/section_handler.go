@@ -51,6 +51,16 @@ func (h *SectionHandler) SubmitSection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, model.ErrUnauthorized())
 		return
 	}
+	requestSignature := middleware.GetRequestSignature(r.Context())
+	requestSignatureHash := middleware.GetRequestSignatureHash(r.Context())
+	var sigPtr *string
+	var sigHashPtr *string
+	if requestSignature != "" {
+		sigPtr = &requestSignature
+	}
+	if requestSignatureHash != "" {
+		sigHashPtr = &requestSignatureHash
+	}
 
 	if req.RoleID == nil && req.PersonaRole == "" {
 		writeError(w, model.ErrInvalidRequest("role_id is required"))
@@ -69,6 +79,8 @@ func (h *SectionHandler) SubmitSection(w http.ResponseWriter, r *http.Request) {
 		Signature:             req.Signature,
 		ActorRoles:            middleware.GetUserRoles(r.Context()),
 		ActorIP:               r.RemoteAddr,
+		RequestSignature:      sigPtr,
+		RequestSignatureHash:  sigHashPtr,
 	})
 	if err != nil {
 		writeError(w, model.ErrInternal(err.Error()))
