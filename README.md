@@ -47,9 +47,9 @@ This repository is a monorepo containing:
 - [PostgreSQL](https://www.postgresql.org/) 16
 - (Optional) Docker & Docker Compose for local deployment
 
-### Option 1: Bring Up Full Stack with Docker Compose (Recommended)
+### Option 1: Bring Up Full Stack with Docker Compose (Recommended for Local)
 
-The root `docker-compose.yml` runs:
+The root `docker-compose.yaml` runs:
 - `reverse_proxy` (public entrypoint)
 - `backend` (Go API, internal only)
 - `postgres` (DB, internal only)
@@ -65,7 +65,7 @@ Traffic flow:
 
 2. Start stack:
    ```bash
-   docker compose up -d --build
+   docker compose -f docker-compose.yaml up -d --build
    ```
 
 3. API is available via reverse proxy:
@@ -75,14 +75,42 @@ Traffic flow:
 
 4. Stop stack:
    ```bash
-   docker compose down
+   docker compose -f docker-compose.yaml down
    ```
 
 Notes:
 - Postgres data is persisted to `${POSTGRES_DATA_DIR:-./data/postgres}`.
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD` are used only when seeding the very first user on a fresh DB.
+- The local default uses `config/nginx/default.conf` (HTTP only).
 
-### Option 2: One-Command Bootstrap Script
+### Option 2: Production Compose (TLS + Hardened Runtime)
+
+1. Create env file and set strong secrets:
+   ```bash
+   cp .env.example .env
+   ```
+   Required production changes in `.env`:
+   - Set strong values for `POSTGRES_PASSWORD` and `ADMIN_PASSWORD`
+   - Set `DATABASE_URL` / `MIGRATE_DATABASE_URL` to production DB credentials
+   - Use database TLS (for example `sslmode=require` or `sslmode=verify-full`)
+   - Set `NGINX_CONF_PATH=./config/nginx/tls.conf`
+   - Set `TLS_CERT_PATH` and `TLS_KEY_PATH` to real certificate/key files
+
+2. Start stack with production overlay:
+   ```bash
+   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build
+   ```
+
+3. Access API:
+   - HTTPS Base URL: `https://localhost:8443`
+   - Health: `https://localhost:8443/health`
+
+4. Stop stack:
+   ```bash
+   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml down
+   ```
+
+### Option 3: One-Command Bootstrap Script
 
 Use:
 ```bash
@@ -96,7 +124,7 @@ What it does:
 - Starts Docker Compose stack
 - Prints generated admin username/password
 
-### Option 3: Run Backend Locally (without Compose)
+### Option 4: Run Backend Locally (without Compose)
 
 1. **Start PostgreSQL:**
    ```bash

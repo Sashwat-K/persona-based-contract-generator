@@ -50,6 +50,7 @@ xcuserdata/
 # Docker / Local Datastores
 backend/pgdata/
 docker-volume/
+config/nginx/certs/
 
 # CLI
 contract-cli

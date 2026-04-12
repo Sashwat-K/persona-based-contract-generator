@@ -13,6 +13,9 @@ ADMIN_PASSWORD_GEN=""
 POSTGRES_DB=""
 POSTGRES_USER=""
 ADMIN_EMAIL_VAL=""
+DATABASE_SSL_MODE_VAL=""
+REVERSE_PROXY_PORT_VAL=""
+COMPOSE_FILE=""
 
 usage() {
   cat <<'EOF'
@@ -65,6 +68,19 @@ enter_repo_dir() {
   fi
 }
 
+detect_compose_file() {
+  if [[ -f "docker-compose.yaml" ]]; then
+    COMPOSE_FILE="docker-compose.yaml"
+    return
+  fi
+  if [[ -f "docker-compose.yml" ]]; then
+    COMPOSE_FILE="docker-compose.yml"
+    return
+  fi
+  echo "No docker compose file found in $TARGET_DIR"
+  exit 1
+}
+
 generate_password() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -base64 32 | tr -d '\n' | tr '/+' '_-' | cut -c1-32
@@ -93,29 +109,36 @@ prepare_env() {
   POSTGRES_DB="$(grep -E '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- || true)"
   POSTGRES_USER="$(grep -E '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2- || true)"
   ADMIN_EMAIL_VAL="$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" | cut -d= -f2- || true)"
+  DATABASE_SSL_MODE_VAL="$(grep -E '^DATABASE_SSL_MODE=' "$ENV_FILE" | cut -d= -f2- || true)"
+  REVERSE_PROXY_PORT_VAL="$(grep -E '^REVERSE_PROXY_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
 
   POSTGRES_DB="${POSTGRES_DB:-hpcr_builder}"
   POSTGRES_USER="${POSTGRES_USER:-hpcr}"
   ADMIN_EMAIL_VAL="${ADMIN_EMAIL_VAL:-admin@hpcr-builder.local}"
+  DATABASE_SSL_MODE_VAL="${DATABASE_SSL_MODE_VAL:-disable}"
+  REVERSE_PROXY_PORT_VAL="${REVERSE_PROXY_PORT_VAL:-8080}"
 
   set_env_value "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD_GEN"
   set_env_value "ADMIN_PASSWORD" "$ADMIN_PASSWORD_GEN"
-  set_env_value "DATABASE_URL" "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD_GEN}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
-  set_env_value "MIGRATE_DATABASE_URL" "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD_GEN}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+  set_env_value "DATABASE_URL" "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD_GEN}@postgres:5432/${POSTGRES_DB}?sslmode=${DATABASE_SSL_MODE_VAL}"
+  set_env_value "MIGRATE_DATABASE_URL" "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD_GEN}@postgres:5432/${POSTGRES_DB}?sslmode=${DATABASE_SSL_MODE_VAL}"
+  set_env_value "NGINX_CONF_PATH" "./config/nginx/default.conf"
+  set_env_value "TRUST_PROXY_HEADERS" "true"
 
   rm -f "${ENV_FILE}.bak"
 }
 
 start_stack() {
   echo "Starting infrastructure with docker compose ..."
-  docker compose up -d --build
+  docker compose -f "$COMPOSE_FILE" up -d --build
 }
 
 print_summary() {
   echo
   echo "Infrastructure is starting."
   echo "Generated secrets are stored in: $(pwd)/$ENV_FILE"
-  echo "API endpoint (via reverse proxy): http://localhost:\${REVERSE_PROXY_PORT:-8080}"
+  echo "Compose file: ${COMPOSE_FILE}"
+  echo "API endpoint (via reverse proxy): http://localhost:${REVERSE_PROXY_PORT_VAL}"
   echo "Admin username (email): ${ADMIN_EMAIL_VAL}"
   echo "Admin password: ${ADMIN_PASSWORD_GEN}"
   echo "Note: admin credentials are used only for initial seeding on a fresh database."
@@ -126,6 +149,7 @@ main() {
   check_deps
   clone_repo_if_needed
   enter_repo_dir
+  detect_compose_file
   prepare_env
   start_stack
   print_summary
