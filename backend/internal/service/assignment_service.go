@@ -75,6 +75,14 @@ func (s *AssignmentService) CreateAssignment(ctx context.Context, input CreateAs
 		}
 	}
 
+	// Build-level persona assignments are intentionally restricted to workflow roles.
+	switch model.PersonaRole(role.Name) {
+	case model.RoleSolutionProvider, model.RoleDataOwner, model.RoleAuditor, model.RoleEnvOperator:
+		// allowed
+	default:
+		return nil, model.ErrInvalidRequest(fmt.Sprintf("role '%s' is not assignable for build workflow", role.Name))
+	}
+
 	// 3. Validate user exists
 	_, err = s.queries.GetUserByID(ctx, input.UserID)
 	if err != nil {
@@ -82,6 +90,22 @@ func (s *AssignmentService) CreateAssignment(ctx context.Context, input CreateAs
 			return nil, model.ErrNotFound("user not found")
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// User must hold the target persona role globally to be assignable for that role on a build.
+	userRoles, err := s.queries.GetRolesByUserID(ctx, input.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user roles: %w", err)
+	}
+	hasTargetRole := false
+	for _, userRole := range userRoles {
+		if userRole.Role == role.Name {
+			hasTargetRole = true
+			break
+		}
+	}
+	if !hasTargetRole {
+		return nil, model.ErrForbidden(fmt.Sprintf("user does not have role '%s'", role.Name))
 	}
 
 	// 4. Check if this specific user is already assigned to this role for this build

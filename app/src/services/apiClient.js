@@ -130,7 +130,11 @@ class ApiClient {
             const pendingText = stepLabels.length ? ` Pending: ${stepLabels.join(' and ')}.` : '';
             return Promise.reject(this.normalizeError(error, `Account setup required.${pendingText} Open Account Settings to continue.`));
           }
-          return Promise.reject(this.normalizeError(error, 'You do not have permission to perform this action.'));
+          const backendForbiddenMessage =
+            error.response?.data?.error?.message ||
+            error.response?.data?.message ||
+            'You do not have permission to perform this action.';
+          return Promise.reject(this.normalizeError(error, backendForbiddenMessage));
         }
 
         // Handle 429 Rate Limit

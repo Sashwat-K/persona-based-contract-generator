@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -119,6 +121,99 @@ func (s *BuildService) ListBuilds(ctx context.Context, limit, offset int32, stat
 	return builds, nil
 }
 
+func hasRole(userRoles []string, target string) bool {
+	for _, role := range userRoles {
+		if role == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *BuildService) isUserAssignedToRoleForBuild(ctx context.Context, buildID, userID uuid.UUID, roleName string) (bool, error) {
+	role, err := s.queries.GetRoleByName(ctx, roleName)
+	if err != nil {
+		return false, fmt.Errorf("failed to load role %s: %w", roleName, err)
+	}
+
+	assigned, err := s.queries.CheckUserAssignedToBuild(ctx, repository.CheckUserAssignedToBuildParams{
+		BuildID: buildID,
+		UserID:  userID,
+		RoleID:  role.ID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to check build assignment: %w", err)
+	}
+	return assigned, nil
+}
+
+// ListBuildsForUser returns builds visible to the requesting user:
+// - ADMIN sees all builds.
+// - Non-admin users see only builds where they are explicitly assigned.
+func (s *BuildService) ListBuildsForUser(ctx context.Context, userID uuid.UUID, userRoles []string, limit, offset int32, status string) ([]repository.ListBuildsRow, error) {
+	if hasRole(userRoles, model.RoleAdmin.String()) {
+		return s.ListBuilds(ctx, limit, offset, status)
+	}
+
+	assignments, err := s.queries.GetBuildAssignmentsByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user assignments: %w", err)
+	}
+
+	seen := make(map[uuid.UUID]struct{})
+	builds := make([]repository.ListBuildsRow, 0, len(assignments))
+	statusFilter := strings.ToUpper(strings.TrimSpace(status))
+
+	for _, assignment := range assignments {
+		if _, exists := seen[assignment.BuildID]; exists {
+			continue
+		}
+		seen[assignment.BuildID] = struct{}{}
+
+		build, err := s.queries.GetBuildByID(ctx, assignment.BuildID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load assigned build %s: %w", assignment.BuildID, err)
+		}
+
+		if statusFilter != "" && strings.ToUpper(build.Status) != statusFilter {
+			continue
+		}
+
+		builds = append(builds, repository.ListBuildsRow{
+			ID:           build.ID,
+			Name:         build.Name,
+			Status:       build.Status,
+			CreatedBy:    build.CreatedBy,
+			CreatedAt:    build.CreatedAt,
+			FinalizedAt:  build.FinalizedAt,
+			ContractHash: build.ContractHash,
+			IsImmutable:  build.IsImmutable,
+		})
+	}
+
+	sort.Slice(builds, func(i, j int) bool {
+		return builds[i].CreatedAt.After(builds[j].CreatedAt)
+	})
+
+	start := int(offset)
+	if start >= len(builds) {
+		return []repository.ListBuildsRow{}, nil
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	end := len(builds)
+	if limit > 0 {
+		candidate := start + int(limit)
+		if candidate < end {
+			end = candidate
+		}
+	}
+
+	return builds[start:end], nil
+}
+
 // mapStatusToEvent helper matches build status with its corresponding audit event
 func mapStatusToEvent(status model.BuildStatus) model.AuditEventType {
 	switch status {
@@ -199,6 +294,14 @@ func (s *BuildService) TransitionStatus(
 		if !hasRole {
 			return model.ErrForbidden(fmt.Sprintf("Transition to %s requires %s role", newStatus, roleRequired))
 		}
+
+		assigned, err := s.isUserAssignedToRoleForBuild(ctx, buildID, actorID, roleRequired.String())
+		if err != nil {
+			return err
+		}
+		if !assigned {
+			return model.ErrForbidden(fmt.Sprintf("Transition to %s requires assignment as %s for this build", newStatus, roleRequired))
+		}
 	}
 
 	// 4. Resolve the event type and validate signature requirements before mutating state.
@@ -261,6 +364,14 @@ func (s *BuildService) FinalizeBuild(ctx context.Context, buildID uuid.UUID, con
 	currentStatus := model.BuildStatus(row.Status)
 	if !currentStatus.CanTransitionTo(model.StatusFinalized) {
 		return model.ErrInvalidStateTransition(currentStatus.String(), model.StatusContractAssembled.String())
+	}
+
+	assigned, err := s.isUserAssignedToRoleForBuild(ctx, buildID, actorID, model.RoleAuditor.String())
+	if err != nil {
+		return err
+	}
+	if !assigned {
+		return model.ErrForbidden("only assigned AUDITOR can finalize this build")
 	}
 
 	// Finalize natively

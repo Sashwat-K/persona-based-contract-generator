@@ -1,1310 +1,741 @@
 # Desktop App Frontend Design Document
 
 ## Document Information
-- **Project**:IBM Confidential Computing Contract Generator - Desktop Application
-- **Version**: 1.0
-- **Date**: April 10, 2026
-- **Author**: Senior Software Architect
-- **Status**: Implementation Complete
 
----
-
-## Table of Contents
-1. [Executive Summary](#executive-summary)
-2. [Architecture Overview](#architecture-overview)
-3. [Technology Stack](#technology-stack)
-4. [Application Structure](#application-structure)
-5. [Security Architecture](#security-architecture)
-6. [State Management](#state-management)
-7. [Component Design](#component-design)
-8. [Cryptographic Operations](#cryptographic-operations)
-9. [API Integration](#api-integration)
-10. [User Interface Design](#user-interface-design)
-11. [Implementation Details](#implementation-details)
-12. [Testing Strategy](#testing-strategy)
-13. [Deployment](#deployment)
-14. [Future Enhancements](#future-enhancements)
+| Field | Value |
+| --- | --- |
+| Product | IBM CC Contract Builder |
+| Repository | persona-based-contract-generator |
+| Area | Electron desktop application (`app/`) |
+| Audience | Engineering, Security, Product, QA |
+| Last Updated | 2026-04-11 |
+| Source of Truth | Current implementation in `app/main`, `app/src`, and `app/electron-builder.json` |
 
 ---
 
 ## 1. Executive Summary
 
-TheIBM Confidential Computing Contract Generator Desktop Application is an Electron-based enterprise application designed for secure contract management with cryptographic operations. The application provides role-based access control, comprehensive audit logging, and client-side cryptography for maximum security.
+This document describes the current desktop app architecture as implemented in code.
 
-### Key Features
-- **Multi-Role Support**: Solution Provider, Data Owner, Auditor, Environment Operator, Admin, Viewer
-- **Client-Side Cryptography**: RSA-4096, AES-256-GCM, SHA-256, RSA-PSS
-- **Secure Key Management**: Local encrypted key storage with fingerprint verification
-- **Build Management**: Complete contract lifecycle from creation to signing
-- **User Management**: Full CRUD operations with role assignment
-- **Admin Analytics**: Real-time diagnostics and security monitoring
-- **Server Configuration**: Dynamic backend URL configuration with connection testing
+The application is a secure Electron + React + Carbon desktop client for persona-based contract generation with:
 
----
+- strict process separation (`main` / `preload` / `renderer`)
+- multi-role workflow orchestration across build stages
+- cryptographic operations isolated behind audited IPC bridges
+- role-based UI surfaces for admin and persona operators
+- export, verification, and audit-trail validation tooling
 
-## 2. Architecture Overview
-
-### 2.1 High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Electron Desktop App                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              Main Process (Node.js)                    │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │  Crypto Operations                               │  │  │
-│  │  │  - Key Generation (RSA-4096)                     │  │  │
-│  │  │  - Encryption (AES-256-GCM, RSA-OAEP)           │  │  │
-│  │  │  - Signing (RSA-PSS, SHA-256)                   │  │  │
-│  │  │  - Key Storage (Encrypted Local Storage)        │  │  │
-│  │  └─────────────────────────────────────────────────┘  │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │  File Operations                                 │  │  │
-│  │  │  - Contract File Management                      │  │  │
-│  │  │  - Export/Import Operations                      │  │  │
-│  │  └─────────────────────────────────────────────────┘  │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │  Contract CLI Integration                        │  │  │
-│  │  │  - Subprocess Management                         │  │  │
-│  │  │  - YAML Processing                               │  │  │
-│  │  └─────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                            ↕ IPC                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │           Renderer Process (React + Vite)             │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │  UI Layer (IBM Carbon Design System)            │  │  │
-│  │  │  - Login & Authentication                        │  │  │
-│  │  │  - Build Management                              │  │  │
-│  │  │  - User Management                               │  │  │
-│  │  │  - Admin Analytics                               │  │  │
-│  │  │  - Account Settings                              │  │  │
-│  │  │  - Server Configuration                          │  │  │
-│  │  └─────────────────────────────────────────────────┘  │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │  State Management (Zustand)                      │  │  │
-│  │  │  - authStore: User session & keys               │  │  │
-│  │  │  - buildStore: Contract builds                  │  │  │
-│  │  │  - configStore: Server configuration            │  │  │
-│  │  │  - uiStore: UI state & notifications            │  │  │
-│  │  └─────────────────────────────────────────────────┘  │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │  Services Layer                                  │  │  │
-│  │  │  - API Client (Axios)                           │  │  │
-│  │  │  - Auth Service                                 │  │  │
-│  │  │  - Build Service                                │  │  │
-│  │  │  - Crypto Service (IPC Bridge)                  │  │  │
-│  │  └─────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-                            ↕ HTTPS
-┌─────────────────────────────────────────────────────────────┐
-│                    Backend API (Go)                          │
-│  - User Management                                           │
-│  - Build Management                                          │
-│  - Authentication & Authorization                            │
-│  - Audit Logging                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 2.2 Process Separation
-
-**Main Process (Node.js)**
-- Runs with full Node.js capabilities
-- Handles all cryptographic operations
-- Manages file system access
-- Executes contract-cli subprocess
-- Provides secure IPC handlers
-
-**Renderer Process (React)**
-- Sandboxed browser environment
-- Context isolation enabled
-- No direct Node.js access
-- Communicates via IPC bridge
-- Handles all UI rendering
+The app is now implemented as a production-oriented desktop client, not only a prototype UI shell.
 
 ---
 
-## 3. Technology Stack
+## 2. Scope
 
-### 3.1 Core Technologies
+### In Scope
 
-| Category | Technology | Version | Purpose |
-|----------|-----------|---------|---------|
-| **Runtime** | Electron | 28.x | Desktop application framework |
-| **Frontend** | React | 18.x | UI component library |
-| **Build Tool** | Vite | 5.x | Fast development and bundling |
-| **UI Framework** | IBM Carbon Design System | 11.x | Enterprise UI components |
-| **State Management** | Zustand | 4.x | Lightweight state management |
-| **HTTP Client** | Axios | 1.x | API communication |
-| **Styling** | SCSS | - | Component styling |
-| **Cryptography** | Node.js crypto | - | Native crypto operations |
+- Electron runtime and process model
+- Renderer architecture (views, components, state, services)
+- role-based navigation and stage workflows
+- IPC contract between renderer and main process
+- security controls already implemented in code
+- packaging, build, and platform distribution behavior
 
-### 3.2 Development Tools
+### Out of Scope
 
-- **ESLint**: Code quality and consistency
-- **Prettier**: Code formatting
-- **Electron Builder**: Application packaging
-- **React Router**: Client-side routing
+- backend internal design (covered in backend docs)
+- backend schema-level details beyond client integration
+- cryptographic policy approvals or compliance sign-off
 
 ---
 
-## 4. Application Structure
+## 3. Current Technology Stack
 
-### 4.1 Directory Structure
+## 3.1 Runtime and Frameworks
 
-```
+- Electron: `^41.1.1`
+- React: `^19.2.4`
+- React DOM: `^19.2.4`
+- React Router DOM: `^7.1.3`
+- Zustand: `^5.0.2`
+- Carbon React: `^1.104.1`
+- Carbon Charts: `^1.27.3`
+- Axios: `^1.7.9`
+- Sass: `^1.99.0`
+
+## 3.2 Build Tooling
+
+- Vite: `^8.0.3`
+- electron-builder: `^26.8.1`
+- concurrently / wait-on for local dev orchestration
+
+## 3.3 Node Toolchain
+
+- `.nvmrc`: `25.9.0`
+- `.node-version`: `25.9.0`
+- `engines` in `app/package.json`: Node `>=25.9.0`, npm `>=11.12.1`
+
+---
+
+## 4. Application Architecture
+
+## 4.1 Process Model
+
+The desktop app uses a three-layer Electron model:
+
+1. **Main process** (`app/main/index.js`)
+   - window creation
+   - security policy enforcement
+   - IPC request validation
+   - privileged operations (file dialogs, shell, cryptography, contract-cli subprocesses)
+
+2. **Preload bridge** (`app/main/preload.js`)
+   - exposes a minimal `window.electron` API via `contextBridge`
+   - no raw `ipcRenderer` exposure to app code
+
+3. **Renderer process** (`app/src/*`)
+   - React SPA UI and workflow orchestration
+   - service layer calling backend APIs and preload APIs
+
+## 4.2 Backend Interaction
+
+The renderer calls a Go backend over HTTP/HTTPS.
+
+- base URL is configurable from login flow
+- health checks target `/health`
+- mutating API requests are signed with local private keys (except explicit exempt endpoints)
+
+---
+
+## 5. Repository Structure (Desktop App)
+
+```text
 app/
-├── main/                          # Main Process (Node.js)
-│   ├── index.js                   # Main entry point, window management
-│   ├── preload.js                 # IPC bridge, context isolation
-│   └── crypto/                    # Cryptographic operations
-│       ├── keyManager.js          # Key generation, fingerprints
-│       ├── encryptor.js           # Encryption operations
-│       ├── signer.js              # Signing operations
-│       ├── keyStorage.js          # Secure key storage
-│       └── contractCli.js         # Contract CLI integration
-│
-├── src/                           # Renderer Process (React)
-│   ├── main.jsx                   # React entry point
-│   ├── App.jsx                    # Root component, routing
-│   ├── index.scss                 # Global styles
-│   │
-│   ├── assets/                    # Static assets
-│   │   └── CloudHyperProtect.svg  # IBM Cloud Hyper Protect logo
-│   │
-│   ├── components/                # Reusable components
-│   │   ├── AppShell.jsx           # Main layout with navigation
-│   │   └── HyperProtectIcon.jsx   # Custom IBM Hyper Protect icon
-│   │
-│   ├── views/                     # Page components
-│   │   ├── Login.jsx              # Authentication with split-screen design
-│   │   ├── Home.jsx               # Dashboard with account & build overview
-│   │   ├── BuildManagement.jsx    # Contract builds listing
-│   │   ├── BuildDetails.jsx       # Build details & signing
-│   │   ├── UserManagement.jsx     # User CRUD operations
-│   │   ├── AdminAnalytics.jsx     # Admin diagnostics
-│   │   ├── AccountSettings.jsx    # User settings & keys
-│   │   ├── SystemLogs.jsx         # System audit logs
-│   │   └── NotFound.jsx           # 404 error page
-│   │
-│   ├── store/                     # State management (Zustand)
-│   │   ├── authStore.js           # Authentication state
-│   │   ├── buildStore.js          # Build state
-│   │   ├── configStore.js         # Configuration state
-│   │   ├── uiStore.js             # UI state
-│   │   ├── themeStore.js          # Theme preferences
-│   │   └── mockData.js            # Test data
-│   │
-│   ├── services/                  # API & business logic
-│   │   ├── apiClient.js           # Axios configuration
-│   │   ├── authService.js         # Auth operations
-│   │   ├── buildService.js        # Build operations
-│   │   └── cryptoService.js       # Crypto IPC bridge
-│   │
-│   ├── styles/                    # Styling
-│   │   └── modern-theme.scss      # Custom theme overrides
-│   │
-│   └── utils/                     # Utility functions
-│       ├── constants.js           # App constants
-│       ├── formatters.js          # Data formatting
-│       ├── validators.js          # Input validation
-│       └── cryptoMock.js          # Mock crypto for testing
-│
-├── index.html                     # HTML template
-├── package.json                   # Dependencies & scripts
-├── vite.config.js                 # Vite configuration
-└── DUMMY_CREDENTIALS.md           # Test credentials
-```
-
-### 4.2 Key Files Overview
-
-#### Main Process Files
-
-**`main/index.js`** (450+ lines)
-- Window creation and lifecycle management
-- 30+ IPC handlers for crypto, file, and contract operations
-- Security configuration (CSP, context isolation)
-- Menu bar setup
-
-**`main/preload.js`** (150+ lines)
-- Secure IPC bridge with contextBridge
-- Exposes crypto APIs to renderer
-- Type-safe API definitions
-
-**`main/crypto/keyManager.js`** (200+ lines)
-- RSA-4096 key pair generation
-- SHA-256 fingerprint computation
-- PEM format handling
-- Key validation
-
-**`main/crypto/encryptor.js`** (180+ lines)
-- AES-256-GCM symmetric encryption
-- RSA-OAEP key wrapping
-- Secure random IV generation
-- Base64 encoding
-
-**`main/crypto/signer.js`** (150+ lines)
-- SHA-256 hashing
-- RSA-PSS signature generation
-- Signature verification
-- Multi-file signing support
-
-**`main/crypto/keyStorage.js`** (120+ lines)
-- Encrypted local key storage
-- User-specific key directories
-- Secure file permissions
-- Key backup and recovery
-
-**`main/crypto/contractCli.js`** (100+ lines)
-- Contract CLI subprocess management
-- YAML file processing
-- Error handling and logging
-
-#### Renderer Process Files
-
-**`src/views/Login.jsx`** (300+ lines)
-- Multi-persona login
-- Password validation
-- Key expiry warnings
-- Session initialization
-
-**`src/views/BuildManagement.jsx`** (500+ lines)
-- Build list with filtering and sorting
-- Create build modal
-- Status tracking and updates
-- Role-based action buttons
-
-**`src/views/BuildDetails.jsx`** (600+ lines)
-- Tabbed workflow per build
-- Section submission and status progression
-- Assignments management and refresh
-- Audit viewer and verification
-- Contract export and download acknowledgment
-
-**`src/views/UserManagement.jsx`** (550+ lines)
-- User CRUD operations
-- Role assignment
-- Key and password status tracking
-- Force password reset and key rotation
-
-**`src/views/AdminAnalytics.jsx`** (400+ lines)
-- System diagnostics cards
-- Expired passwords and keys alerts
-- Build statistics
-- Security monitoring
-
-**`src/views/AccountSettings.jsx`** (450+ lines)
-- Profile management
-- Password change
-- Key generation and registration
-- Key rotation workflow
-
-**Build Detail Components (Current)**
-- `src/components/SectionSubmit.jsx`
-- `src/components/AuditorSection.jsx` (Sign & Add Attestation)
-- `src/components/FinaliseContract.jsx`
-- `src/components/BuildAssignments.jsx`
-- `src/components/AuditViewer.jsx`
-- `src/components/ContractExport.jsx`
-
-**`src/views/ServerConfigSettings.jsx`** (350+ lines)
-- Server URL configuration
-- Connection testing
-- HTTPS validation
-- Persistent storage
-
-**Service Layer (Current)**
-- `apiClient.js` (auth, retries, forced logout on 401)
-- `signatureMiddleware.js` (mutating request signing headers)
-- `authService.js`, `buildService.js`, `assignmentService.js`, `sectionService.js`
-- `verificationService.js`, `exportService.js`, `roleService.js`
-
----
-
-## 5. Security Architecture
-
-### 5.1 Security Principles
-
-1. **Defense in Depth**: Multiple layers of security controls
-2. **Least Privilege**: Minimal permissions for each component
-3. **Secure by Default**: Security features enabled by default
-4. **Zero Trust**: Verify all operations and inputs
-
-### 5.2 Process Isolation
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                  Main Process                            │
-│  - Full Node.js access                                   │
-│  - Crypto operations                                     │
-│  - File system access                                    │
-│  - Subprocess execution                                  │
-└─────────────────────────────────────────────────────────┘
-                        ↕ IPC (Secure Channel)
-┌─────────────────────────────────────────────────────────┐
-│                Renderer Process                          │
-│  - Sandboxed environment                                 │
-│  - Context isolation enabled                             │
-│  - No direct Node.js access                              │
-│  - Content Security Policy enforced                      │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 5.3 Content Security Policy
-
-```javascript
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https:",
-  "font-src 'self' data:",
-  "connect-src 'self' https://localhost:* https://*"
-].join('; ');
-```
-
-### 5.4 IPC Security
-
-**Secure Communication Pattern**:
-```javascript
-// Renderer Process (via preload)
-const result = await window.electronAPI.crypto.generateKeyPair();
-
-// Preload Bridge (contextBridge)
-contextBridge.exposeInMainWorld('electronAPI', {
-  crypto: {
-    generateKeyPair: () => ipcRenderer.invoke('crypto:generate-keypair')
-  }
-});
-
-// Main Process Handler
-ipcMain.handle('crypto:generate-keypair', async () => {
-  // Validate, sanitize, execute
-  return await keyManager.generateKeyPair();
-});
-```
-
-### 5.5 Key Storage Security
-
-**Storage Location**: `~/.hpcr-contract-builder/keys/{userId}/`
-
-**Security Measures**:
-- File permissions: 0600 (owner read/write only)
-- Encrypted at rest using system keychain
-- Separate directories per user
-- Automatic backup on rotation
-
----
-
-## 6. State Management
-
-### 6.1 Zustand Stores
-
-#### authStore
-```javascript
-{
-  // State
-  user: {
-    id: string,
-    email: string,
-    name: string,
-    roles: Array<{name: string}>,
-    public_key_fingerprint: string,
-    public_key_expires_at: Date,
-    must_change_password: boolean
-  },
-  token: string,
-  roles: Array<{name: string}>,
-  isAuthenticated: boolean,
-  mustChangePassword: boolean,
-  publicKeyExpiry: Date,
-  publicKeyFingerprint: string,
-  
-  // Actions
-  setAuth: (user, token) => void,
-  clearAuth: () => void,
-  updateUser: (updates) => void,
-  updatePublicKey: (fingerprint, expiresAt) => void,
-  setMustChangePassword: (value) => void,
-  
-  // Computed
-  hasRole: (roleName) => boolean,
-  isKeyExpired: () => boolean,
-  daysUntilKeyExpiry: () => number
-}
-```
-
-#### buildStore
-```javascript
-{
-  builds: Build[],
-  currentBuild: Build | null,
-  filters: {
-    status: string[],
-    search: string,
-    sortBy: string
-  },
-  
-  // Actions
-  fetchBuilds: () => Promise<void>,
-  createBuild: (data) => Promise<Build>,
-  updateBuild: (id, updates) => Promise<void>,
-  deleteBuild: (id) => Promise<void>,
-  signSection: (buildId, sectionId) => Promise<void>
-}
-```
-
-#### configStore
-```javascript
-{
-  serverUrl: string,
-  theme: 'g100',
-  language: 'en',
-  
-  // Actions
-  setServerUrl: (url) => void,
-  testConnection: () => Promise<boolean>,
-  resetToDefaults: () => void
-}
-```
-
-#### themeStore
-```javascript
-{
-  theme: 'g100' | 'white',  // 'g100' for dark mode, 'white' for light mode
-  
-  // Actions
-  toggleTheme: () => void,
-  setTheme: (theme) => void,
-  
-  // Computed
-  isDarkMode: () => boolean
-}
-```
-
-#### uiStore
-```javascript
-{
-  notifications: Notification[],
-  modals: {
-    [key: string]: boolean
-  },
-  loading: {
-    [key: string]: boolean
-  },
-  
-  // Actions
-  showNotification: (notification) => void,
-  openModal: (key) => void,
-  closeModal: (key) => void,
-  setLoading: (key, state) => void
-}
-```
-
-### 6.2 State Persistence
-
-**authStore**: Persisted to localStorage (token and user only)
-**configStore**: Persisted to localStorage
-**themeStore**: Persisted to localStorage
-**buildStore**: Session-only (cleared on logout)
-**uiStore**: Session-only
-
----
-
-## 7. Component Design
-
-### 7.1 Component Hierarchy
-
-```
-App (with Boot Screen)
-├── Login (Unauthenticated)
-│   ├── CustomTitleBar (Window Controls)
-│   ├── LoginCard
-│   │   ├── HyperProtectIcon
-│   │   ├── LoginForm
-│   │   └── ServerConfigCard
-│   └── InfoPanel
-│       ├── Features
-│       ├── Links
-│       └── VersionInfo
-│
-└── AppShell (Authenticated)
-    ├── CustomTitleBar (Window Controls)
-    ├── Header
-    │   ├── HyperProtectIcon
-    │   ├── HeaderMenuButton
-    │   ├── HeaderName
-    │   └── HeaderGlobalBar
-    │       └── UserInfo (with role icon)
-    ├── SideNav (Role-based)
-    │   ├── Home (except VIEWER)
-    │   ├── Build Management
-    │   ├── Admin Operations (conditional)
-    │   │   ├── Diagnostics & Analytics
-    │   │   ├── User Management
-    │   │   └── System Logs
-    │   └── Account Menu
-    │       ├── Settings
-    │       └── Logout
-    ├── Content
-    │   ├── Home
-    │   │   ├── Account Overview
-    │   │   │   ├── Account Status
-    │   │   │   └── Account & System Alerts
-    │   │   └── Build Overview
-    │   │       ├── My Builds
-    │   │       └── Build Actions Required
-    │   ├── BuildManagement
-    │   │   ├── BuildList
-    │   │   ├── BuildCard
-    │   │   ├── CreateBuildModal
-    │   │   └── FilterPanel
-    │   ├── BuildDetails
-    │   │   ├── BuildHeader
-    │   │   ├── SectionList
-    │   │   ├── SectionCard
-    │   │   └── SigningModal
-    │   ├── UserManagement
-    │   │   ├── UserTable
-    │   │   ├── CreateUserModal
-    │   │   ├── EditUserModal
-    │   │   └── DeleteConfirmModal
-    │   ├── AdminAnalytics
-    │   │   ├── DiagnosticsCards
-    │   │   ├── BuildStatistics
-    │   │   └── SecurityAlerts
-    │   ├── SystemLogs
-    │   │   ├── LogTable
-    │   │   ├── SearchFilter
-    │   │   └── ExportButton
-    │   ├── AccountSettings
-    │   │   ├── ProfileSection
-    │   │   ├── PasswordSection
-    │   │   └── KeyManagementSection
-    │   └── NotFound
-    │       └── ErrorMessage
-    └── Footer
-```
-
-### 7.2 Design Patterns
-
-**Container/Presenter Pattern**:
-- Views handle data fetching and state
-- Components handle presentation only
-
-**Composition over Inheritance**:
-- Small, reusable components
-- Props for customization
-
-**Controlled Components**:
-- Form inputs controlled by React state
-- Validation on change and submit
-
----
-
-## 8. Cryptographic Operations
-
-### 8.1 Key Generation
-
-**Algorithm**: RSA-4096
-**Format**: PEM (PKCS#8 for private, SPKI for public)
-**Fingerprint**: SHA-256 hash of public key
-
-```javascript
-const { publicKey, privateKey } = await crypto.generateKeyPair('rsa', {
-  modulusLength: 4096,
-  publicKeyEncoding: { type: 'spki', format: 'pem' },
-  privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-});
-
-const fingerprint = crypto
-  .createHash('sha256')
-  .update(publicKey)
-  .digest('hex');
-```
-
-### 8.2 Encryption
-
-**Symmetric**: AES-256-GCM
-**Key Wrapping**: RSA-OAEP with SHA-256
-
-```javascript
-// Generate random AES key
-const aesKey = crypto.randomBytes(32);
-const iv = crypto.randomBytes(16);
-
-// Encrypt data with AES
-const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
-const encrypted = Buffer.concat([
-  cipher.update(data, 'utf8'),
-  cipher.final()
-]);
-const authTag = cipher.getAuthTag();
-
-// Wrap AES key with RSA
-const wrappedKey = crypto.publicEncrypt(
-  { key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING },
-  aesKey
-);
-```
-
-### 8.3 Signing
-
-**Hash**: SHA-256
-**Signature**: RSA-PSS with SHA-256
-
-```javascript
-const hashHex = crypto.createHash('sha256').update(data).digest('hex');
-const signer = crypto.createSign('RSA-SHA256');
-signer.update(hashHex);
-signer.end();
-const signature = signer.sign({
-  key: privateKey,
-  padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-  saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
-});
-```
-
-### 8.4 Verification
-
-```javascript
-const verifier = crypto.createVerify('RSA-SHA256');
-verifier.update(hashHex);
-verifier.end();
-const isValid = verifier.verify(
-  { key: publicKey, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST },
-  signature
-);
+  main/
+    index.js              # main process bootstrap, security, IPC handlers
+    preload.js            # renderer-safe API bridge
+    crypto/
+      keyManager.js
+      encryptor.js
+      signer.js
+      keyStorage.js
+      contractCli.js
+  src/
+    App.jsx
+    main.jsx
+    index.scss
+    components/
+      AppShell.jsx
+      DesktopTitleBar.jsx
+      BuildAssignments.jsx
+      SectionSubmit.jsx
+      AuditorSection.jsx
+      FinaliseContract.jsx
+      ContractExport.jsx
+      AuditViewer.jsx
+      PasswordManager.jsx
+      PublicKeyManager.jsx
+      CredentialRotation.jsx
+      ...
+    views/
+      Login.jsx
+      Home.jsx
+      BuildManagement.jsx
+      BuildDetails.jsx
+      AdminAnalytics.jsx
+      UserManagement.jsx
+      AccountSettings.jsx
+      SystemLogs.jsx
+    services/
+      apiClient.js
+      authService.js
+      buildService.js
+      sectionService.js
+      assignmentService.js
+      exportService.js
+      verificationService.js
+      signatureMiddleware.js
+      ...
+    store/
+      authStore.js
+      buildStore.js
+      configStore.js
+      ...
+  electron-builder.json
+  package.json
+  BUILD.md
 ```
 
 ---
 
-## 9. API Integration
+## 6. Main Process Design (`app/main/index.js`)
 
-### 9.1 API Client Configuration
+## 6.1 Window and Runtime Configuration
 
-```javascript
-const apiClient = axios.create({
-  baseURL: configStore.getState().serverUrl,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
+`BrowserWindow` is created with security-first defaults:
 
-// Request interceptor
-apiClient.interceptors.request.use((config) => {
-  const token = authStore.getState().token;
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+- `contextIsolation: true`
+- `nodeIntegration: false`
+- `sandbox: true`
+- `webviewTag: false`
+- `webSecurity: true`
+- `allowRunningInsecureContent: false`
+- custom chrome (`frame: false`, custom title bar)
 
-// Response interceptor
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      authStore.getState().logout();
-    }
-    return Promise.reject(error);
-  }
-);
-```
+Mac titlebar buttons are hidden and replaced with custom React controls.
 
-### 9.2 API Endpoints
+## 6.2 Navigation and External URL Controls
 
-#### Authentication
-- `POST /auth/login` - User login
-- `POST /auth/logout` - User logout
+Implemented controls:
 
-#### Users
-- `GET /users`, `POST /users`, `PATCH /users/{id}`, `PATCH /users/{id}/roles`
-- `PUT /users/{id}/public-key`, `GET /users/{id}/public-key`
-- `PATCH /users/{id}/password`, `PATCH /users/{id}/reset-password`
-- `GET /users/{id}/tokens`, `POST /users/{id}/tokens`, `DELETE /users/{id}/tokens/{token_id}`
-- `GET /users/{id}/assignments`
+- allowlist for in-app navigation
+  - dev: only the configured dev origin (`http://localhost:5173` origin)
+  - prod: only `file://` URLs under packaged `dist/`
+- `setWindowOpenHandler` denies all child windows
+- safe external URLs (`https`, `http`, `mailto`) opened via OS shell
+- `will-navigate` blocks unexpected in-app navigation
+- `will-attach-webview` always blocked
 
-#### Builds & Sections
-- `GET /builds`, `POST /builds`, `GET /builds/{id}`
-- `PATCH /builds/{id}/status`, `POST /builds/{id}/attestation`, `POST /builds/{id}/finalize`, `POST /builds/{id}/cancel`
-- `GET /builds/{id}/assignments`, `POST /builds/{id}/assignments`
-- `POST /builds/{id}/sections`, `GET /builds/{id}/sections`
+## 6.3 Session and Permission Hardening
 
-#### Audit / Verification / Export
-- `GET /builds/{id}/audit`
-- `GET /builds/{id}/verify`, `GET /builds/{id}/verify-contract`
-- `GET /builds/{id}/export`, `GET /builds/{id}/userdata`, `POST /builds/{id}/acknowledge-download`
+Main process configures session security:
 
-#### Rotation / Logs
-- `GET /rotation/expired`, `POST /rotation/force-password-change/{user_id}`, `POST /rotation/revoke-key/{user_id}`
-- `GET /system-logs`
+- deny all permission requests (`setPermissionRequestHandler`)
+- deny permission checks (`setPermissionCheckHandler`)
+- deny device permissions (`setDevicePermissionHandler`)
+- applies to default and newly created sessions
+- session storage/cookies cleared on close and on app shutdown hooks
+
+## 6.4 IPC Trust Boundary
+
+All `ipcMain.handle` registrations use a common `registerIpcHandler` wrapper that:
+
+- resolves sender URL
+- verifies sender against allowlisted app origins
+- rejects untrusted sender requests with explicit errors
+
+This is the key guardrail preventing arbitrary renderer-origin IPC abuse.
+
+## 6.5 App Lifecycle and Stability
+
+- single-instance lock (`app.requestSingleInstanceLock`)
+- second instance focuses existing window
+- renderer crash logging (`render-process-gone`)
+- `certificate-error` handler rejects invalid certs (`callback(false)`)
+- process-level `uncaughtException` and `unhandledRejection` logging
 
 ---
 
-## 10. User Interface Design
+## 7. Preload API Surface (`window.electron`)
 
-### 10.1 Design System
+Preload exposes only explicit functions grouped by capability:
 
-**IBM Carbon Design System g100 (Dark Theme)**
-- Professional enterprise appearance
-- Accessibility compliant (WCAG 2.1 AA)
-- Consistent component library
-- Responsive grid system
+- `electron.shell.openExternal`
+- `electron.crypto.*` (keygen, hash, sign/verify, AES/RSA ops, key storage)
+- `electron.contractCli.*` (encrypt, stream terminal output, assemble)
+- `electron.auditor.*` (auditor key/cert/env/attestation/sign operations)
+- `electron.appInfo.getClientToolInfo`
+- `electron.file.*` (select/save/read)
+- `electron.selectDirectory`
+- window controls (`minimizeWindow`, `maximizeWindow`, `closeWindow`)
 
-### 10.2 Color Palette
-
-```scss
-// Primary colors
-$primary: #0f62fe;        // IBM Blue 60
-$primary-hover: #0353e9;  // IBM Blue 70
-
-// Status colors
-$success: #24a148;        // Green 50
-$warning: #f1c21b;        // Yellow 30
-$error: #da1e28;          // Red 60
-$info: #4589ff;           // Blue 50
-
-// Background colors
-$background: #161616;     // Gray 100
-$surface: #262626;        // Gray 90
-$overlay: #393939;        // Gray 80
-
-// Text colors
-$text-primary: #f4f4f4;   // Gray 10
-$text-secondary: #c6c6c6; // Gray 30
-$text-disabled: #8d8d8d;  // Gray 50
-```
-
-### 10.3 Typography
-
-```scss
-// IBM Plex Sans font family
-$font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
-
-// Type scale
-$heading-01: 14px / 18px (600)
-$heading-02: 16px / 22px (600)
-$heading-03: 20px / 26px (400)
-$heading-04: 28px / 36px (400)
-$heading-05: 32px / 40px (300)
-
-$body-short-01: 14px / 18px (400)
-$body-short-02: 16px / 22px (400)
-$body-long-01: 14px / 20px (400)
-$body-long-02: 16px / 24px (400)
-```
-
-### 10.4 Layout Grid
-
-**16-column grid system**
-- Gutter: 32px
-- Margin: 16px (mobile), 32px (desktop)
-- Breakpoints:
-  - Small: 320px - 671px
-  - Medium: 672px - 1055px
-  - Large: 1056px - 1311px
-  - X-Large: 1312px - 1583px
-  - Max: 1584px+
-
-### 10.5 Key UI Components
-
-#### Login Screen
-- Split-screen layout (login form + feature showcase)
-- Email and password inputs
-- Remember email checkbox (persisted to localStorage)
-- Server configuration inline
-- External link handling (opens in system default browser)
-- Key expiry warnings
-- Password expiry alerts
-- Progressive loading animation
-
-#### Build Management
-- Data table with sorting and filtering
-- Status tags (Draft, In Progress, Completed, etc.)
-- Action buttons (View, Edit, Delete)
-- Create build modal with user assignment
-- Search and filter panel
-
-#### Build Details
-- Tabbed interface (Overview, Sections, Signatures, Audit)
-- Section cards with status indicators
-- Sign button with crypto workflow
-- Approval tracking
-- Export functionality
-
-#### User Management
-- Data table with user information
-- Status tags for keys and passwords
-- Overflow menu with actions
-- Create/Edit user modals
-- Role assignment dropdown
-- Force password reset and key rotation
-
-#### Admin Analytics
-- Grid of diagnostic cards
-- Expired passwords alert (red if > 0)
-- Expired keys alert
-- Build statistics
-- Security monitoring
-
-#### Account Settings
-- Profile information section
-- Password change form
-- Key management section
-- Key generation and registration
-- Key rotation workflow
-
-#### Server Configuration
-- URL input with validation
-- Connection test button
-- HTTPS enforcement
-- Save and reset buttons
+Renderer code has no direct access to Node built-ins or unrestricted IPC primitives.
 
 ---
 
-## 11. Implementation Details
+## 8. IPC Channels (Implemented)
 
-### 11.1 Implemented Features
+## 8.1 Crypto
 
-#### ✅ Core Features
-1. **Authentication System**
-   - Multi-persona login with 6 roles (Admin, Solution Provider, Data Owner, Auditor, Environment Operator, Viewer)
-   - Backend-issued bearer token management (localStorage + auth store)
-   - Session persistence with session ID tracking
-   - Auto-logout on token expiry
-   - Forced logout on backend `401` responses
-   - Role-based access control
-   - Welcome modal on fresh login
+- `crypto:generateIdentityKeyPair`
+- `crypto:generateAttestationKeyPair`
+- `crypto:generateSymmetricKey`
+- `crypto:computeFingerprint`
+- `crypto:encryptWithSymmetricKey`
+- `crypto:decryptWithSymmetricKey`
+- `crypto:wrapSymmetricKey`
+- `crypto:unwrapSymmetricKey`
+- `crypto:hash`
+- `crypto:hashFile`
+- `crypto:sign`
+- `crypto:verify`
+- `crypto:storePrivateKey`
+- `crypto:getPrivateKey`
+- `crypto:deletePrivateKey`
+- `crypto:hasPrivateKey`
 
-2. **Home Dashboard** (NEW)
-   - Account Overview section
-     - Password status display
-     - Public key status with expiry tracking
-     - Quick access to account settings
-   - Account & System Alerts
-     - Critical alerts for expired passwords/keys
-     - Warning alerts for expiring keys (< 30 days)
-     - Action buttons for immediate remediation
-   - Build Overview section
-     - My Builds counter and list
-     - Build Actions Required with role-specific tasks
-     - Quick navigation to specific builds
-   - Role-specific default navigation (VIEWER → Builds, others → Home)
+## 8.2 contract-cli and Auditor
 
-3. **Build Management**
-   - Create, read, and cancel builds
-   - User assignment for all roles (SP, DO, Auditor, EO)
-   - Status tracking and updates
-   - Section submission workflow via `/builds/{id}/sections`
-   - Export/download acknowledgment flow for ENV_OPERATOR
-   - Build filtering and search
+- `contractCli:encryptSection`
+- `contractCli:encryptSectionStream`
+- `contractCli:assembleContract`
+- `auditor:generateSigningKey`
+- `auditor:generateSigningCert`
+- `auditor:generateAttestationKey`
+- `auditor:generateEncryptedEnv`
+- `auditor:encryptAttestationPublicKey`
+- `auditor:encryptEnvAndAttestation` (compat path)
+- `auditor:signContract`
 
-4. **User Management**
-   - Full CRUD operations
-   - Role assignment
-   - Key status tracking
-   - Password status tracking
-   - Force password reset
-   - Force key rotation (always enabled)
+## 8.3 App, Window, File, Shell
 
-5. **Admin Analytics**
-   - System diagnostics
-   - Expired passwords card (red alert if > 0)
-   - Expired keys card
-   - Build statistics
-   - Security monitoring
+- `app:getClientToolInfo`
+- `window:minimize`
+- `window:maximize`
+- `window:close`
+- `file:selectFile`
+- `file:saveFile`
+- `file:readFile`
+- `file:selectDirectory`
+- `shell:openExternal`
 
-6. **System Logs** (NEW)
-   - Comprehensive audit trail
-   - System-wide activity logging
-   - User authentication events
-   - Key management operations
-   - Administrative actions
-   - Search and filter capabilities
-   - CSV export functionality
-   - Status-based color coding (SUCCESS/FAILED/WARNING)
+## 8.4 Streaming Event Channels
 
-7. **Account Settings**
-   - Profile management
-   - Password change
-   - Key generation
-   - Key registration
-   - Key rotation
-   - Key expiry tracking
-
-8. **Server Configuration**
-   - Dynamic URL configuration
-   - Connection testing
-   - HTTPS validation
-   - Persistent storage
-   - Inline configuration in login screen
-
-#### ✅ UI/UX Features
-1. **Custom Window Controls**
-   - Frameless window design
-   - Custom title bar with IBM branding
-   - Minimize, maximize, close buttons
-   - Draggable title bar region
-   - macOS-style window controls
-
-2. **Boot Screen**
-   - Progressive loading animation
-   - IBM Confidential Computing branding
-   - Smooth transition to login
-
-3. **Login Screen**
-   - Split-screen design
-   - Left: Login form with server config
-   - Right: Feature showcase with links
-   - Remember email functionality (localStorage persistence)
-   - External link handling (opens in system default browser)
-   - HyperProtect icon integration
-   - GitHub repository links
-   - Documentation links
-   - Version information display
-
-4. **Navigation**
-   - Role-based side navigation
-   - Collapsible menu
-   - Active state indicators
-   - Icon-based navigation items
-   - Account menu at bottom
-   - Logout confirmation modal
-
-5. **Theme System**
-   - Dark mode (g100) as default
-   - Carbon Design System integration
-   - Consistent color palette
-   - Custom theme overrides
-
-#### ✅ Security Features
-1. **Client-Side Cryptography**
-   - RSA-4096 key generation (identity & attestation)
-   - AES-256-GCM encryption
-   - SHA-256 hashing
-   - RSA-PSS signing
-   - Secure key storage in main process
-   - Key wrapping/unwrapping with RSA-OAEP
-
-2. **Process Isolation**
-   - Main/Renderer separation
-   - Context isolation enabled
-   - Sandbox mode enabled
-   - IPC security via preload script
-   - Content Security Policy
-
-3. **Key Management**
-   - Fingerprint computation (SHA-256)
-   - Expiry tracking
-   - Rotation workflow
-   - Secure storage per user ID
-   - Key existence checking
-
-4. **Session Management**
-   - Session ID tracking
-   - Storage cleanup on window close
-   - Storage cleanup on app quit
-   - Automatic session invalidation
-
-5. **contract-cli Integration**
-   - Section encryption with HPCR certificates
-   - Contract assembly
-   - Temporary file handling with cleanup
-
-#### ✅ Developer Experience
-1. **Mock Data System**
-   - 10 test users with different roles
-   - Complete user profiles
-   - Key and password status
-   - Build assignments
-   - Realistic test scenarios
-
-2. **Utility Functions**
-   - Constants management
-   - Data formatters
-   - Input validators
-   - Mock crypto operations
-
-3. **Error Handling**
-   - Comprehensive error messages
-   - User-friendly notifications
-   - IPC error propagation
-   - Logging and debugging
-
-4. **File Operations**
-   - File selection dialogs
-   - Directory selection
-   - File save dialogs
-   - File reading capabilities
-
-### 11.2 File Statistics
-
-| Category | Files | Lines of Code |
-|----------|-------|---------------|
-| Main Process | 7 | ~1,500 |
-| Views | 9 | ~3,800 |
-| Components | 2 | ~450 |
-| Stores | 6 | ~950 |
-| Services | 4 | ~600 |
-| Utils | 4 | ~900 |
-| Styles | 2 | ~200 |
-| **Total** | **34** | **~8,400** |
-
-### 11.3 Test Credentials
-
-Valid test credentials for development:
-
-**Primary Roles**:
-- Admin: `admin@hpcr.local` / `Admin@123456`
-- Solution Provider: `solution.provider@hpcr.local` / `SolProv@123456`
-- Data Owner: `data.owner@hpcr.local` / `DataOwn@123456`
-- Auditor: `auditor@hpcr.local` / `Auditor@123456`
-- Environment Operator: `env.operator@hpcr.local` / `EnvOper@123456`
-- Viewer: `viewer@hpcr.local` / `Viewer@123456`
-
-**Secondary Users**:
-- Solution Provider 2: `sp2@hpcr.local` / `SolProv2@123456`
-- Data Owner 2: `do2@hpcr.local` / `DataOwn2@123456`
-- Auditor 2: `auditor2@hpcr.local` / `Auditor2@123456`
-- Environment Operator 2: `eo2@hpcr.local` / `EnvOper2@123456`
+- `contractCli:terminalLine`
+- `auditor:terminalLine`
 
 ---
 
-## 12. Testing Strategy
+## 9. Renderer Architecture
 
-### 12.1 Unit Testing
+## 9.1 Root Composition
 
-**Framework**: Jest + React Testing Library
+`main.jsx` renders `App` inside `React.StrictMode`.
 
-**Coverage Areas**:
-- Utility functions (validators, formatters)
-- Store actions and state updates
-- Service layer functions
-- Crypto operations
+`App.jsx` responsibilities:
 
-**Example**:
-```javascript
-describe('validators', () => {
-  test('validateEmail accepts valid emails', () => {
-    expect(validateEmail('user@example.com')).toBe(true);
-  });
-  
-  test('validateEmail rejects invalid emails', () => {
-    expect(validateEmail('invalid')).toBe(false);
-  });
-});
-```
+- boot screen and progress
+- auth bootstrap from localStorage/sessionStorage
+- role restoration and role switching
+- global routing by `activeNav`
+- build list preload for authenticated users
+- global shell composition with `AppShell`
 
-### 12.2 Integration Testing
+## 9.2 App Shell and Navigation
 
-**Framework**: Playwright
+`AppShell.jsx` provides:
 
-**Coverage Areas**:
-- Login flow
-- Build creation and management
-- User CRUD operations
-- Key generation and registration
-- Signing workflow
+- top app header
+- role-aware side navigation
+- user chip with avatar/name/role selector
+- logout confirmation modal
+- account menu pinned at side-nav bottom
 
-**Example**:
-```javascript
-test('user can create a build', async ({ page }) => {
-  await page.goto('/');
-  await page.fill('[name="email"]', 'sp@hpcr.com');
-  await page.fill('[name="password"]', 'ServiceProvider@123');
-  await page.click('button[type="submit"]');
-  
-  await page.click('text=Create New Build');
-  await page.fill('[name="name"]', 'Test Build');
-  await page.click('button:has-text("Create")');
-  
-  await expect(page.locator('text=Test Build')).toBeVisible();
-});
-```
+Current nav model:
 
-### 12.3 E2E Testing
+- Home (all roles)
+- Build Management (all roles)
+- Diagnostics & Analytics (admin)
+- User Management (admin)
+- System Logs (admin, auditor)
+- Account Settings (all roles)
 
-**Manual Testing Checklist**: See `Design/E2E_MANUAL_TESTING.md`
+Role switch menu uses server-provided `user_roles`; current role only can be selected from available assigned roles.
 
-**Automated E2E Tests**:
-- Complete user workflows
-- Multi-role scenarios
-- Error handling
-- Security validations
+## 9.3 Desktop Title Bar
 
-### 12.4 Security Testing
+`DesktopTitleBar.jsx` provides:
 
-**Areas**:
-- IPC communication security
-- Crypto operation correctness
-- Key storage security
-- Input validation
-- XSS prevention
-- CSRF protection
+- centered branding/title button
+- about dialog on title click
+- custom minimize/maximize/close controls
+- live backend connection status indicator
+- measured latency display (ms)
+- connection watcher with polling (`15s`) and timeout (`5s`)
+- disconnect modal with actions: Retry or Close App
+
+About dialog fetches local client runtime/tool metadata:
+
+- app version + Electron/Chromium/Node/platform
+- `contract-cli` install/version
+- `OpenSSL` install/version
 
 ---
 
-## 13. Deployment
+## 10. Role-Based Build Detail Tabs
 
-### 13.1 Build Process
+`BuildDetails.jsx` uses role-driven tab keys.
 
-```bash
-# Install dependencies
-npm install
+| Role | Visible Tabs |
+| --- | --- |
+| ADMIN | Assignments, Audit Trail |
+| SOLUTION_PROVIDER | Assignments, Add Workload, Audit Trail |
+| DATA_OWNER | Assignments, Add Environment, Audit Trail |
+| AUDITOR | Assignments, Sign & Add Attestation, Finalise Contract, Audit Trail |
+| ENV_OPERATOR | Assignments, Export Contract, Audit Trail |
+| VIEWER | Assignments, Audit Trail |
 
-# Development mode
-npm run dev
-
-# Build for production
-npm run build
-
-# Package for distribution
-npm run package
-```
-
-### 13.2 Distribution
-
-**Electron Builder Configuration**:
-```json
-{
-  "appId": "com.hpcr.contract-builder",
-  "productName": "IBM Confidential Computing Contract Generator",
-  "directories": {
-    "output": "dist"
-  },
-  "files": [
-    "dist-electron/**/*",
-    "dist/**/*"
-  ],
-  "mac": {
-    "category": "public.app-category.business",
-    "target": ["dmg", "zip"]
-  },
-  "win": {
-    "target": ["nsis", "portable"]
-  },
-  "linux": {
-    "target": ["AppImage", "deb", "rpm"],
-    "category": "Office"
-  }
-}
-```
-
-### 13.3 Auto-Update
-
-**Strategy**: Electron's built-in auto-updater
-
-**Update Flow**:
-1. Check for updates on app start
-2. Download update in background
-3. Notify user when ready
-4. Install on next restart
+This ensures each persona only sees relevant stage surfaces while preserving audit visibility.
 
 ---
 
-## 14. Future Enhancements
+## 11. Build Lifecycle and Stage UX
 
-### 14.1 Planned Features
+Current build states:
 
-1. **Offline Mode**
-   - Local database (SQLite)
-   - Sync when online
-   - Conflict resolution
+1. `CREATED`
+2. `WORKLOAD_SUBMITTED`
+3. `ENVIRONMENT_STAGED`
+4. `AUDITOR_KEYS_REGISTERED`
+5. `CONTRACT_ASSEMBLED`
+6. `FINALIZED`
+7. `CONTRACT_DOWNLOADED`
+8. `CANCELLED`
 
-2. **Advanced Search**
-   - Full-text search
-   - Filters and facets
-   - Saved searches
+Downloaded and cancelled builds are treated as terminal/completed in list and home summaries.
 
-3. **Collaboration**
-   - Real-time updates
-   - Comments and annotations
-   - Activity feed
+## 11.1 Build Management View
 
-4. **Reporting**
-   - Custom reports
-   - Export to PDF/Excel
-   - Scheduled reports
+`BuildManagement.jsx`:
 
-5. **Internationalization**
-   - Multi-language support
-   - Locale-specific formatting
-   - RTL support
+- active and completed tables split by terminal status
+- pagination on both tables
+- admin-only create build modal with mandatory role assignment
+- excludes `ADMIN` users from persona assignment dropdowns
+- readiness filtering for assignees (active + setup complete + key registered)
 
-### 14.2 Performance Optimizations
+## 11.2 Assignments Tab
 
-1. **Code Splitting**
-   - Route-based splitting
-   - Component lazy loading
-   - Dynamic imports
+`BuildAssignments.jsx`:
 
-2. **Caching**
-   - API response caching
-   - Asset caching
-   - Service worker
+- role-sorted assignment table
+- assigned timestamps with full date-time formatting (24h)
+- status tags per role/stage completion
+- admin-only cancel build action (disabled for terminal statuses)
 
-3. **Virtual Scrolling**
-   - Large lists
-   - Table virtualization
-   - Infinite scroll
+## 11.3 Solution Provider and Data Owner Stage Submission
 
-### 14.3 Accessibility Improvements
+`SectionSubmit.jsx`:
 
-1. **Keyboard Navigation**
-   - Complete keyboard support
-   - Focus management
-   - Skip links
+- file upload for YAML
+- editable preview modal with:
+  - line numbers
+  - tab indentation support
+  - scroll-sync line gutter
+- builtin or custom HPCR cert support when required
+- terminal-style streamed logs for encryption steps
 
-2. **Screen Reader Support**
-   - ARIA labels
-   - Live regions
-   - Semantic HTML
+Flow differences:
 
-3. **High Contrast Mode**
-   - Theme variants
-   - Color adjustments
-   - Icon alternatives
+- **Solution Provider**: contract-cli encryption with HPCR cert
+- **Data Owner**: local AES-256-GCM encryption + RSA-OAEP key wrapping using assigned auditor public key
+
+Both flows hash and sign payload before backend submit.
+
+## 11.4 Auditor Stage
+
+`AuditorSection.jsx` is a 4-step guided flow:
+
+1. generate signing key/certificate
+2. generate attestation key
+3. generate encrypted environment preview
+4. confirm sign + add attestation (backend transition)
+
+It supports built-in/custom cert selection and streams command-style output in-terminal.
+
+Session-scoped context is stored in `sessionStorage` and reused by finalization.
+
+## 11.5 Finalize Contract Stage
+
+`FinaliseContract.jsx`:
+
+- assembles workload + environment
+- signs via `contract-cli sign-contract`
+- injects `attestationPublicKey`
+- computes contract hash
+- signs hash with auditor identity key
+- submits finalize payload to backend
+- updates status to `FINALIZED`
+
+## 11.6 Export Contract Stage
+
+`ContractExport.jsx`:
+
+- export and preview final contract
+- integrity verification via backend verify endpoint
+- "How Verify Works" info modal
+- download + acknowledgement path
+- once downloaded, re-download is disabled and stage is locked
+
+## 11.7 Audit Trail Stage
+
+`AuditViewer.jsx` includes:
+
+- event timeline and detailed per-event payload/crypto blocks
+- hash chain visualization
+- backend verify action combining audit + contract checks
+- manual verification guide with copyable command snippets
+- persona-specific stage verification guide cards
+
+Expected signed event stages include workload, environment, auditor registration, contract assembly, finalization, and download acknowledgment.
 
 ---
 
-## Appendix A: Glossary
+## 12. Home and Dashboard Behavior
 
-| Term | Definition |
-|------|------------|
-| **HPCR** | Hyper Protect Container Runtime |
-| **Build** | A contract instance with sections and signatures |
-| **Section** | A part of a contract that requires approval |
-| **Persona** | A user role (SP, DO, Auditor, EO, Admin) |
-| **Fingerprint** | SHA-256 hash of a public key |
-| **Key Rotation** | Process of generating and registering a new key pair |
-| **IPC** | Inter-Process Communication between main and renderer |
-| **CSP** | Content Security Policy for web security |
+`Home.jsx` provides:
 
----
+- account overview (password and key status/expiry)
+- alert stack (expired password/key, key expiring soon)
+- build overview counts:
+  - in-progress
+  - downloaded
+  - cancelled
+- role-driven "Build Actions Required" cards from state/action rules
+- refresh action for latest build state
 
-## Appendix B: References
-
-1. [Electron Documentation](https://www.electronjs.org/docs)
-2. [React Documentation](https://react.dev/)
-3. [IBM Carbon Design System](https://carbondesignsystem.com/)
-4. [Zustand Documentation](https://docs.pmnd.rs/zustand)
-5. [Node.js Crypto Module](https://nodejs.org/api/crypto.html)
-6. [OWASP Security Guidelines](https://owasp.org/)
+Viewer role keeps Home access but without persona action cards.
 
 ---
 
-## Document History
+## 13. State Management
 
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 1.0 | 2026-04-06 | Senior Software Architect | Initial implementation complete |
+## 13.1 Stores
+
+- `authStore`
+  - auth token/user/session
+  - setup-required model (`password_change`, `public_key_registration`)
+  - key/password expiry helpers
+- `buildStore`
+  - build list + selected build
+  - per-build assignments/sections/audit/export/verification caches
+- `configStore`
+  - server URL and connection metadata
+- `rotationStore` and other specialized stores for admin tooling
+
+## 13.2 Persistence
+
+- auth and config store partial persistence via Zustand middleware
+- role/session bootstrapping also uses localStorage/sessionStorage in app shell flows
 
 ---
 
-**End of Document**
+## 14. Service Layer Design
+
+## 14.1 API Client
+
+`apiClient.js` centralizes:
+
+- axios instance
+- auth header injection
+- mutating-request signing via `signatureMiddleware`
+- retry behavior for non-mutating requests
+- normalized error model
+- force logout on non-login `401`
+
+## 14.2 Request Signing
+
+`signatureMiddleware.js` adds:
+
+- `X-Signature`
+- `X-Signature-Hash`
+- `X-Timestamp`
+- `X-Key-Fingerprint`
+
+for mutating API calls except explicit exempt endpoints (`/auth/logout`, password update, public-key registration).
+
+## 14.3 Domain Services
+
+- `authService`: login/logout/password/public key
+- `buildService`: build lifecycle and orchestration helpers
+- `sectionService`: submission and section validation
+- `assignmentService`: role assignment access checks
+- `verificationService`: verify endpoints + local verification utilities
+- `exportService`: export/save/acknowledge workflow
+- `systemLogService`: global system logs
+
+---
+
+## 15. Security Architecture (Current)
+
+## 15.1 Renderer Security
+
+- no Node integration in renderer
+- sandboxed renderer with context isolation
+- preload allowlist API only
+
+## 15.2 IPC Security
+
+- trusted sender URL verification for every IPC channel
+- blocked untrusted sender invocation
+
+## 15.3 Navigation Security
+
+- strict internal URL allowlisting
+- blocked window.open/webview abuse vectors
+- controlled external link opening through shell allowlist
+
+## 15.4 Session and Permission Security
+
+- global deny for media/device/permission requests
+- explicit cert error rejection
+- storage cleanup on close/quit hooks
+
+## 15.5 CSP
+
+`index.html` defines CSP through meta tag with:
+
+- `default-src 'self'`
+- `object-src 'none'`
+- controlled `script-src`, `style-src`, `font-src`, `img-src`, `connect-src`
+
+Note: `frame-ancestors` is intentionally not included in meta CSP because browsers ignore it in meta-delivered CSP.
+
+## 15.6 Key Material Storage
+
+Private keys are encrypted and stored under app user data path.
+
+Current implementation note:
+
+- `keyStorage.js` uses a local machine-derived key strategy
+- code comments explicitly note OS keychain integration is preferable for stronger production hardening
+
+---
+
+## 16. UI, Styling, and Consistency Model
+
+## 16.1 Design System
+
+- Carbon components and tokens
+- dark theme baseline (`Theme theme="g100"`)
+- shared page-shell utility classes in `index.scss`
+
+## 16.2 Global Layout Contracts
+
+- fixed custom desktop title bar (`40px`)
+- Carbon header below title bar
+- side nav and content offsets calculated from both bars
+- consistent `app-page` width and spacing primitives
+
+## 16.3 Timestamp Convention
+
+App formatters force `hour12: false`, resulting in 24-hour timestamps across major views and modals.
+
+## 16.4 Interaction Consistency
+
+- refresh button uses consistent tertiary visual pattern across pages
+- destructive actions gated by modals
+- role-dependent actions disabled/hidden based on current stage and persona
+
+---
+
+## 17. Login and Server Configuration UX
+
+`Login.jsx` includes:
+
+- credentials form with remember-email option
+- server status card
+- server config modal
+- test connection action with terminal-like log output
+- save gated on successful test for the same URL
+
+Server health checks use `/health` with timeout and inline status/tag feedback.
+
+---
+
+## 18. Analytics, User, and Logs Admin Surfaces
+
+## 18.1 Admin Diagnostics & Analytics
+
+- KPI tiles for users/builds/security health
+- donut and grouped bar chart analytics
+- credential rotation tab integration
+- scoped refresh action in overview panel
+
+## 18.2 User Management
+
+- create/edit/deactivate/reactivate users
+- multi-role assignment with checkboxes
+- overflow action menu for password/key administrative operations
+- active/inactive user partitioning
+
+## 18.3 System Logs
+
+- searchable, paginated event table
+- status tags
+- CSV export
+- refresh control
+
+---
+
+## 19. Packaging and Distribution
+
+## 19.1 electron-builder Configuration
+
+- appId: `com.ibm.hpcr.contract-builder`
+- `asar: true`
+- output: `dist-electron/`
+- includes: `dist/**/*`, `main/**/*`, `package.json`
+
+Targets:
+
+- macOS: `dmg`, `zip` (`x64`, `arm64`)
+- Windows: `nsis`, `portable`
+- Linux: `AppImage`, `deb`, `rpm`
+
+## 19.2 macOS Hardening
+
+- `hardenedRuntime: true`
+- entitlements file: `build/entitlements.mac.plist`
+
+Current entitlements include JIT/unsigned-executable-memory/library-validation toggles needed for current runtime profile.
+
+## 19.3 Vite Build Behavior
+
+`vite.config.js` sets `base: './'` to support packaged file-based resource resolution.
+
+---
+
+## 20. Operational Telemetry and Diagnostics
+
+Current diagnostics available in app:
+
+- system logs page (backend-driven)
+- stage terminal logs in submission/finalize/auditor flows
+- about dialog runtime/tool detection
+- live connection health and latency in title bar
+- renderer and process-level crash/error logging in main process
+
+---
+
+## 21. Known Gaps and Hardening Backlog
+
+These are code-observed opportunities, not implemented guarantees:
+
+1. Private key storage currently uses app-local encrypted file strategy; migrating to native OS keychain would improve local secret protection.
+2. CSP currently allows `'unsafe-inline'` for styles for compatibility; evaluate stricter style policy if feasible.
+3. `connect-src` is broad (`http: https: ws: wss:`); production policy can be tightened to configured backend domains.
+4. Some legacy/auxiliary service and component code paths exist (for example token manager) that are not central in current screen flow and may need cleanup or explicit productization.
+
+---
+
+## 22. QA and Validation Strategy (Current + Recommended)
+
+## 22.1 Current In-App Validation Patterns
+
+- explicit stage/status guards before action enablement
+- terminal logs for long-running cryptographic operations
+- modal confirmations for destructive actions
+- backend verification endpoints exposed in UI
+
+## 22.2 Recommended Regression Coverage
+
+1. role-switching and nav-visibility matrix
+2. full build happy path per persona
+3. downloaded-contract lockout behavior
+4. session/signature behavior after key rotation
+5. disconnected backend behavior from title bar watcher and retry flow
+6. package smoke test on macOS/Windows/Linux targets
+
+---
+
+## 23. Appendix: Key Files
+
+- Main process: `app/main/index.js`
+- Preload bridge: `app/main/preload.js`
+- Root app shell: `app/src/App.jsx`
+- Shell and nav: `app/src/components/AppShell.jsx`
+- Desktop title bar: `app/src/components/DesktopTitleBar.jsx`
+- Build lifecycle views/components: `app/src/views/BuildManagement.jsx`, `app/src/views/BuildDetails.jsx`, `app/src/components/SectionSubmit.jsx`, `app/src/components/AuditorSection.jsx`, `app/src/components/FinaliseContract.jsx`, `app/src/components/ContractExport.jsx`, `app/src/components/AuditViewer.jsx`
+- API client/signing: `app/src/services/apiClient.js`, `app/src/services/signatureMiddleware.js`
+- Build/package config: `app/package.json`, `app/electron-builder.json`, `app/BUILD.md`
+

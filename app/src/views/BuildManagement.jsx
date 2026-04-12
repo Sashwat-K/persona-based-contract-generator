@@ -46,6 +46,11 @@ const BUILD_ASSIGNMENT_FIELDS = [
   { role: ROLES.ENV_OPERATOR,      id: 'env-operator',      label: 'Environment Operator' }
 ];
 
+const ROLE_LABEL_BY_KEY = BUILD_ASSIGNMENT_FIELDS.reduce((acc, field) => {
+  acc[field.role] = field.label;
+  return acc;
+}, {});
+
 const EMPTY_ASSIGNMENTS = {
   [ROLES.SOLUTION_PROVIDER]: '',
   [ROLES.DATA_OWNER]: '',
@@ -165,19 +170,19 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
   // Get users by role for assignment dropdowns
   const isUserReady = (u) =>
     u.is_active &&
-    !userHasRole(u, ROLES.ADMIN) &&
     !u.must_change_password &&
     u.public_key_fingerprint != null;
 
-  // Show all ready users in every role dropdown — one person can cover multiple roles.
-  // The build assignment (not system role) controls access per build.
   const readyUsers = useMemo(() => users.filter(isUserReady), [users]);
-  const excludedAdminCount = useMemo(
-    () => users.filter((u) => u.is_active && userHasRole(u, ROLES.ADMIN)).length,
-    [users]
+  const eligibleUsersByRole = useMemo(
+    () => BUILD_ASSIGNMENT_FIELDS.reduce((acc, { role }) => {
+      acc[role] = readyUsers.filter((user) => userHasRole(user, role));
+      return acc;
+    }, {}),
+    [readyUsers]
   );
   const notReadyCount = useMemo(
-    () => users.filter((u) => u.is_active && !userHasRole(u, ROLES.ADMIN) && !isUserReady(u)).length,
+    () => users.filter((u) => u.is_active && !isUserReady(u)).length,
     [users]
   );
 
@@ -206,11 +211,21 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
         { role: ROLES.ENV_OPERATOR,      userId: assignments[ROLES.ENV_OPERATOR] }
       ].filter(a => a.userId);
 
-      await Promise.all(
-        roleAssignments.map(a =>
-          assignmentService.createAssignment(build.id, a.userId, a.role)
-        )
-      );
+      for (const assignment of roleAssignments) {
+        const selectedUser = users.find((user) => user.id === assignment.userId);
+        const roleLabel = ROLE_LABEL_BY_KEY[assignment.role] || assignment.role;
+        if (!selectedUser) {
+          throw new Error(`Selected user not found for ${roleLabel}.`);
+        }
+        if (!userHasRole(selectedUser, assignment.role)) {
+          throw new Error(`${selectedUser.name} does not have ${roleLabel} role.`);
+        }
+        try {
+          await assignmentService.createAssignment(build.id, assignment.userId, assignment.role);
+        } catch (err) {
+          throw new Error(`Failed to assign ${roleLabel}: ${err.message}`);
+        }
+      }
 
       // Reset form
       setBuildName('');
@@ -233,7 +248,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
     } finally {
       setCreating(false);
     }
-  }, [assignments, buildName, creating, isSetupRequired, onBuildCreated, setupPending]);
+  }, [assignments, buildName, creating, isSetupRequired, onBuildCreated, setupPending, users]);
 
   const isFormValid = useMemo(() => {
     return Boolean(buildName.trim() &&
@@ -474,17 +489,18 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
             ) : (
               <Stack gap={5}>
               {BUILD_ASSIGNMENT_FIELDS.map(({ role, id, label }) => {
-                const helperText = (notReadyCount > 0 || excludedAdminCount > 0)
+                const roleEligibleUsers = eligibleUsersByRole[role] || [];
+                const helperText = (notReadyCount > 0 || roleEligibleUsers.length === 0)
                   ? [
                     notReadyCount > 0
                       ? `${notReadyCount} user(s) excluded — pending initial login, password reset, or public key registration`
                       : null,
-                    excludedAdminCount > 0
-                      ? `${excludedAdminCount} admin user(s) excluded — admin cannot be assigned to persona roles`
+                    roleEligibleUsers.length === 0
+                      ? `No eligible users with ${label} role`
                       : null
                   ].filter(Boolean).join('; ')
                   : readyUsers.length === 0
-                  ? 'No eligible users. Users must complete initial setup and must not have ADMIN role.'
+                  ? 'No eligible users. Users must complete initial setup.'
                   : undefined;
 
                 return (
@@ -498,7 +514,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
                     disabled={creating || loadingUsers}
                   >
                     <SelectItem value="" text="Select a user" />
-                    {readyUsers.map(user => (
+                    {roleEligibleUsers.map(user => (
                       <SelectItem key={user.id} value={user.id} text={user.name} />
                     ))}
                   </Select>

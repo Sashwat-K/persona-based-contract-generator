@@ -215,7 +215,7 @@ func buildRouter(
 			r.With(middleware.RequireOwnerOrAdmin("id")).Delete("/{id}/tokens/{token_id}", userHandler.RevokeToken)
 
 			// User assignments (any authenticated user can view their own)
-			r.Get("/{id}/assignments", assignmentHandler.GetUserAssignments)
+			r.With(middleware.RequireOwnerOrAdmin("id")).Get("/{id}/assignments", assignmentHandler.GetUserAssignments)
 		})
 
 		// System Logs (admin & auditor)
@@ -230,6 +230,7 @@ func buildRouter(
 			r.With(middleware.RequireRole("ADMIN")).Post("/", buildHandler.CreateBuild)
 
 			r.Route("/{id}", func(r chi.Router) {
+				r.Use(middleware.RequireBuildAccess(queries, "id"))
 				r.Get("/", buildHandler.GetBuild)
 				r.Patch("/status", buildHandler.TransitionStatus) // Role validation done internally in service based on transition state
 				r.With(middleware.RequireRole("AUDITOR")).Post("/attestation", buildHandler.RegisterAttestation)

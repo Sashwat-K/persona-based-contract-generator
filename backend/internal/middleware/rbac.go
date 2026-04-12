@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -87,6 +88,86 @@ func RequireOwnerOrAdmin(paramName string) func(http.Handler) http.Handler {
 			}
 
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireBuildAccess enforces build-level visibility:
+// - ADMIN can access any build.
+// - Non-admin users can only access builds where they have at least one assignment.
+func RequireBuildAccess(queries repository.Querier, paramName string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if HasRole(r.Context(), "ADMIN") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			userID, ok := GetUserID(r.Context())
+			if !ok {
+				emitSystemLog(
+					r.Context(),
+					"unknown",
+					"AUTH_REQUEST_DENIED",
+					"RBAC",
+					requestIP(r),
+					"FAILED",
+					"Missing authenticated user context for build access check",
+				)
+				writeUnauthorized(w)
+				return
+			}
+
+			paramValue := chi.URLParam(r, paramName)
+			buildID, err := uuid.Parse(paramValue)
+			if err != nil {
+				emitSystemLog(
+					r.Context(),
+					actorEmailFromContext(r, "unknown"),
+					"ACCESS_FORBIDDEN",
+					"RBAC",
+					requestIP(r),
+					"FAILED",
+					"Invalid build ID in URL parameter",
+				)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":{"code":"INVALID_REQUEST","message":"Invalid build ID in URL."}}`))
+				return
+			}
+
+			assignments, err := queries.GetBuildAssignmentsByUserID(r.Context(), userID)
+			if err != nil {
+				emitSystemLog(
+					r.Context(),
+					actorEmailFromContext(r, "unknown"),
+					"ACCESS_FORBIDDEN",
+					"RBAC",
+					requestIP(r),
+					"FAILED",
+					"Failed to evaluate build assignment access",
+				)
+				writeForbidden(w, "Unable to validate build access for this request.")
+				return
+			}
+
+			for _, assignment := range assignments {
+				if assignment.BuildID == buildID {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			emitSystemLog(
+				r.Context(),
+				actorEmailFromContext(r, "unknown"),
+				"ACCESS_FORBIDDEN",
+				"RBAC",
+				requestIP(r),
+				"FAILED",
+				"Build access denied: user is not assigned to this build",
+			)
+			writeForbidden(w, "You are not assigned to this build.")
 		})
 	}
 }

@@ -1,216 +1,415 @@
 # IBM Confidential Computing Contract Generator - API Documentation
 
-> **Version:** 1.0  
-> **Date:** 2026-04-10  
-> **Status:** Production Ready  
-> **Backend Version:** Go 1.21+  
-> **Database:** PostgreSQL 16
+> **Version:** 1.1 (implementation-aligned)  
+> **Date:** 2026-04-11  
+> **Status:** Production backend reference  
+> **Source of Truth:** `backend/cmd/server/main.go` and `backend/internal/*`
 
 ---
 
 ## Table of Contents
 
 1. [Introduction](#1-introduction)
-2. [API Overview](#2-api-overview)
-3. [Authentication & Authorization](#3-authentication--authorization)
-4. [Common Patterns](#4-common-patterns)
-5. [API Endpoints](#5-api-endpoints)
-6. [Error Handling](#6-error-handling)
-7. [Security Considerations](#7-security-considerations)
-8. [Rate Limiting](#8-rate-limiting)
-9. [Appendix](#9-appendix)
+2. [Service Overview](#2-service-overview)
+3. [Middleware & Security Pipeline](#3-middleware--security-pipeline)
+4. [Authentication, Setup Guard, and Request Signing](#4-authentication-setup-guard-and-request-signing)
+5. [Authorization Model](#5-authorization-model)
+6. [Build Lifecycle and State Machine](#6-build-lifecycle-and-state-machine)
+7. [Endpoint Reference](#7-endpoint-reference)
+8. [Error Model](#8-error-model)
+9. [Configuration (Environment Variables)](#9-configuration-environment-variables)
+10. [Operational Notes](#10-operational-notes)
 
 ---
 
 ## 1. Introduction
 
-The IBM Confidential Computing Contract Generator provides a RESTful API for collaborative construction, signing, and finalization of encrypted userdata contracts for HPCR, HPCR4RHVS, and HPCC deployments.
+This document describes the **actual current backend API behavior** for the IBM Confidential Computing Contract Generator.
 
-### Key Features
+It is implementation-first and is aligned with:
+- route registration in `backend/cmd/server/main.go`
+- request middleware in `backend/internal/middleware/*`
+- handlers in `backend/internal/handler/*`
+- business rules in `backend/internal/service/*`
 
-- **Cryptographic Identity Binding**: All users register RSA-4096 public keys; signatures verified against registered keys
-- **Multi-Persona Workflow**: Strict linear state progression with separation of duties
-- **Two-Layer Access Control**: Role-based + explicit build assignments
-- **Tamper-Evident Audit Chain**: Hash-linked audit events with cryptographic signatures
-- **Client-Side Cryptography**: All encryption, signing, and key generation performed locally
-- **Zero-Knowledge Backend**: Backend never has access to private keys or unencrypted data
-
-### Architecture Principles
-
-- Backend orchestrates workflow and verifies signatures
-- All cryptographic operations execute in Electron desktop app
-- Private keys never leave user's machine
-- Backend stores only encrypted artifacts and hashed data
-- Immutable contracts after finalization
+Where implementation and older docs diverge, this document follows the implementation.
 
 ---
 
-## 2. API Overview
+## 2. Service Overview
 
 ### Base URL
 
-```
-https://<your-domain>
+The backend is mounted without a version prefix.
+
+Example:
+
+```text
+http://localhost:8080
+https://<your-host>
 ```
 
 ### Content Type
 
-All requests and responses use `Content-Type: application/json` unless otherwise specified.
+- Requests: `application/json` for JSON endpoints.
+- Responses: `application/json` except rate-limit plain-text responses from middleware.
 
-### Authentication
+### Authentication Token Model
 
-All endpoints except `POST /auth/login` require authentication via Bearer token:
+- Tokens are opaque random values issued by `POST /auth/login`.
+- The backend stores and validates only token hashes.
+- Auth header format:
 
-```
+```text
 Authorization: Bearer <token>
 ```
 
-### API Versioning
+### Public Endpoints
 
-Current deployment is unversioned (no `/api/v1` prefix). Versioned routing can be introduced later.
+- `GET /health`
+- `GET /openapi.json`
+- `GET /swagger`
+- `GET /swagger/`
+- `POST /auth/login`
 
-### Supported HTTP Methods
-
-- `GET` - Retrieve resources
-- `POST` - Create resources
-- `PUT` - Replace resources (idempotent)
-- `PATCH` - Partial update resources
-- `DELETE` - Remove resources
+All other routes require authentication.
 
 ---
 
-## 3. Authentication & Authorization
+## 3. Middleware & Security Pipeline
 
-### Authentication Flow
+Global middleware order (outermost to innermost):
 
-1. **Login**: User provides email and password to `POST /auth/login`
-2. **Token Issuance**: Backend returns opaque bearer token with expiry
-3. **Token Usage**: Client includes token in `Authorization` header for all subsequent requests
-4. **Token Validation**: Backend validates token on each request
-5. **Logout**: Client calls `POST /auth/logout` to revoke token
+1. `Recoverer()`
+2. `RequestID()`
+3. `SecurityHeaders()`
+4. `Logging()`
+5. `CORS()`
+6. `MaxBodyBytes()`
+7. `RequestTimeout()`
+8. `RateLimit()`
 
-### First-Login Setup Flow
+Authenticated group middleware order:
 
-New users (including seeded admin) must complete setup on first login:
+1. `Auth()`
+2. `SetupGuard()`
+3. `RequireRequestSignature()`
 
-1. **Change Password**: Replace admin-assigned initial password
-2. **Generate Key Pair**: Create RSA-4096 key pair locally (Electron app)
-3. **Register Public Key**: Upload public key to backend
+### 3.1 Recoverer
 
-Until setup is complete, token is restricted to:
-- `PATCH /users/{id}/password`
-- `PUT /users/{id}/public-key`
-- `POST /auth/logout`
+- Converts panics to:
 
-All other endpoints return `403 ACCOUNT_SETUP_REQUIRED`.
+```json
+{"error":{"code":"INTERNAL_ERROR","message":"An unexpected error occurred."}}
+```
 
-### Role-Based Access Control (RBAC)
+- Returns `500`.
 
-| Role | Description | Permissions |
-|------|-------------|-------------|
-| `SOLUTION_PROVIDER` | Provides workload section payload | Submit workload section |
-| `DATA_OWNER` | Provides environment configuration | Submit environment section |
-| `AUDITOR` | Performs sign + attestation flow and finalization | Register attestation state, finalize contract |
-| `ENV_OPERATOR` | Downloads and deploys finalized contracts | Download contract, acknowledge receipt |
-| `ADMIN` | System administration | Create users, manage roles, create builds, cancel builds |
-| `VIEWER` | Read-only access | View builds and audit logs |
+### 3.2 Request ID
 
-### Build Assignment Access Control
+- Uses inbound `X-Request-ID` if safe; otherwise generates UUID.
+- Echoes `X-Request-ID` in response headers.
 
-Having the correct role is **necessary but not sufficient**. Users must be explicitly assigned to a build to perform actions on it.
+### 3.3 Security Headers
+
+Always sets:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+
+Sets HSTS only for TLS requests:
+
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+
+### 3.4 CORS
+
+Default allowed origins:
+
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+- `null`
+
+Configurable via `CORS_ALLOWED_ORIGINS` and `CORS_ALLOW_ALL`.
+
+Allowed methods:
+
+- `GET, POST, PUT, PATCH, DELETE, OPTIONS`
+
+Allowed headers include:
+
+- `Content-Type`
+- `Authorization`
+- `X-Request-ID`
+- `X-Signature`
+- `X-Signature-Hash`
+- `X-Timestamp`
+- `X-Key-Fingerprint`
+
+### 3.5 Request Size and Timeout
+
+- Global body cap (default): `50MB` (`MAX_PAYLOAD_SIZE`)
+- Request timeout (default): `30s` (`REQUEST_TIMEOUT`)
+
+Handler-level JSON behavior:
+
+- Most handlers use `readJSON`:
+  - default max `1MB`
+  - `DisallowUnknownFields = true`
+- `POST /builds/{id}/sections` uses `readJSONLarge(..., 50MB)`.
+
+### 3.6 Rate Limiting
+
+Global limiter (`RateLimit`):
+
+- 10 requests/second per client IP
+- burst 20
+
+Login limiter (`AuthRateLimit`) on `POST /auth/login`:
+
+- 5 requests/minute per IP
+- burst 3
+
+`/auth/login` is subject to both global and auth-specific limits.
+
+Rate-limit response is plain text (`429`), not JSON:
+
+```text
+Rate limit exceeded. Please try again later.
+```
+
+### 3.7 Client IP Resolution
+
+- Default: `RemoteAddr`
+- If `TRUST_PROXY_HEADERS=true`, uses `X-Forwarded-For` / `X-Real-IP`
 
 ---
 
-## 4. Common Patterns
+## 4. Authentication, Setup Guard, and Request Signing
 
-### Request Signing
+### 4.1 Login
 
-All mutating requests (POST, PUT, PATCH, DELETE) require cryptographic signatures:
+`POST /auth/login` returns:
 
-**Headers:**
-```
-X-Signature: <base64-encoded-RSA-PSS-signature>
-X-Signature-Hash: <sha256-hex-of-request-payload>
-X-Timestamp: <unix-timestamp-milliseconds>
-X-Key-Fingerprint: <sha256-hex-of-public-key-der>
-```
+- token + expiry
+- user profile
+- setup status (`requires_setup`, `setup_pending`)
 
-**Signing Process (current implementation):**
-1. Build payload as JSON: `{"method","path","data","timestamp"}`
-2. Compute `SHA256(payload_json_string)` => `X-Signature-Hash`
-3. Sign that hash with RSA-PSS (RSA-SHA256 semantics) using local private key
-4. Base64-encode signature => `X-Signature`
+Setup pending values:
 
-**Backend Verification:**
-1. Retrieve authenticated user's registered public key
-2. Verify signature against registered key
-3. Check timestamp for replay attack prevention (±5 minutes tolerance)
-4. Validate hash matches request payload
+- `password_change`
+- `public_key_registration`
 
-**Signature Header Exemptions:**
+### 4.2 Setup Guard
+
+If setup is incomplete, access is restricted to setup endpoints only.
+
+Allowed while setup is pending:
+
 - `POST /auth/logout`
-- `PATCH /users/{id}/password`
-- `PUT /users/{id}/public-key`
+- `PATCH /users/{id}/password` (own user only)
+- `PUT /users/{id}/public-key` (own user only)
 
-### Pagination
+Everything else returns `403 ACCOUNT_SETUP_REQUIRED`:
 
-List endpoints support limit/offset pagination:
-
-```
-GET /builds?limit=50&offset=0
-```
-
-**Response:**
 ```json
 {
-  "builds": [...],
-  "limit": 50,
-  "offset": 0
-}
-```
-
-### Filtering & Sorting
-
-```
-GET /builds?status=CREATED&sort=created_at&order=desc
-```
-
----
-
-## 5. API Endpoints
-
-### 5.1 Roles
-
-#### GET /roles
-
-Retrieve all available persona roles.
-
-**Auth:** Required | **Role:** Any
-
-**Response (200):**
-```json
-{
-  "roles": [
-    {
-      "id": "uuid",
-      "name": "SOLUTION_PROVIDER",
-      "description": "Provides workload definition and HPCR encryption certificate"
+  "error": {
+    "code": "ACCOUNT_SETUP_REQUIRED",
+    "message": "Account setup incomplete. Complete required setup steps.",
+    "details": {
+      "setup_pending": ["password_change", "public_key_registration"]
     }
-  ]
+  }
 }
 ```
 
+### 4.3 Request Signature Enforcement
+
+All authenticated mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) require signature headers unless exempt.
+
+Required headers:
+
+- `X-Signature`
+- `X-Signature-Hash`
+- `X-Timestamp` (Unix milliseconds)
+- `X-Key-Fingerprint` (optional but validated if present)
+
+Timestamp tolerance:
+
+- ±5 minutes
+
+Exempt endpoints:
+
+- `POST /auth/logout`
+- `PATCH /users/{id}/password`
+- `PUT /users/{id}/public-key`
+
+Canonical hash payload used by backend:
+
+```json
+{"method":"POST","path":"/builds/<id>/sections","data":{...},"timestamp":1710000000000}
+```
+
+Where:
+
+- `method` = uppercased HTTP method
+- `path` = URL path only
+- `data` = raw JSON body, or `null` when empty
+
+`X-Signature-Hash` must equal SHA-256 hex of canonical payload.
+`X-Signature` must verify against the authenticated user public key.
+
 ---
 
-### 5.2 Authentication
+## 5. Authorization Model
+
+### 5.1 Persona Roles
+
+System roles:
+
+- `SOLUTION_PROVIDER`
+- `DATA_OWNER`
+- `AUDITOR`
+- `ENV_OPERATOR`
+- `ADMIN`
+- `VIEWER`
+
+### 5.2 Two-Layer Access for Build Work
+
+For stage operations, the backend enforces:
+
+1. User must have the required global role.
+2. User must be explicitly assigned on that build/role.
+
+This is enforced in services for section submission and export/download flows.
+
+### 5.3 Endpoint-Level vs Service-Level Guards
+
+Important implementation detail:
+
+- Some routes are not role-guarded at router level but are restricted inside services.
+- Example: `GET /builds/{id}/export` route itself has no role middleware, but service requires assigned `ENV_OPERATOR` and finalized state.
+
+### 5.4 Setup-Restricted Phase
+
+Even valid authenticated users are blocked by `SetupGuard` until password/public key setup completes.
+
+---
+
+## 6. Build Lifecycle and State Machine
+
+### 6.1 Status Values
+
+- `CREATED`
+- `WORKLOAD_SUBMITTED`
+- `ENVIRONMENT_STAGED`
+- `AUDITOR_KEYS_REGISTERED`
+- `CONTRACT_ASSEMBLED`
+- `FINALIZED`
+- `CONTRACT_DOWNLOADED`
+- `CANCELLED`
+
+### 6.2 Transition Rules
+
+Normal forward transitions:
+
+- `CREATED -> WORKLOAD_SUBMITTED`
+- `WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED`
+- `ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED`
+- `AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED`
+- `CONTRACT_ASSEMBLED -> FINALIZED`
+- `FINALIZED -> CONTRACT_DOWNLOADED`
+
+Cancellation:
+
+- `-> CANCELLED` allowed from any non-terminal, non-cancelled state.
+
+Terminal states:
+
+- `FINALIZED`
+- `CONTRACT_DOWNLOADED`
+- `CANCELLED`
+
+### 6.3 Role Required per Transition
+
+- `WORKLOAD_SUBMITTED`: `SOLUTION_PROVIDER`
+- `ENVIRONMENT_STAGED`: `DATA_OWNER`
+- `AUDITOR_KEYS_REGISTERED`: `AUDITOR`
+- `CONTRACT_ASSEMBLED`: `AUDITOR`
+- `FINALIZED`: `AUDITOR`
+- `CONTRACT_DOWNLOADED`: `ENV_OPERATOR` (via acknowledge-download flow)
+
+### 6.4 Important Transition Constraints
+
+- `PATCH /builds/{id}/status` **cannot** set `CONTRACT_DOWNLOADED`.
+- `CONTRACT_DOWNLOADED` is set only by `POST /builds/{id}/acknowledge-download`.
+- Download acknowledgement is one-time; repeated export/userdata/acknowledge requests are blocked.
+
+### 6.5 Audit Event Types
+
+- `BUILD_CREATED`
+- `WORKLOAD_SUBMITTED`
+- `ENVIRONMENT_STAGED`
+- `AUDITOR_KEYS_REGISTERED`
+- `CONTRACT_ASSEMBLED`
+- `BUILD_FINALIZED`
+- `CONTRACT_DOWNLOADED`
+- `BUILD_CANCELLED`
+- `ROLE_ASSIGNED`
+- `USER_CREATED`
+- `TOKEN_CREATED`
+- `TOKEN_REVOKED`
+
+### 6.6 Signature Expectations in Verification
+
+Audit verification expects signatures for:
+
+- `WORKLOAD_SUBMITTED`
+- `ENVIRONMENT_STAGED`
+- `AUDITOR_KEYS_REGISTERED`
+- `CONTRACT_ASSEMBLED`
+- `BUILD_FINALIZED`
+- `CONTRACT_DOWNLOADED`
+
+---
+
+## 7. Endpoint Reference
+
+All paths below are relative to backend root.
+
+### 7.1 Public / Documentation
+
+#### GET /health
+
+- Auth: none
+- Response `200`:
+
+```json
+{"status":"ok"}
+```
+
+#### GET /openapi.json
+
+- Auth: none
+- Response `200`: embedded OpenAPI JSON (static in code).
+
+#### GET /swagger and GET /swagger/
+
+- Auth: none
+- Response `200`: Swagger UI HTML.
+
+---
+
+### 7.2 Authentication
 
 #### POST /auth/login
 
-Authenticate and receive bearer token.
+- Auth: none
+- Rate limits: global + auth-specific
+- Request:
 
-**Auth:** Not required
-
-**Request:**
 ```json
 {
   "email": "user@example.com",
@@ -218,858 +417,912 @@ Authenticate and receive bearer token.
 }
 ```
 
-**Response (200):**
+- Response `200`:
+
 ```json
 {
-  "token": "eyJhbGc...",
-  "expires_at": "2026-04-09T09:13:52Z",
+  "token": "<opaque-token>",
+  "expires_at": "2026-04-11T12:00:00Z",
   "requires_setup": false,
   "setup_pending": [],
   "user": {
     "id": "uuid",
     "name": "Jane Doe",
     "email": "user@example.com",
-    "roles": [{"role_id": "uuid", "role_name": "SOLUTION_PROVIDER"}],
+    "roles": ["SOLUTION_PROVIDER"],
+    "is_active": true,
+    "created_at": "2026-04-01T10:00:00Z",
     "has_public_key": true,
-    "public_key_expired": false
+    "public_key_expired": false,
+    "public_key_fingerprint": "hex-or-null",
+    "public_key_expires_at": "2026-07-01T10:00:00Z",
+    "must_change_password": false,
+    "password_changed_at": "2026-04-01T10:30:00Z"
   }
 }
 ```
 
-**Errors:** `401` Invalid credentials, `423` Account locked
+- Error `401` (invalid credentials):
 
----
+```json
+{
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Invalid email or password."
+  }
+}
+```
 
 #### POST /auth/logout
 
-Revoke current token.
-
-**Auth:** Required | **Role:** Any
-
-**Response:** `204 No Content`
+- Auth: required
+- Signature headers: exempt
+- Response: `204 No Content`
 
 ---
 
-### 5.3 User Management
+### 7.3 Roles
 
-#### POST /users
+#### GET /roles
 
-Create new user.
+- Auth: required
+- Setup must be complete
+- Response `200`:
 
-**Auth:** Required | **Role:** ADMIN
-
-**Request:**
 ```json
 {
-  "name": "John Smith",
-  "email": "john@example.com",
-  "password": "initial-password",
-  "roles": ["role-uuid"]
+  "roles": [
+    {
+      "id": "uuid",
+      "name": "SOLUTION_PROVIDER",
+      "description": "Provides workload definition and HPCR encryption certificate",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
 }
 ```
 
-**Response (201):** Created user object
-
-**Errors:** `409` Email exists, `400` Invalid role
-
 ---
+
+### 7.4 User Management
 
 #### GET /users
 
-List all users.
+- Auth: required
+- Role: `ADMIN`
+- Response `200`:
 
-**Auth:** Required | **Role:** ADMIN
-
-**Query:** `?page=1&per_page=20&role=ADMIN&is_active=true`
-
-**Response (200):**
 ```json
 {
-  "users": [{
-    "id": "uuid",
-    "name": "Jane Doe",
-    "email": "user@example.com",
-    "roles": [{"role_id": "uuid", "role_name": "SOLUTION_PROVIDER"}],
-    "has_public_key": true,
-    "public_key_fingerprint": "sha256-hex",
-    "is_active": true
-  }],
-  "pagination": {"page": 1, "per_page": 20, "total": 5}
+  "users": [
+    {
+      "id": "uuid",
+      "name": "Alice",
+      "email": "alice@example.com",
+      "roles": ["AUDITOR"],
+      "is_active": true,
+      "created_at": "2026-04-10T08:00:00Z",
+      "must_change_password": false,
+      "public_key_fingerprint": "...",
+      "public_key_expires_at": "2026-07-10T08:00:00Z"
+    }
+  ]
 }
 ```
 
----
+#### POST /users
+
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Request:
+
+```json
+{
+  "name": "New User",
+  "email": "new.user@example.com",
+  "password": "StrongPass123!",
+  "roles": ["DATA_OWNER"]
+}
+```
+
+- Response `201`: created user summary
+- Common errors:
+  - `400 INVALID_REQUEST`
+  - `409 DUPLICATE_EMAIL`
 
 #### PATCH /users/{id}
 
-Update user profile details (name and email).
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Request:
 
-**Auth:** Required | **Role:** ADMIN
-
-**Request:**
 ```json
 {
-  "name": "Jane Doe Updated",
-  "email": "jane_updated@example.com"
+  "name": "Updated Name",
+  "email": "updated@example.com"
 }
 ```
 
-**Response (200):** Updated user object
-
----
+- Response `200`: updated user summary
 
 #### PATCH /users/{id}/roles
 
-Update user roles.
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Request:
 
-**Auth:** Required | **Role:** ADMIN
-
-**Request:**
 ```json
 {
-  "role_ids": ["uuid1", "uuid2"]
+  "roles": ["AUDITOR", "VIEWER"]
 }
 ```
 
-**Response (200):** Updated user object
+- Response `200`: updated user summary
 
----
+#### DELETE /users/{id}
+
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Response `200`:
+
+```json
+{"message":"User deactivated successfully."}
+```
+
+#### PATCH /users/{id}/reactivate
+
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Response `200`:
+
+```json
+{"message":"User reactivated successfully."}
+```
+
+#### PATCH /users/{id}/reset-password
+
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Request:
+
+```json
+{"new_password":"NewStrongPass123!"}
+```
+
+- Response `200`:
+
+```json
+{"message":"Password reset successfully. User must change password on next login."}
+```
 
 #### PUT /users/{id}/public-key
 
-Register/update public key.
+- Auth: required
+- Access: owner or `ADMIN`
+- Signature headers: exempt
+- Request:
 
-**Auth:** Required | **Role:** ADMIN or own user
-
-**Request:**
 ```json
-{
-  "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
-}
+{"public_key":"-----BEGIN PUBLIC KEY-----..."}
 ```
 
-**Response (200):**
+- Response `200` includes fingerprint and setup state:
+
 ```json
 {
-  "public_key_fingerprint": "sha256-hex",
-  "registered_at": "2026-04-08T09:13:52Z",
-  "expires_at": "2026-07-07T09:13:52Z"
+  "fingerprint": "sha256-hex",
+  "message": "Public key registered successfully",
+  "created_at": "...",
+  "expires_at": "...",
+  "requires_setup": false,
+  "setup_pending": [],
+  "must_change_password": false
 }
 ```
-
-**⚠️ Warning:** Updating key invalidates prior signatures.
-
----
 
 #### GET /users/{id}/public-key
 
-Retrieve user's public key.
+- Auth: required
+- Access: owner or `ADMIN`
+- Response `200`:
 
-**Auth:** Required | **Role:** Any
-
-**Response (200):**
 ```json
 {
-  "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
-  "public_key_fingerprint": "sha256-hex",
-  "registered_at": "2026-04-08T09:13:52Z",
-  "expires_at": "2026-07-07T09:13:52Z",
-  "is_expired": false
+  "public_key": "-----BEGIN PUBLIC KEY-----...",
+  "fingerprint": "sha256-hex",
+  "created_at": "...",
+  "expires_at": "..."
 }
 ```
-
----
 
 #### PATCH /users/{id}/password
 
-Change password.
+- Auth: required
+- Access: owner or `ADMIN`
+- Signature headers: exempt
+- Request:
 
-**Auth:** Required | **Role:** ADMIN or own user
-
-**Request (Own User):**
 ```json
-{
-  "current_password": "old",
-  "new_password": "new"
-}
+{"new_password":"NewStrongPass123!"}
 ```
 
-**Request (Admin Reset):**
+- Response `200`:
+
 ```json
 {
-  "new_password": "new"
+  "message": "Password changed successfully",
+  "requires_setup": false,
+  "setup_pending": [],
+  "must_change_password": false
 }
 ```
-
-**Response:** `204 No Content`
-
----
 
 #### GET /users/{id}/tokens
 
-List API tokens.
+- Auth: required
+- Access: owner or `ADMIN`
+- Response `200`:
 
-**Auth:** Required | **Role:** ADMIN or own user
-
-**Response (200):**
 ```json
 {
-  "tokens": [{
-    "id": "uuid",
-    "name": "ci-pipeline",
-    "expires_at": "2026-07-10T09:00:00Z",
-    "last_used_at": "2026-02-20T14:30:00Z",
-    "revoked_at": null
-  }]
+  "tokens": [
+    {
+      "id": "uuid",
+      "name": "login-20260411-120000",
+      "last_used_at": "...",
+      "revoked_at": null,
+      "created_at": "..."
+    }
+  ]
 }
 ```
-
----
 
 #### POST /users/{id}/tokens
 
-Create API token.
+- Auth: required
+- Access: owner or `ADMIN`
+- Signature headers: required
+- Request:
 
-**Auth:** Required | **Role:** ADMIN or own user
-
-**Request:**
 ```json
-{
-  "name": "ci-pipeline",
-  "expires_in": "720h"
-}
+{"name":"automation-token"}
 ```
 
-**Response (201):**
+- Response `201`:
+
 ```json
 {
   "id": "uuid",
-  "name": "ci-pipeline",
-  "token": "raw-token-shown-once",
-  "expires_at": "2026-05-05T10:00:00Z"
+  "name": "automation-token",
+  "token": "<raw-token-shown-once>"
 }
 ```
-
-**⚠️ Warning:** Token shown only once. Backend stores SHA256 hash.
-
----
 
 #### DELETE /users/{id}/tokens/{token_id}
 
-Revoke API token.
+- Auth: required
+- Access: owner or `ADMIN`
+- Signature headers: required
+- Response: `204 No Content`
 
-**Auth:** Required | **Role:** ADMIN or own user
+#### GET /users/{id}/assignments
 
-**Response:** `204 No Content`
+- Auth: required
+- Route-level role guard: none
+- Current behavior: returns assignments for provided `{id}` to any authenticated caller.
+- Response `200`: array of assignment rows:
+
+```json
+[
+  {
+    "id": "uuid",
+    "build_id": "uuid",
+    "role_id": "uuid",
+    "user_id": "uuid",
+    "assigned_by": "uuid",
+    "assigned_at": "...",
+    "role_name": "AUDITOR",
+    "build_name": "Build A",
+    "build_status": "ENVIRONMENT_STAGED"
+  }
+]
+```
 
 ---
 
-### 5.4 Builds
+### 7.5 System Logs
 
-#### POST /builds
+#### GET /system-logs
 
-Create build.
+- Auth: required
+- Roles: `ADMIN` or `AUDITOR`
+- Query params:
+  - `limit` (default `100`)
+  - `offset` (default `0`)
+- Response `200`: array of logs
 
-**Auth:** Required | **Role:** ADMIN
-
-**Request:**
 ```json
-{
-  "name": "production-v2.1"
-}
+[
+  {
+    "id": "uuid",
+    "timestamp": "...",
+    "actor_email": "user@example.com",
+    "action": "USER_LOGIN",
+    "resource": "Authentication System",
+    "ip_address": "127.0.0.1",
+    "status": "SUCCESS",
+    "details": "User logged in successfully"
+  }
+]
 ```
-
-**Response (201):**
-```json
-{
-  "id": "build-uuid",
-  "name": "production-v2.1",
-  "status": "CREATED",
-  "created_by": "admin-uuid",
-  "is_immutable": false
-}
-```
-
-Assignment creation is handled via `POST /builds/{id}/assignments`.
 
 ---
+
+### 7.6 Builds
 
 #### GET /builds
 
-List builds.
+- Auth: required
+- Query params:
+  - `limit` default `50`, max `100`
+  - `offset` default `0`
+  - `status` optional exact status filter
+- Response `200`:
 
-**Auth:** Required | **Role:** Any
-
-**Query:** `?status=CREATED&limit=50&offset=0`
-
-**Response (200):**
 ```json
 {
-  "builds": [{
-    "id": "uuid",
-    "name": "production-v2.1",
-    "status": "CREATED",
-    "created_at": "2026-04-08T09:13:52Z",
-    "is_immutable": false
-  }],
+  "builds": [
+    {
+      "id": "uuid",
+      "name": "Build A",
+      "status": "CREATED",
+      "created_by": "uuid",
+      "created_at": "...",
+      "finalized_at": null,
+      "contract_hash": null,
+      "is_immutable": false
+    }
+  ],
   "limit": 50,
   "offset": 0
 }
 ```
 
----
+#### POST /builds
+
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Request:
+
+```json
+{"name":"Build A"}
+```
+
+- Response `201`: build object
 
 #### GET /builds/{id}
 
-Get build details.
+- Auth: required
+- Response `200`: build object
 
-**Auth:** Required | **Role:** Any
+#### PATCH /builds/{id}/status
 
-**Response (200):** Full build object with assignments and sections
+- Auth: required
+- Signature headers: required
+- Transition role validation is applied in service.
+- Request:
 
----
+```json
+{"status":"WORKLOAD_SUBMITTED"}
+```
+
+- Response `200`:
+
+```json
+{"status":"WORKLOAD_SUBMITTED"}
+```
+
+- Notes:
+  - Rejects invalid sequence (`422 INVALID_STATE_TRANSITION`)
+  - Rejects `CONTRACT_DOWNLOADED` target (`400 INVALID_REQUEST`)
+
+#### POST /builds/{id}/attestation
+
+- Auth: required
+- Role: `AUDITOR`
+- Signature headers: required
+- Purpose: transition to `AUDITOR_KEYS_REGISTERED`.
+- Idempotent success when already at/after that stage.
+
+Possible response when already progressed:
+
+```json
+{
+  "status": "FINALIZED",
+  "already_registered": true
+}
+```
+
+Standard response:
+
+```json
+{"status":"AUDITOR_KEYS_REGISTERED"}
+```
+
+#### POST /builds/{id}/finalize
+
+- Auth: required
+- Role: `AUDITOR`
+- Signature headers: required (middleware level)
+- Request body:
+
+```json
+{
+  "contract_hash": "sha256-hex",
+  "contract_yaml": "...",
+  "signature": "base64-signature",
+  "public_key": "PEM"
+}
+```
+
+- Response `200`:
+
+```json
+{"status":"FINALIZED"}
+```
 
 #### POST /builds/{id}/cancel
 
-Cancel build (pre-finalization only).
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Response `200`:
 
-**Auth:** Required | **Role:** ADMIN
+```json
+{"status":"CANCELLED"}
+```
 
-**Response:** `200 OK`
+---
+
+### 7.7 Build Sections
+
+#### GET /builds/{id}/sections
+
+- Auth: required
+- Response `200`:
 
 ```json
 {
-  "status": "CANCELLED"
+  "sections": [
+    {
+      "id": "uuid",
+      "build_id": "uuid",
+      "persona_role": "SOLUTION_PROVIDER",
+      "role_id": "uuid",
+      "submitted_by": "uuid",
+      "encrypted_payload": "...",
+      "wrapped_symmetric_key": null,
+      "section_hash": "sha256-hex",
+      "signature": "base64-signature",
+      "submitted_at": "..."
+    }
+  ]
 }
 ```
-
-**Error:** `400` Build is finalized (immutable)
-
----
-
-### 5.5 Build Assignments
-
-#### GET /builds/{id}/assignments
-
-Get build assignments.
-
-**Auth:** Required | **Role:** Any
-
-**Response (200):** Array of assignment rows.
-
-```json
-[
-  {
-    "role_id": "role-uuid",
-    "role_name": "AUDITOR",
-    "user_id": "user-uuid",
-    "user_name": "Charlie",
-    "user_email": "charlie@example.com",
-    "assigned_at": "2026-04-08T09:13:52Z"
-  }
-]
-```
-
-**Use Case:** Data Owner resolves assigned Auditor `user_id`, then retrieves the key via `GET /users/{id}/public-key`.
-
----
-
-#### POST /builds/{id}/assignments
-
-Create assignment for a build.
-
-**Auth:** Required | **Role:** ADMIN
-
-**Request:**
-```json
-{
-  "role_id": "role-uuid",
-  "user_id": "user-uuid"
-}
-```
-
-**Response (201):** Created assignment row.
-
----
-
-### 5.6 Section Submissions
 
 #### POST /builds/{id}/sections
 
-Submit role-specific section payload.
+- Auth: required
+- Signature headers: required
+- Uses large body parser (up to 50MB).
+- Request:
 
-**Auth:** Required | **Role:** Assigned role for the build  
-**Build Status:** Depends on role (`SOLUTION_PROVIDER` -> `CREATED`, `DATA_OWNER` -> `WORKLOAD_SUBMITTED`, `AUDITOR` -> `ENVIRONMENT_STAGED`)
-
-**Request:**
 ```json
 {
-  "role_id": "role-uuid",
-  "encrypted_payload": "base64-encrypted-section",
-  "encrypted_symmetric_key": "base64-RSA-OAEP-wrapped-key",
+  "role_id": "uuid",
+  "persona_role": "DATA_OWNER",
+  "encrypted_payload": "...",
+  "encrypted_symmetric_key": "...",
   "section_hash": "sha256-hex",
   "signature": "base64-signature"
 }
 ```
 
-**Notes:**
-- `encrypted_symmetric_key` is required for `DATA_OWNER` submissions.
-- `persona_role` is still accepted as backward-compatible fallback when `role_id` is absent.
+Rules:
 
-**Response (201):** Created section row.
+- Either `role_id` or `persona_role` is required.
+- Submission allowed only for assigned user and matching global role.
+- Allowed build state by role:
+  - `SOLUTION_PROVIDER`: `CREATED`
+  - `DATA_OWNER`: `WORKLOAD_SUBMITTED`
+  - `AUDITOR`: `ENVIRONMENT_STAGED`
+- `DATA_OWNER` requires `encrypted_symmetric_key`.
+- One section per persona role per build.
+- Successful submit auto-transitions build status for that role.
 
----
-
-#### POST /builds/{id}/attestation
-
-Register attestation keys (Auditor).
-
-**Auth:** Required | **Role:** AUDITOR (assigned)  
-**Build Status:** ENVIRONMENT_STAGED
-
-**Request:** Empty body
-
-**Response (200):**
-```json
-{
-  "status": "AUDITOR_KEYS_REGISTERED",
-  "already_registered": false
-}
-```
-
-**Note:** State transition only. Keys generated locally. Endpoint is idempotent when already registered/progressed.
+- Response `201`: created section
 
 ---
 
-#### POST /builds/{id}/finalize
+### 7.8 Build Assignments
 
-Finalize contract (Auditor).
+#### GET /builds/{id}/assignments
 
-**Auth:** Required | **Role:** AUDITOR (assigned)  
-**Build Status:** `CONTRACT_ASSEMBLED` (frontend transitions via `PATCH /builds/{id}/status`)
+- Auth: required
+- Response `200`: array
 
-**Request:**
+```json
+[
+  {
+    "id": "uuid",
+    "build_id": "uuid",
+    "role_id": "uuid",
+    "user_id": "uuid",
+    "assigned_by": "uuid",
+    "assigned_at": "...",
+    "role_name": "ENV_OPERATOR",
+    "user_name": "Operator User",
+    "user_email": "operator@example.com"
+  }
+]
+```
+
+#### POST /builds/{id}/assignments
+
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Request:
+
 ```json
 {
-  "contract_yaml": "final-contract-yaml-string",
-  "contract_hash": "sha256-hex",
-  "signature": "base64-signature",
-  "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
+  "role_id": "uuid",
+  "role_name": "ENV_OPERATOR",
+  "user_id": "uuid"
 }
 ```
 
-**Response (200):**
-```json
-{
-  "status": "FINALIZED"
-}
-```
+Notes:
+
+- `role_id` or `role_name` required.
+- Build must not be terminal.
+- One assignment per role per build (DB uniqueness on `build_id, role_id`).
+
+- Response `201`: assignment object
+
+#### DELETE /builds/{id}/assignments
+
+- Auth: required
+- Role: `ADMIN`
+- Signature headers: required
+- Response: `204 No Content`
 
 ---
 
-#### GET /builds/{id}/sections
+### 7.9 Audit Trail & Verification
 
-Get all sections.
+#### GET /builds/{id}/audit
+#### GET /builds/{id}/audit-trail
 
-**Auth:** Required | **Role:** Any
+Both endpoints return identical payloads.
 
-**Response (200):**
+- Auth: required
+- Response `200`:
+
 ```json
 {
-  "sections": [
+  "audit_events": [
     {
-      "persona_role": "SOLUTION_PROVIDER",
-      "encrypted_payload": "base64-encrypted-workload",
-      "section_hash": "sha256-hex"
-    },
-    {
-      "persona_role": "DATA_OWNER",
-      "encrypted_payload": "base64-AES-encrypted-env",
-      "wrapped_symmetric_key": "base64-RSA-OAEP-wrapped-key",
-      "section_hash": "sha256-hex"
+      "id": "uuid",
+      "build_id": "uuid",
+      "sequence_no": 1,
+      "event_type": "BUILD_CREATED",
+      "actor_user_id": "uuid",
+      "actor_name": "System Admin",
+      "actor_public_key": null,
+      "actor_key_fingerprint": null,
+      "ip_address": "127.0.0.1",
+      "device_metadata": {},
+      "event_data": {"build_name":"Build A"},
+      "previous_event_hash": "...",
+      "event_hash": "...",
+      "signature": null,
+      "created_at": "..."
     }
   ]
 }
 ```
-
-`wrapped_symmetric_key` is the persisted/response field name for submitted `encrypted_symmetric_key`.
-
----
-
-### 5.7 Audit & Verification
-
-#### GET /builds/{id}/audit
-
-Get audit trail.
-
-**Auth:** Required | **Role:** Any
-
-**Response (200):**
-```json
-{
-  "audit_events": [{
-    "sequence_no": 0,
-    "event_type": "BUILD_CREATED",
-    "actor_user_name": "Admin",
-    "actor_key_fingerprint": "sha256-hex",
-    "event_data": {},
-    "previous_event_hash": "genesis-hash",
-    "event_hash": "sha256-hex",
-    "signature": "base64-signature",
-    "created_at": "2026-04-08T09:13:52Z"
-  }]
-}
-```
-
----
 
 #### GET /builds/{id}/verify
 
-Verify audit chain integrity.
+- Auth: required
+- Response `200`:
 
-**Auth:** Required | **Role:** Any
-
-**Response (200 - Valid):**
 ```json
 {
   "is_valid": true,
-  "total_events": 5,
-  "verified_events": 5,
+  "total_events": 6,
+  "verified_events": 6,
+  "failed_events": [],
+  "genesis_hash": "...",
   "chain_intact": true,
-  "genesis_hash": "sha256-hex",
-  "signatures_valid": true,
-  "failed_events": []
+  "signatures_valid": true
 }
 ```
-
-**Response (200 - Invalid):**
-```json
-{
-  "is_valid": false,
-  "chain_intact": false,
-  "signatures_valid": false,
-  "failed_events": [
-    {
-      "sequence_no": 3,
-      "failure_type": "hash_mismatch",
-      "details": "computed hash does not match stored hash"
-    }
-  ]
-}
-```
-
----
 
 #### GET /builds/{id}/verify-contract
 
-Verify finalized contract integrity.
+- Auth: required
+- Response `200`:
 
-**Auth:** Required | **Role:** Any
-
-**Response (200):**
 ```json
 {
   "build_id": "uuid",
   "is_valid": true,
   "is_finalized": true,
   "is_immutable": true,
-  "contract_hash": "sha256-hex",
-  "computed_hash": "sha256-hex",
+  "contract_hash": "...",
+  "computed_hash": "...",
   "hash_matches": true,
   "signature_valid": true,
   "details": "contract integrity verified"
 }
 ```
 
+Note:
+
+- `is_finalized` is true for both `FINALIZED` and `CONTRACT_DOWNLOADED`.
+
 ---
 
-### 5.8 Export & Download
+### 7.10 Export & Download Acknowledgment
 
 #### GET /builds/{id}/export
 
-Export finalized contract.
+- Auth: required
+- Effective authorization (service): assigned `ENV_OPERATOR` only
+- Build must be `FINALIZED`
+- Not allowed after download acknowledgment
+- Response `200`:
 
-**Auth:** Required | **Role:** ENV_OPERATOR (assigned)  
-**Build Status:** FINALIZED
-
-**Response (200):**
 ```json
 {
+  "contract_yaml": "...",
+  "contract_hash": "...",
   "build_id": "uuid",
-  "contract_yaml": "raw-yaml-or-legacy-base64",
-  "contract_hash": "sha256-hex",
-  "finalized_at": "2026-04-08T09:30:00Z"
+  "build_name": "Build A",
+  "finalized_at": "2026-04-11T12:34:56+05:30"
 }
 ```
-
----
 
 #### GET /builds/{id}/userdata
 
-Download for HPCR deployment.
+- Auth: required
+- Effective authorization (service): assigned `ENV_OPERATOR` only
+- Build must be `FINALIZED`
+- Not allowed after download acknowledgment
+- Response `200`:
 
-**Auth:** Required | **Role:** ENV_OPERATOR (assigned)  
-**Build Status:** FINALIZED
-
-**Response (200):**
 ```json
 {
-  "build_id": "uuid",
-  "contract_yaml": "raw-yaml",
-  "contract_hash": "sha256-hex"
+  "contract_yaml": "raw-yaml-or-decoded-from-base64",
+  "contract_hash": "...",
+  "build_id": "uuid"
 }
 ```
-
----
 
 #### POST /builds/{id}/acknowledge-download
 
-Acknowledge download (Env Operator).
+- Auth: required
+- Signature headers: required (request-level)
+- Effective authorization: assigned `ENV_OPERATOR` only
+- Build must be `FINALIZED`
+- One-time operation
 
-**Auth:** Required | **Role:** ENV_OPERATOR (assigned)  
-**Build Status:** FINALIZED
+Request:
 
-**Request:**
 ```json
 {
   "contract_hash": "sha256-hex",
-  "signature": "base64-signature"
+  "signature": "base64-rsa-pss-signature-of-contract-hash"
 }
 ```
 
-**Response:** `204 No Content`
+Verification performed:
 
-**Purpose:** Cryptographic proof-of-receipt in audit chain.
+1. Build contract hash matches request hash.
+2. Caller is assigned `ENV_OPERATOR`.
+3. Caller has registered public key.
+4. Signature verifies against caller public key.
+
+Success response:
+
+- `204 No Content`
+
+On success, backend also:
+
+- logs `CONTRACT_DOWNLOADED` audit event
+- transitions build status to `CONTRACT_DOWNLOADED`
 
 ---
 
-### 5.9 Credential Rotation
+### 7.11 Credential Rotation
+
+All rotation endpoints require `ADMIN` and request signature headers.
 
 #### GET /rotation/expired
 
-Get expired credentials (Admin).
+- Response `200`:
 
-**Auth:** Required | **Role:** ADMIN
-
-**Response (200):**
 ```json
 {
-  "expired_passwords": [{
-    "user_id": "uuid",
-    "user_name": "John Doe",
-    "days_expired": 30
-  }],
-  "expired_keys": [{
-    "user_id": "uuid",
-    "user_name": "Jane Smith",
-    "days_expired": 90
-  }]
+  "expired_passwords": [
+    {
+      "user_id": "uuid",
+      "user_name": "User A",
+      "user_email": "a@example.com",
+      "password_age": "2160h0m0s",
+      "last_changed": "...",
+      "must_change": true
+    }
+  ],
+  "expired_public_keys": [
+    {
+      "user_id": "uuid",
+      "user_name": "User B",
+      "user_email": "b@example.com",
+      "key_age": "2160h0m0s",
+      "registered_at": "...",
+      "expires_at": "...",
+      "days_overdue": 3
+    }
+  ],
+  "total_expired": 2,
+  "checked_at": "..."
 }
 ```
-
----
 
 #### POST /rotation/force-password-change/{user_id}
 
-Force password change (Admin).
+- Response `200`:
 
-**Auth:** Required | **Role:** ADMIN
-
-**Response:** `204 No Content`
-
----
+```json
+{"message":"Password change forced successfully"}
+```
 
 #### POST /rotation/revoke-key/{user_id}
 
-Revoke expired key (Admin).
+- Response `200`:
 
-**Auth:** Required | **Role:** ADMIN
-
-**Response:** `204 No Content`
-
----
-
-### 5.10 API Tokens
-
-See [User Management](#53-user-management) section for token endpoints:
-- `GET /users/{id}/tokens`
-- `POST /users/{id}/tokens`
-- `DELETE /users/{id}/tokens/{token_id}`
+```json
+{"message":"Public key revoked successfully"}
+```
 
 ---
 
-## 6. Error Handling
+## 8. Error Model
 
-### Standard Error Response
+### 8.1 Standard Error Envelope
+
+Most handler/service errors use:
 
 ```json
 {
   "error": {
-    "code": "INVALID_STATE_TRANSITION",
-    "message": "Build must be in CREATED state",
-    "details": {
-      "current_state": "WORKLOAD_SUBMITTED",
-      "required_state": "CREATED"
-    }
+    "code": "ERROR_CODE",
+    "message": "Human readable message",
+    "details": {}
   }
 }
 ```
 
-### HTTP Status Codes
+### 8.2 Common HTTP Statuses
 
-| Code | Meaning | Usage |
-|------|---------|-------|
-| `200` | OK | Successful GET/POST/PATCH |
-| `201` | Created | Successful resource creation |
-| `204` | No Content | Successful no-body operation |
-| `400` | Bad Request | Invalid input, validation error |
-| `401` | Unauthorized | Missing/invalid token |
-| `403` | Forbidden | Insufficient permissions |
-| `404` | Not Found | Resource doesn't exist |
-| `409` | Conflict | Resource conflict (e.g., email exists) |
-| `423` | Locked | Account deactivated |
-| `429` | Too Many Requests | Rate limit exceeded |
-| `500` | Internal Server Error | Server error |
+- `200 OK`
+- `201 Created`
+- `204 No Content`
+- `400 Bad Request`
+- `401 Unauthorized`
+- `403 Forbidden`
+- `404 Not Found`
+- `409 Conflict`
+- `422 Unprocessable Entity`
+- `429 Too Many Requests`
+- `500 Internal Server Error`
 
-### Error Codes
+### 8.3 Error Codes Used by Implementation
 
-| Code | Description |
-|------|-------------|
-| `ACCOUNT_SETUP_REQUIRED` | Must complete password change and key registration |
-| `INVALID_CREDENTIALS` | Email or password incorrect |
-| `INVALID_STATE_TRANSITION` | Build not in required state |
-| `NOT_ASSIGNED` | User not assigned to this build |
-| `INVALID_SIGNATURE` | Signature verification failed |
-| `INVALID_SIGNATURE_HEADERS` | Missing/invalid signature headers |
-| `KEY_EXPIRED` | Public key has expired |
-| `HASH_MISMATCH` | Computed hash doesn't match provided hash |
-| `BUILD_IMMUTABLE` | Cannot modify finalized build |
+Common codes surfaced by handlers/services/middleware:
 
----
+- `INVALID_REQUEST`
+- `INVALID_CREDENTIALS`
+- `UNAUTHORIZED`
+- `FORBIDDEN`
+- `NOT_FOUND`
+- `BUILD_NOT_FOUND`
+- `USER_NOT_FOUND`
+- `DUPLICATE_EMAIL`
+- `DUPLICATE_SECTION`
+- `INVALID_STATE_TRANSITION`
+- `BUILD_IMMUTABLE`
+- `HASH_MISMATCH`
+- `INVALID_SIGNATURE`
+- `INVALID_SIGNATURE_HEADERS`
+- `SIGNATURE_EXPIRED`
+- `SIGNATURE_KEY_MISSING`
+- `ACCOUNT_SETUP_REQUIRED`
+- `INTERNAL_ERROR`
 
-## 7. Security Considerations
+Note:
 
-### Transport Security
-
-- **TLS 1.3** mandatory via nginx reverse proxy
-- Backend never directly exposed to internet
-- Certificate pinning recommended for Electron app
-
-### Cryptographic Standards
-
-| Operation | Standard |
-|-----------|----------|
-| Asymmetric Keys | RSA-4096 |
-| Signing | RSA-PSS with SHA-256 |
-| Symmetric Encryption | AES-256-GCM |
-| Key Wrapping | RSA-OAEP with SHA-256 |
-| Hashing | SHA-256 |
-| Encoding | Base64 (standard, with padding) |
-| Canonical JSON | RFC 8785 |
-
-### Key Management
-
-- **Private keys**: Generated and stored locally (Electron secure storage)
-- **Public keys**: Registered with backend, expire after 90 days (configurable)
-- **Key rotation**: Enforced via expiry, warnings at 7 days before expiry
-- **Key fingerprint**: SHA256 of DER-encoded public key
-
-### Audit Chain Integrity
-
-- **Genesis hash**: `SHA256("IBM_CC:" + build_id)`
-- **Event hash**: `SHA256(canonical_json(event_data) + previous_event_hash)`
-- **Signatures**: Required for `BUILD_FINALIZED` and `CONTRACT_DOWNLOADED`; request-signature metadata may be captured for `BUILD_CREATED` and `ROLE_ASSIGNED`
-- **Verification**: Backend verifies signatures against registered public keys
-
-### Data Protection
-
-- **At rest**: Only encrypted payloads stored; disk encryption recommended
-- **In transit**: TLS 1.3 for all API communication
-- **In memory**: Sensitive data cleared after use
-- **Symmetric keys**: Wrapped with Auditor's RSA public key; backend never has access
+- Rate-limit middleware returns plain text (not `AppError` JSON).
 
 ---
 
-## 8. Rate Limiting
+## 9. Configuration (Environment Variables)
 
-### Default Limits
+Values loaded in `backend/internal/config/config.go`:
 
-| Endpoint Category | Limit | Window |
-|-------------------|-------|--------|
-| Authentication | 5 requests | 15 minutes |
-| User Management | 100 requests | 1 hour |
-| Build Operations | 50 requests | 1 hour |
-| Section Submissions | 10 requests | 1 hour |
-| Audit/Export | 200 requests | 1 hour |
-
-### Rate Limit Headers
-
-```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1712566432
-```
-
-### Rate Limit Exceeded Response
-
-```json
-{
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Too many requests",
-    "details": {
-      "retry_after": 3600
-    }
-  }
-}
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `SERVER_HOST` | `0.0.0.0` | bind host |
+| `SERVER_PORT` | `8080` | bind port |
+| `DATABASE_URL` | required | Postgres connection string |
+| `TOKEN_EXPIRY` | `24h` | bearer token TTL |
+| `BCRYPT_COST` | `12` | password hash cost |
+| `LOG_LEVEL` | `info` | logging level |
+| `LOG_FORMAT` | `json` | `json` or `text` |
+| `MAX_PAYLOAD_SIZE` | `52428800` | global max request body bytes |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,null` | CORS allow list |
+| `CORS_ALLOW_ALL` | `false` | allow wildcard CORS |
+| `TRUST_PROXY_HEADERS` | `false` | trust forwarded IP headers |
+| `REQUEST_TIMEOUT` | `30s` | per-request context timeout |
+| `ADMIN_EMAIL` | `admin@hpcr-builder.local` | seeded admin email if empty DB |
+| `ADMIN_PASSWORD` | `admin123` | seeded admin password fallback (development only) |
+| `ADMIN_NAME` | `System Admin` | seeded admin display name |
 
 ---
 
-## 9. Appendix
+## 10. Operational Notes
 
-### A. Build State Machine
+### 10.1 Swagger/OpenAPI Endpoint Scope
 
-```
-CREATED → WORKLOAD_SUBMITTED → ENVIRONMENT_STAGED →
-AUDITOR_KEYS_REGISTERED → CONTRACT_ASSEMBLED → FINALIZED
+`/openapi.json` is currently a static embedded document. It is useful for exploration but may lag behind implementation details. This file (`4-api-documentation.md`) is the detailed implementation-aligned reference.
 
-Any pre-FINALIZED state → CANCELLED (Admin only)
-```
+### 10.2 Contract Download Finalization Semantics
 
-### B. Persona Workflow Summary
+`CONTRACT_DOWNLOADED` indicates verified receipt and is terminal.
 
-| Persona | Action | Endpoint | Cryptographic Operation |
-|---------|--------|----------|------------------------|
-| Admin | Create build | `POST /builds` | Sign mutating request (`X-Signature*`) |
-| Admin | Assign role | `POST /builds/{id}/assignments` | Sign mutating request (`X-Signature*`) |
-| Solution Provider | Submit workload | `POST /builds/{id}/sections` | Encrypt workload, provide section hash/signature |
-| Data Owner | Submit environment | `POST /builds/{id}/sections` | Encrypt with AES, wrap key with Auditor's RSA key, provide section hash/signature |
-| Auditor | Confirm attestation step | `POST /builds/{id}/attestation` | Local key generation (not uploaded) |
-| Auditor | Finalize contract | `PATCH /builds/{id}/status` + `POST /builds/{id}/finalize` | Assemble contract, sign contract hash |
-| Env Operator | Download contract | `GET /builds/{id}/userdata` | Verify hash |
-| Env Operator | Acknowledge | `POST /builds/{id}/acknowledge-download` | Sign contract hash |
+Effects:
 
-### C. Environment Variables
+- export/userdata/acknowledge endpoints reject further download actions
+- build remains immutable
+- audit chain includes `CONTRACT_DOWNLOADED` signed event
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | Backend server port |
-| `DATABASE_URL` | - | PostgreSQL connection string |
-| `BCRYPT_COST` | `12` | Password hash work factor |
-| `PASSWORD_ROTATION_DAYS` | `90` | Password expiry interval |
-| `PUBLIC_KEY_EXPIRY_DAYS` | `90` | Public key expiry interval |
-| `TOKEN_EXPIRY_HOURS` | `24` | Bearer token expiry |
-| `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
+### 10.3 Audit Verification Summary
 
-### D. Useful Links
+`GET /builds/{id}/verify` validates:
 
-- [High-Level Design](./1-high-level-design.md)
-- [Low-Level Design](./2-low-level-design.md)
-- [Desktop App Design](./3-desktop-app-design.md)
+1. genesis hash linkage
+2. previous hash continuity
+3. per-event event hash recomputation
+4. required signatures per event type
 
----
+`GET /builds/{id}/verify-contract` validates:
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-04-08  
-**Maintained By:** IBM Confidential Computing Team
+1. build finalized/downloaded state
+2. hash of stored contract content
+3. signature in `BUILD_FINALIZED` event
+
+### 10.4 Known Access-Behavior Detail
+
+`GET /users/{id}/assignments` is currently authenticated-only and not owner-restricted at route/service level.
+

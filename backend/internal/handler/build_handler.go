@@ -128,7 +128,14 @@ func (h *BuildHandler) ListBuilds(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	builds, err := h.buildService.ListBuilds(r.Context(), limit, offset, status)
+	actorID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		writeError(w, model.ErrUnauthorized())
+		return
+	}
+	roles := middleware.GetUserRoles(r.Context())
+
+	builds, err := h.buildService.ListBuildsForUser(r.Context(), actorID, roles, limit, offset, status)
 	if err != nil {
 		writeError(w, model.ErrInternal("Failed to list builds."))
 		return
