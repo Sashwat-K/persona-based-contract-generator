@@ -8,7 +8,7 @@
 | Repository | persona-based-contract-generator |
 | Area | Electron desktop application (`app/`) |
 | Audience | Engineering, Security, Product, QA |
-| Last Updated | 2026-04-11 |
+| Last Updated | 2026-04-12 |
 | Source of Truth | Current implementation in `app/main`, `app/src`, and `app/electron-builder.json` |
 
 ---
@@ -390,7 +390,8 @@ Downloaded and cancelled builds are treated as terminal/completed in list and ho
 - active and completed tables split by terminal status
 - pagination on both tables
 - admin-only create build modal with mandatory role assignment
-- excludes `ADMIN` users from persona assignment dropdowns
+- assignment dropdowns are role-driven (users appear when they hold the target workflow role)
+- multi-role users can be assigned to multiple workflow personas in the same build
 - readiness filtering for assignees (active + setup complete + key registered)
 
 ## 11.2 Assignments Tab
@@ -738,4 +739,3 @@ These are code-observed opportunities, not implemented guarantees:
 - Build lifecycle views/components: `app/src/views/BuildManagement.jsx`, `app/src/views/BuildDetails.jsx`, `app/src/components/SectionSubmit.jsx`, `app/src/components/AuditorSection.jsx`, `app/src/components/FinaliseContract.jsx`, `app/src/components/ContractExport.jsx`, `app/src/components/AuditViewer.jsx`
 - API client/signing: `app/src/services/apiClient.js`, `app/src/services/signatureMiddleware.js`
 - Build/package config: `app/package.json`, `app/electron-builder.json`, `app/BUILD.md`
-

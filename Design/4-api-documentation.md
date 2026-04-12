@@ -1,7 +1,7 @@
 # IBM Confidential Computing Contract Generator - API Documentation
 
-> **Version:** 1.1 (implementation-aligned)  
-> **Date:** 2026-04-11  
+> **Version:** 1.2 (implementation-aligned)  
+> **Date:** 2026-04-12  
 > **Status:** Production backend reference  
 > **Source of Truth:** `backend/cmd/server/main.go` and `backend/internal/*`
 
@@ -276,21 +276,28 @@ System roles:
 - `ADMIN`
 - `VIEWER`
 
-### 5.2 Two-Layer Access for Build Work
+### 5.2 Build Access and Stage Authorization
 
-For stage operations, the backend enforces:
+For build-related operations, the backend enforces two layers:
 
-1. User must have the required global role.
-2. User must be explicitly assigned on that build/role.
+1. **Build visibility/access middleware (`RequireBuildAccess`)** on `/builds/{id}/...`:
+   - `ADMIN` can access any build.
+   - Non-admin users must be assigned to that build.
+2. **Stage/service authorization**:
+   - User must hold required global role.
+   - User must be explicitly assigned to that build role.
 
-This is enforced in services for section submission and export/download flows.
+Stage/service checks are enforced in section submission, state transitions, and export/download flows.
 
 ### 5.3 Endpoint-Level vs Service-Level Guards
 
 Important implementation detail:
 
-- Some routes are not role-guarded at router level but are restricted inside services.
-- Example: `GET /builds/{id}/export` route itself has no role middleware, but service requires assigned `ENV_OPERATOR` and finalized state.
+- Some routes are not role-guarded at router level but are restricted in services.
+- Example: `GET /builds/{id}/export` has no role middleware, but service requires assigned `ENV_OPERATOR` and `FINALIZED` state.
+- `GET /builds` is not role-gated but behavior differs:
+  - `ADMIN`: global paginated build list.
+  - non-admin: assignment-filtered build list.
 
 ### 5.4 Setup-Restricted Phase
 
@@ -331,6 +338,11 @@ Terminal states:
 - `FINALIZED`
 - `CONTRACT_DOWNLOADED`
 - `CANCELLED`
+
+Note:
+
+- `FINALIZED` is immutable for normal workflow mutations.
+- The only allowed post-finalization progression is `POST /builds/{id}/acknowledge-download` (`FINALIZED -> CONTRACT_DOWNLOADED`).
 
 ### 6.3 Role Required per Transition
 
@@ -715,8 +727,7 @@ All paths below are relative to backend root.
 #### GET /users/{id}/assignments
 
 - Auth: required
-- Route-level role guard: none
-- Current behavior: returns assignments for provided `{id}` to any authenticated caller.
+- Access: owner or `ADMIN` (`RequireOwnerOrAdmin`)
 - Response `200`: array of assignment rows:
 
 ```json
@@ -770,6 +781,9 @@ All paths below are relative to backend root.
 #### GET /builds
 
 - Auth: required
+- Access behavior:
+  - `ADMIN`: full paginated list.
+  - Non-admin: only builds where caller is assigned.
 - Query params:
   - `limit` default `50`, max `100`
   - `offset` default `0`
@@ -811,7 +825,10 @@ All paths below are relative to backend root.
 #### GET /builds/{id}
 
 - Auth: required
+- Access: `ADMIN` or assigned user (`RequireBuildAccess`)
 - Response `200`: build object
+
+All `/builds/{id}/...` endpoints below inherit the same `RequireBuildAccess` middleware.
 
 #### PATCH /builds/{id}/status
 
@@ -957,6 +974,7 @@ Rules:
 #### GET /builds/{id}/assignments
 
 - Auth: required
+- Access: `ADMIN` or assigned user (`RequireBuildAccess`)
 - Response `200`: array
 
 ```json
@@ -995,6 +1013,8 @@ Notes:
 - `role_id` or `role_name` required.
 - Build must not be terminal.
 - One assignment per role per build (DB uniqueness on `build_id, role_id`).
+- Assignable roles are limited to workflow roles: `SOLUTION_PROVIDER`, `DATA_OWNER`, `AUDITOR`, `ENV_OPERATOR`.
+- Assignee must already hold the target role globally.
 
 - Response `201`: assignment object
 
@@ -1269,7 +1289,7 @@ Note:
 
 ## 9. Configuration (Environment Variables)
 
-Values loaded in `backend/internal/config/config.go`:
+Core runtime values loaded in `backend/internal/config/config.go`:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -1285,7 +1305,12 @@ Values loaded in `backend/internal/config/config.go`:
 | `CORS_ALLOW_ALL` | `false` | allow wildcard CORS |
 | `TRUST_PROXY_HEADERS` | `false` | trust forwarded IP headers |
 | `REQUEST_TIMEOUT` | `30s` | per-request context timeout |
-| `ADMIN_EMAIL` | `admin@hpcr-builder.local` | seeded admin email if empty DB |
+
+Additional startup seeding variables (read in `backend/cmd/server/main.go` during initial-admin bootstrap):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ADMIN_EMAIL` | `admin@hpcr-builder.local` | seeded admin email if DB has no users |
 | `ADMIN_PASSWORD` | `admin123` | seeded admin password fallback (development only) |
 | `ADMIN_NAME` | `System Admin` | seeded admin display name |
 
@@ -1324,5 +1349,6 @@ Effects:
 
 ### 10.4 Known Access-Behavior Detail
 
-`GET /users/{id}/assignments` is currently authenticated-only and not owner-restricted at route/service level.
-
+- `GET /users/{id}/assignments` is owner-or-admin only.
+- `GET /builds` is assignment-filtered for non-admin users.
+- `/builds/{id}` and all nested build routes require admin or build assignment.

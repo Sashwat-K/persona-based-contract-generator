@@ -1,1891 +1,618 @@
-#IBM Confidential Computing Contract Generator — Low-Level Design (LLD)
+# IBM Confidential Computing Contract Generator - Low-Level Design (LLD)
 
-> **Version:** 0.2  
-> **Date:** 2026-04-05  
+> **Version:** 0.3  
+> **Date:** 2026-04-12  
 > **Status:** Draft  
-> **Parent Document:** [high-level-design.md](./high-level-design.md)
+> **Parent Document:** [1-high-level-design.md](./1-high-level-design.md)
 
 ---
 
-## 1. Project Structure
+## 1. Scope and Source of Truth
 
-### 1.1 Go Backend
+This document is implementation-aligned to the current codebase in:
 
-```
+- `backend/` (Go + chi + sqlc + PostgreSQL)
+- `app/` (Electron + React + Carbon)
+
+If this document conflicts with code, code is authoritative.
+
+---
+
+## 2. Codebase Structure
+
+### 2.1 Backend
+
+```text
 backend/
-├── cmd/
-│   └── server/
-│       └── main.go                  # Entry point, config loading, server bootstrap
-├── internal/
-│   ├── config/
-│   │   └── config.go                # Env-based configuration struct
-│   ├── middleware/
-│   │   ├── auth.go                  # Bearer token authentication
-│   │   ├── rbac.go                  # Role-based access control
-│   │   ├── assignment.go            # Per-build assignment enforcement
-│   │   ├── logging.go               # Request/response logging
-│   │   └── ratelimit.go             # Per-IP / per-user rate limiting
-│   ├── handler/
-│   │   ├── auth_handler.go          # POST /auth/login, /auth/logout
-│   │   ├── user_handler.go          # User CRUD + token + public key management
-│   │   ├── build_handler.go         # Build CRUD + assignments
-│   │   ├── section_handler.go       # Workload, env, attestation, finalize
-│   │   └── audit_handler.go         # Audit log, verify, export, userdata
-│   ├── service/
-│   │   ├── auth_service.go          # Login/logout logic, token hashing
-│   │   ├── user_service.go          # User + role + API token + public key mgmt
-│   │   ├── build_service.go         # Build lifecycle, state machine, assignments
-│   │   ├── section_service.go       # Section submission & validation
-│   │   ├── audit_service.go         # Audit event creation & hash chain
-│   │   ├── verification_service.go  # Hash chain + signature verification
-│   │   └── export_service.go        # Contract export + userdata download
-│   ├── repository/
-│   │   ├── queries/                 # sqlc SQL query files
-│   │   │   ├── users.sql
-│   │   │   ├── builds.sql
-│   │   │   ├── build_assignments.sql
-│   │   │   ├── sections.sql
-│   │   │   ├── audit_events.sql
-│   │   │   └── api_tokens.sql
-│   │   ├── db.go                    # sqlc generated DB interface
-│   │   ├── models.go                # sqlc generated model structs
-│   │   └── queries.sql.go           # sqlc generated query methods
-│   ├── model/
-│   │   ├── build.go                 # Build domain types + status enum
-│   │   ├── user.go                  # User + role domain types
-│   │   ├── audit.go                 # Audit event domain types
-│   │   └── errors.go                # Domain-specific error types
-│   └── crypto/
-│       ├── hash.go                  # SHA256 helpers
-│       └── signature.go             # Signature verification (registered public keys only)
-├── migrations/
-│   ├── 001_create_enums.up.sql
-│   ├── 001_create_enums.down.sql
-│   ├── 002_create_roles.up.sql
-│   ├── 002_create_roles.down.sql
-│   ├── 003_create_users.up.sql
-│   ├── 003_create_users.down.sql
-│   ├── 004_create_user_roles.up.sql
-│   ├── 004_create_user_roles.down.sql
-│   ├── 005_create_api_tokens.up.sql
-│   ├── 005_create_api_tokens.down.sql
-│   ├── 006_create_builds.up.sql
-│   ├── 006_create_builds.down.sql
-│   ├── 007_create_build_assignments.up.sql
-│   ├── 007_create_build_assignments.down.sql
-│   ├── 008_create_build_sections.up.sql
-│   ├── 008_create_build_sections.down.sql
-│   ├── 009_create_audit_events.up.sql
-│   └── 009_create_audit_events.down.sql
-├── go.mod
-├── go.sum
-├── sqlc.yaml
-└── Dockerfile
+  cmd/server/main.go
+  internal/
+    config/config.go
+    crypto/{hash.go,signature.go}
+    middleware/
+      auth.go
+      context.go
+      cors.go
+      hardening.go
+      logging.go
+      ratelimit.go
+      rbac.go
+      setup_guard.go
+      signature.go
+      system_log_hook.go
+    handler/
+      auth_handler.go
+      user_handler.go
+      role_handler.go
+      build_handler.go
+      section_handler.go
+      assignment_handler.go
+      audit_handler.go
+      export_handler.go
+      rotation_handler.go
+      system_log_handler.go
+      swagger_handler.go
+      response.go
+    model/
+      user.go
+      build.go
+      audit.go
+      errors.go
+    repository/
+      queries/*.sql
+      *.sql.go (sqlc generated)
+      db.go, models.go, querier.go
+    service/
+      auth_service.go
+      user_service.go
+      role_service.go
+      build_service.go
+      section_service.go
+      assignment_service.go
+      audit_service.go
+      verification_service.go
+      export_service.go
+      rotation_service.go
+      system_log_service.go
+  migrations/*.sql
 ```
 
-### 1.2 Electron Desktop App (React + IBM Carbon UI)
+### 2.2 Desktop App
 
-```
+```text
 app/
-├── main/                             # Main Process (Node.js)
-│   ├── index.js                      # Electron main process entry, window management, IPC handlers
-│   ├── preload.js                    # Preload script for secure IPC bridge (contextBridge)
-│   └── crypto/                       # Cryptographic operations (main process only)
-│       ├── contractCli.js            # Node.js bridge to contract-cli (child_process)
-│       ├── keyManager.js             # RSA-4096 key generation, fingerprints
-│       ├── encryptor.js              # AES-256-GCM encryption, RSA-OAEP key wrapping
-│       ├── signer.js                 # SHA-256 hashing, RSA-PSS signing/verification
-│       └── keyStorage.js             # Secure key storage per user ID
-│
-├── src/                              # Renderer Process (React)
-│   ├── main.jsx                      # React app entry point
-│   ├── App.jsx                       # Root component with routing, boot screen
-│   ├── index.scss                    # Global styles (Carbon theme)
-│   │
-│   ├── assets/                       # Static assets
-│   │   └── CloudHyperProtect.svg     # IBM Cloud Hyper Protect logo
-│   │
-│   ├── components/                   # Reusable UI components
-│   │   ├── AppShell.jsx              # Main layout: Header, SideNav, Footer, Window Controls
-│   │   └── HyperProtectIcon.jsx      # Custom IBM Hyper Protect icon component
-│   │
-│   ├── views/                        # Page components (route-based)
-│   │   ├── Login.jsx                 # Split-screen login with server config, remember email
-│   │   ├── Home.jsx                  # Dashboard: account overview, build overview, alerts
-│   │   ├── BuildManagement.jsx       # Build list, filtering, search
-│   │   ├── BuildDetails.jsx          # Build details, section signing, status tracking
-│   │   ├── UserManagement.jsx        # User CRUD, role assignment, key/password status
-│   │   ├── AdminAnalytics.jsx        # System diagnostics, expired keys/passwords, statistics
-│   │   ├── SystemLogs.jsx            # Audit trail, search, filter, CSV export
-│   │   ├── AccountSettings.jsx       # Profile, password change, key management
-│   │   └── NotFound.jsx              # 404 error page
-│   │
-│   ├── services/                     # API & business logic
-│   │   ├── apiClient.js              # Axios HTTP client with interceptors
-│   │   ├── authService.js            # Login, logout, token management
-│   │   ├── buildService.js           # Build CRUD + assignment API calls
-│   │   └── cryptoService.js          # IPC bridge to main process crypto operations
-│   │
-│   ├── store/                        # State management (Zustand)
-│   │   ├── authStore.js              # Authentication state with persistence
-│   │   ├── buildStore.js             # Build list + detail state
-│   │   ├── configStore.js            # Server URL configuration with persistence
-│   │   ├── themeStore.js             # Theme preferences (dark/light mode)
-│   │   ├── uiStore.js                # UI state (modals, notifications, loading)
-│   │   └── mockData.js               # Mock data for development (10 test users)
-│   │
-│   ├── styles/                       # Custom styling
-│   │   └── modern-theme.scss         # Carbon Design System theme overrides
-│   │
-│   └── utils/                        # Utility functions
-│       ├── constants.js              # Application constants
-│       ├── formatters.js             # Data formatting utilities
-│       ├── validators.js             # Input validation utilities
-│       └── cryptoMock.js             # Mock crypto for development
-│
-├── package.json                      # Dependencies, scripts, metadata
-├── vite.config.js                    # Vite bundler configuration
-├── electron-builder.json             # Electron Builder configuration for packaging
-├── index.html                        # HTML template
-├── BUILD.md                          # Production build instructions
-└── DUMMY_CREDENTIALS.md              # Test credentials for development
-```
-
-#### Key Implementation Details
-
-**Main Process (Electron)**:
-- Frameless window with custom title bar
-- Window controls (minimize, maximize, close)
-- IPC handlers for crypto, file operations, shell operations
-- Session management and cleanup on close/quit
-- Sandbox mode enabled for security
-
-**Renderer Process (React)**:
-- Carbon Design System (IBM) for UI components
-- Zustand for state management with persistence
-- Axios for HTTP client with interceptors
-- Role-based navigation and access control
-- Boot screen with progressive loading
-- Split-screen login with feature showcase
-- External links open in system default browser
-
-**Security Features**:
-- Context isolation enabled
-- Node integration disabled
-- Sandbox mode enabled
-- Content Security Policy configured
-- All crypto operations in main process
-- Secure IPC communication via preload script
-
----
-
-## 2. Database Schema (PostgreSQL 16)
-
-### 2.1 Enums
-
-```sql
-CREATE TYPE build_status AS ENUM (
-    'CREATED',
-    'WORKLOAD_SUBMITTED',
-    'ENVIRONMENT_STAGED',
-    'AUDITOR_KEYS_REGISTERED',
-    'FINALIZED',
-    'CANCELLED'
-);
-
-CREATE TYPE audit_event_type AS ENUM (
-    'BUILD_CREATED',
-    'WORKLOAD_SUBMITTED',
-    'ENVIRONMENT_STAGED',
-    'AUDITOR_KEYS_REGISTERED',
-    'BUILD_FINALIZED',
-    'BUILD_CANCELLED',
-    'USER_CREATED',
-    'ROLE_ASSIGNED',
-    'TOKEN_CREATED',
-    'TOKEN_REVOKED',
-    'PUBLIC_KEY_REGISTERED',
-    'CONTRACT_DOWNLOADED',
-    'DOWNLOAD_ACKNOWLEDGED'
-);
-```
-
-### 2.2 Roles Table (Reference Data)
-
-```sql
-CREATE TABLE roles (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        VARCHAR(50)     NOT NULL UNIQUE,
-    description TEXT,
-    created_at  TIMESTAMPTZ     NOT NULL DEFAULT now()
-);
-
--- Seed data (run once at deployment)
-INSERT INTO roles (name, description) VALUES
-    ('SOLUTION_PROVIDER', 'Provides workload definition and HPCR encryption certificate'),
-    ('DATA_OWNER',        'Provides environment configuration, logging credentials, and secrets'),
-    ('AUDITOR',           'Performs final contract assembly, encryption, and signing'),
-    ('ENV_OPERATOR',      'Downloads and deploys finalized contracts to HPCR instances'),
-    ('ADMIN',             'System administration: user management, role assignment, build cancellation'),
-    ('VIEWER',            'Read-only access to builds and audit logs');
-```
-
-> **Note:** Roles are a reference table — not an ENUM. All other tables (user_roles, build_assignments, build_sections) reference `roles(id)` via foreign key. This allows adding new roles without a schema migration.
-
-### 2.3 Users Table
-
-```sql
-CREATE TABLE users (
-    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name                     VARCHAR(255)    NOT NULL,
-    email                    VARCHAR(255)    NOT NULL UNIQUE,
-    password_hash            TEXT            NOT NULL,
-    must_change_password     BOOLEAN         NOT NULL DEFAULT true,
-    password_changed_at      TIMESTAMPTZ,
-    public_key               TEXT,
-    public_key_fingerprint   VARCHAR(64),
-    public_key_registered_at TIMESTAMPTZ,
-    public_key_expires_at    TIMESTAMPTZ,
-    is_active                BOOLEAN         NOT NULL DEFAULT true,
-    created_at               TIMESTAMPTZ     NOT NULL DEFAULT now(),
-    updated_at               TIMESTAMPTZ     NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_users_email ON users (email);
-CREATE INDEX idx_users_fingerprint ON users (public_key_fingerprint);
-CREATE INDEX idx_users_key_expiry ON users (public_key_expires_at);
-
--- Auto-update updated_at on row modification
-CREATE OR REPLACE FUNCTION update_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN NEW.updated_at = now(); RETURN NEW; END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-```
-
-### 2.4 User Roles Table
-
-```sql
-CREATE TABLE user_roles (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role_id     UUID            NOT NULL REFERENCES roles(id),
-    assigned_by UUID            NOT NULL REFERENCES users(id),
-    assigned_at TIMESTAMPTZ     NOT NULL DEFAULT now(),
-
-    UNIQUE (user_id, role_id)
-);
-
-CREATE INDEX idx_user_roles_user_id ON user_roles (user_id);
-CREATE INDEX idx_user_roles_role_id ON user_roles (role_id);
-```
-
-### 2.5 API Tokens Table
-
-```sql
-CREATE TABLE api_tokens (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id      UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name         VARCHAR(255)    NOT NULL,
-    token_hash   TEXT            NOT NULL UNIQUE,
-    expires_at   TIMESTAMPTZ     NOT NULL,
-    last_used_at TIMESTAMPTZ,
-    revoked_at   TIMESTAMPTZ,
-    created_at   TIMESTAMPTZ     NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_api_tokens_user_id ON api_tokens (user_id);
-CREATE INDEX idx_api_tokens_token_hash ON api_tokens (token_hash);
-```
-
-### 2.6 Builds Table
-
-```sql
-CREATE TABLE builds (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name                    VARCHAR(255)    NOT NULL,
-    status                  build_status    NOT NULL DEFAULT 'CREATED',
-    created_by              UUID            NOT NULL REFERENCES users(id),
-    encryption_certificate  TEXT,
-    created_at              TIMESTAMPTZ     NOT NULL DEFAULT now(),
-    finalized_at            TIMESTAMPTZ,
-    contract_hash           TEXT,
-    contract_yaml           TEXT,           -- raw YAML in current flow (legacy rows may be base64)
-    is_immutable            BOOLEAN         NOT NULL DEFAULT false
-);
-
-CREATE INDEX idx_builds_status ON builds (status);
-CREATE INDEX idx_builds_created_by ON builds (created_by);
-```
-
-> **Note:** `contract_yaml` is stored as raw YAML in the current flow; verification/export paths remain backward compatible with legacy base64 rows. The Electron desktop app handles both shapes and writes raw YAML for deployment. Attestation keys and signing certificates are embedded (encrypted) within the final contract — the backend does not store them.
-
-### 2.7 Build Assignments Table
-
-```sql
-CREATE TABLE build_assignments (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    build_id     UUID            NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
-    role_id      UUID            NOT NULL REFERENCES roles(id),
-    user_id      UUID            NOT NULL REFERENCES users(id),
-    assigned_by  UUID            NOT NULL REFERENCES users(id),
-    assigned_at  TIMESTAMPTZ     NOT NULL DEFAULT now(),
-
-    UNIQUE (build_id, role_id)
-);
-
-CREATE INDEX idx_build_assignments_build_id ON build_assignments (build_id);
-CREATE INDEX idx_build_assignments_user_id ON build_assignments (user_id);
-CREATE INDEX idx_build_assignments_role_id ON build_assignments (role_id);
-```
-
-### 2.8 Build Sections Table
-
-```sql
-CREATE TABLE build_sections (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    build_id               UUID            NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
-    role_id                UUID            NOT NULL REFERENCES roles(id),
-    submitted_by           UUID            NOT NULL REFERENCES users(id),
-    encrypted_payload      TEXT            NOT NULL,
-    wrapped_symmetric_key  TEXT,
-    section_hash           TEXT            NOT NULL,
-    signature              TEXT            NOT NULL,
-    submitted_at           TIMESTAMPTZ     NOT NULL DEFAULT now(),
-
-    UNIQUE (build_id, role_id)
-);
-
-CREATE INDEX idx_build_sections_build_id ON build_sections (build_id);
-CREATE INDEX idx_build_sections_role_id ON build_sections (role_id);
-```
-
-### 2.9 Audit Events Table
-
-```sql
-CREATE TABLE audit_events (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    build_id              UUID                REFERENCES builds(id) ON DELETE CASCADE,
-    sequence_no           INTEGER             NOT NULL,
-    event_type            audit_event_type    NOT NULL,
-    actor_user_id         UUID                NOT NULL REFERENCES users(id),
-    actor_key_fingerprint VARCHAR(64),
-    ip_address            INET,
-    device_metadata       JSONB,
-    event_data            JSONB               NOT NULL,
-    previous_event_hash   TEXT                NOT NULL,
-    event_hash            TEXT                NOT NULL,
-    signature             TEXT,
-    created_at            TIMESTAMPTZ         NOT NULL DEFAULT now(),
-
-    UNIQUE (build_id, sequence_no)
-);
-
-CREATE INDEX idx_audit_events_build_id ON audit_events (build_id);
-CREATE INDEX idx_audit_events_build_seq ON audit_events (build_id, sequence_no);
-```
-
-> **Note:** `build_id` is nullable to support system-level audit events (e.g., `USER_CREATED`, `ROLE_ASSIGNED`, `TOKEN_CREATED`) that are not associated with any build.
-
-### 2.10 Entity-Relationship Diagram
-
-```mermaid
-erDiagram
-    ROLES ||--o{ USER_ROLES : "referenced by"
-    ROLES ||--o{ BUILD_ASSIGNMENTS : "referenced by"
-    ROLES ||--o{ BUILD_SECTIONS : "referenced by"
-    USERS ||--o{ USER_ROLES : has
-    USERS ||--o{ API_TOKENS : owns
-    USERS ||--o{ BUILDS : creates
-    USERS ||--o{ BUILD_ASSIGNMENTS : "assigned to"
-    USERS ||--o{ BUILD_SECTIONS : submits
-    USERS ||--o{ AUDIT_EVENTS : triggers
-    BUILDS ||--o{ BUILD_ASSIGNMENTS : "has assignments"
-    BUILDS ||--o{ BUILD_SECTIONS : contains
-    BUILDS ||--o{ AUDIT_EVENTS : tracks
+  main/
+    index.js
+    preload.js
+    crypto/
+      contractCli.js
+      encryptor.js
+      keyManager.js
+      keyStorage.js
+      signer.js
+  src/
+    App.jsx
+    views/
+      Login.jsx
+      Home.jsx
+      BuildManagement.jsx
+      BuildDetails.jsx
+      AccountSettings.jsx
+      UserManagement.jsx
+      AdminAnalytics.jsx
+      SystemLogs.jsx
+      NotFound.jsx
+      ServerConfigSettings.jsx
+    components/
+      AppShell.jsx
+      DesktopTitleBar.jsx
+      BuildAssignments.jsx
+      SectionSubmit.jsx
+      AuditorSection.jsx
+      FinaliseContract.jsx
+      ContractExport.jsx
+      AuditViewer.jsx
+      PasswordManager.jsx
+      PublicKeyManager.jsx
+      CredentialRotation.jsx
+      APITokenManager.jsx
+      ToastManager.jsx
+      ErrorBoundary.jsx
+      ...
+    services/
+      apiClient.js
+      signatureMiddleware.js
+      authService.js
+      userService.js
+      roleService.js
+      buildService.js
+      assignmentService.js
+      sectionService.js
+      exportService.js
+      verificationService.js
+      rotationService.js
+      systemLogService.js
+      tokenService.js
+      cryptoService.js
+    store/
+      authStore.js
+      buildStore.js
+      configStore.js
+      userStore.js
+      rotationStore.js
+      uiStore.js
+      themeStore.js
 ```
 
 ---
 
-## 3. Build State Machine
+## 3. Backend Runtime Pipeline
 
-### 3.1 Transition Rules
+Middleware order in `cmd/server/main.go`:
 
-| Current State | Action | Next State | Required Role | Assignment Required | Validations |
-|---|---|---|---|---|---|
-| `CREATED` | Submit workload | `WORKLOAD_SUBMITTED` | `SOLUTION_PROVIDER` | Yes | Payload fields present, role assignment valid, request signature middleware passes |
-| `WORKLOAD_SUBMITTED` | Stage environment | `ENVIRONMENT_STAGED` | `DATA_OWNER` | Yes | Payload fields present, encrypted symmetric key present, role assignment valid, request signature middleware passes |
-| `ENVIRONMENT_STAGED` | Confirm attestation readiness | `AUDITOR_KEYS_REGISTERED` | `AUDITOR` | Yes | Auditor confirms keys are generated locally (no payload) |
-| `AUDITOR_KEYS_REGISTERED` | Assemble contract marker | `CONTRACT_ASSEMBLED` | `AUDITOR` | Yes | Transition marker (used by UI finalize flow) |
-| `CONTRACT_ASSEMBLED` | Finalize contract | `FINALIZED` | `AUDITOR` | Yes | Contract YAML present, hash matches payload bytes, valid signature against registered public key, set `is_immutable = true` |
-| Any (pre-FINALIZED) | Cancel | `CANCELLED` | `ADMIN` | No | Build not already FINALIZED or CANCELLED |
+1. `Recoverer`
+2. `RequestID`
+3. `SecurityHeaders`
+4. `Logging`
+5. `CORS`
+6. `MaxBodyBytes`
+7. `RequestTimeout`
+8. `RateLimit`
 
-### 3.2 Implementation (Go)
+Authenticated group adds:
 
-```go
-// internal/model/build.go
+1. `Auth`
+2. `SetupGuard`
+3. `RequireRequestSignature`
 
-type BuildStatus string
+### 3.1 Setup Guard
 
-const (
-    StatusCreated              BuildStatus = "CREATED"
-    StatusWorkloadSubmitted    BuildStatus = "WORKLOAD_SUBMITTED"
-    StatusEnvironmentStaged    BuildStatus = "ENVIRONMENT_STAGED"
-    StatusAuditorKeysRegistered BuildStatus = "AUDITOR_KEYS_REGISTERED"
-    StatusContractAssembled    BuildStatus = "CONTRACT_ASSEMBLED"
-    StatusFinalized            BuildStatus = "FINALIZED"
-    StatusCancelled            BuildStatus = "CANCELLED"
-)
+When setup is incomplete (`must_change_password` or missing/expired public key), only these endpoints are allowed:
 
-// ValidTransitions defines the legal state transitions.
-var ValidTransitions = map[BuildStatus]BuildStatus{
-    StatusCreated:               StatusWorkloadSubmitted,
-    StatusWorkloadSubmitted:     StatusEnvironmentStaged,
-    StatusEnvironmentStaged:     StatusAuditorKeysRegistered,
-    StatusAuditorKeysRegistered: StatusContractAssembled,
-    StatusContractAssembled:     StatusFinalized,
-}
+- `POST /auth/logout`
+- `PATCH /users/{id}/password` (owner only)
+- `PUT /users/{id}/public-key` (owner only)
 
-func (s BuildStatus) CanTransitionTo(next BuildStatus) bool {
-    if next == StatusCancelled {
-        return s != StatusFinalized && s != StatusCancelled
-    }
-    expected, ok := ValidTransitions[s]
-    return ok && expected == next
-}
-```
+All other endpoints return `403 ACCOUNT_SETUP_REQUIRED`.
 
-### 3.3 State Machine Flow Diagram
+### 3.2 Request Signature Guard
 
-```mermaid
-flowchart TD
-    A[CREATED] -->|"POST /builds/{id}/sections (role_id=SP)<br/>Role: SOLUTION_PROVIDER<br/>+ Build Assignment"| B[WORKLOAD_SUBMITTED]
-    B -->|"POST /builds/{id}/sections (role_id=DO)<br/>Role: DATA_OWNER<br/>+ Build Assignment"| C[ENVIRONMENT_STAGED]
-    C -->|"POST /builds/{id}/attestation<br/>Role: AUDITOR<br/>+ Build Assignment"| D[AUDITOR_KEYS_REGISTERED]
-    D -->|"PATCH /builds/{id}/status -> CONTRACT_ASSEMBLED"| E[CONTRACT_ASSEMBLED]
-    E -->|"POST /builds/{id}/finalize<br/>Role: AUDITOR<br/>+ Build Assignment"| G[FINALIZED]
+All authenticated mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) require:
 
-    A -->|"POST /builds/{id}/cancel<br/>Role: ADMIN"| F[CANCELLED]
-    B --> F
-    C --> F
-    D --> F
-    E --> F
+- `X-Signature`
+- `X-Signature-Hash`
+- `X-Timestamp`
+- optional `X-Key-Fingerprint`
 
-    style G fill:#2d6a4f,color:#fff
-    style F fill:#d00000,color:#fff
-```
+Exemptions:
+
+- `POST /auth/logout`
+- `PATCH /users/{id}/password`
+- `PUT /users/{id}/public-key`
+
+Verification is performed against the caller's registered public key.
 
 ---
 
-## 4. API Contracts (Detailed)
+## 4. Authorization Model
 
-> **Convention:** All endpoints except `POST /auth/login` require `Authorization: Bearer <token>`. All request/response bodies use `Content-Type: application/json`. Roles are referenced by `role_id` (UUID) — use `GET /roles` to resolve names to IDs.
->
-> **Signed mutating requests:** Authenticated mutating requests (`POST/PUT/PATCH/DELETE`) must include:
-> - `X-Signature`
-> - `X-Signature-Hash`
-> - `X-Timestamp` (unix millis, ±5 minute window)
-> - `X-Key-Fingerprint` (optional but validated if present)
->
-> Exemptions: `POST /auth/logout`, `PATCH /users/{id}/password`, `PUT /users/{id}/public-key`.
+### 4.1 Roles
 
-### 4.1 Roles (Reference Data)
+System roles:
 
-#### `GET /roles`
+- `ADMIN`
+- `SOLUTION_PROVIDER`
+- `DATA_OWNER`
+- `AUDITOR`
+- `ENV_OPERATOR`
+- `VIEWER`
 
-**Required Role:** Any authenticated user
+### 4.2 Two-Layer Build Access
 
-**Response (200):**
-```json
-{
-    "roles": [
-        { "id": "uuid-sp", "name": "SOLUTION_PROVIDER", "description": "Provides workload definition and HPCR encryption certificate" },
-        { "id": "uuid-do", "name": "DATA_OWNER", "description": "Provides environment configuration..." },
-        { "id": "uuid-aud", "name": "AUDITOR", "description": "Performs final contract assembly..." },
-        { "id": "uuid-eo", "name": "ENV_OPERATOR", "description": "Downloads and deploys finalized contracts..." },
-        { "id": "uuid-adm", "name": "ADMIN", "description": "System administration..." },
-        { "id": "uuid-vw", "name": "VIEWER", "description": "Read-only access..." }
-    ]
-}
-```
+Build operations are protected by both:
 
----
+1. global role checks (RBAC)
+2. per-build assignment checks
 
-### 4.2 Authentication
+Implemented by:
 
-#### `POST /auth/login`
+- router-level role middleware (`RequireRole`, `RequireOwnerOrAdmin`)
+- build-level middleware (`RequireBuildAccess`) on `/builds/{id}/...`
+- service-level assignment checks (`AssignmentService`, `BuildService`, `ExportService`, `SectionService`)
 
-**Request:**
-```json
-{
-    "email": "user@example.com",
-    "password": "plaintext-password"
-}
-```
+### 4.3 Build Visibility Rules
 
-**Response (200):**
-```json
-{
-    "token": "bearer-token-value",
-    "expires_at": "2026-04-06T10:00:00Z",
-    "requires_setup": true,
-    "setup_pending": ["password_change", "public_key_registration"],
-    "user": {
-        "id": "uuid",
-        "name": "Jane Doe",
-        "email": "user@example.com",
-        "roles": [
-            { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER" }
-        ],
-        "has_public_key": true,
-        "public_key_expired": false,
-        "is_active": true
-    }
-}
-```
+- `GET /builds`
+  - `ADMIN`: sees all builds
+  - non-admin: sees only builds where user has at least one assignment
+- `GET /builds/{id}` and all nested build routes
+  - `ADMIN`: full access
+  - non-admin: only if assigned to that build
 
-**`requires_setup` Logic:**
-- `true` if `must_change_password = true` OR `public_key IS NULL` OR `public_key_expires_at < now()`.
-- `setup_pending` lists the specific actions needed.
-- When `requires_setup` is `true`, the token is restricted to: `PATCH /users/{id}/password`, `PUT /users/{id}/public-key`, `POST /auth/logout`. All other endpoints return `403 ACCOUNT_SETUP_REQUIRED`.
+### 4.4 Assignment Creation Rules
 
-**Errors:** `401 Unauthorized` (invalid credentials), `423 Locked` (user deactivated)
+`POST /builds/{id}/assignments` (admin only) enforces:
 
-#### `POST /auth/logout`
-
-**Headers:** `Authorization: Bearer <token>`  
-**Response:** `204 No Content`  
-**Backend:** Marks token as revoked.
+- build is non-terminal
+- role is workflow-assignable (`SOLUTION_PROVIDER`, `DATA_OWNER`, `AUDITOR`, `ENV_OPERATOR`)
+- assignee exists
+- assignee has the target global role
+- role not already assigned for that build/user pair
 
 ---
 
-### 4.3 User Management
+## 5. Database Design
 
-#### `POST /users`
+## 5.1 Migrations
 
-**Required Role:** `ADMIN`
+Current migration chain (001..015) defines users, roles, tokens, builds, sections, assignments, audit events, system logs, and downloaded terminal status.
 
-**Request:**
-```json
-{
-    "name": "John Smith",
-    "email": "john@example.com",
-    "password": "initial-password",
-    "roles": ["uuid-do"]
-}
-```
+## 5.2 Enumerations
 
-**Response (201):** Created user object.  
-**Errors:** `409 Conflict` (email exists), `400 Bad Request` (invalid role)
+`build_status`:
 
-#### `GET /users`
+- `CREATED`
+- `WORKLOAD_SUBMITTED`
+- `ENVIRONMENT_STAGED`
+- `AUDITOR_KEYS_REGISTERED`
+- `CONTRACT_ASSEMBLED`
+- `FINALIZED`
+- `CANCELLED`
+- `CONTRACT_DOWNLOADED` (added in migration 015)
 
-**Required Role:** `ADMIN`
+`persona_role` enum is still used by `user_roles.role`.
 
-**Response (200):**
-```json
-{
-    "users": [
-        {
-            "id": "uuid",
-            "name": "Jane Doe",
-            "email": "user@example.com",
-            "roles": [
-                { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER" }
-            ],
-            "has_public_key": true,
-            "public_key_fingerprint": "sha256-hex",
-            "is_active": true,
-            "created_at": "2026-01-15T10:00:00Z"
-        }
-    ]
-}
-```
+`audit_event_type` includes:
 
-#### `PATCH /users/{id}/roles`
+- `BUILD_CREATED`
+- `WORKLOAD_SUBMITTED`
+- `ENVIRONMENT_STAGED`
+- `AUDITOR_KEYS_REGISTERED`
+- `CONTRACT_ASSEMBLED`
+- `BUILD_FINALIZED`
+- `BUILD_CANCELLED`
+- `CONTRACT_DOWNLOADED`
+- plus system/user/token events
 
-**Required Role:** `ADMIN`
+## 5.3 Core Tables
 
-**Request:**
-```json
-{
-    "role_ids": ["uuid-aud", "uuid-vw"]
-}
-```
+### users
 
-**Response (200):** Updated user object with new roles.
+Identity + credential-rotation fields:
 
-#### `PUT /users/{id}/public-key`
+- `must_change_password`
+- `password_changed_at`
+- `public_key`
+- `public_key_fingerprint`
+- `public_key_registered_at`
+- `public_key_expires_at`
 
-**Required Role:** `ADMIN` or own user
+### user_roles
 
-**Request:**
-```json
-{
-    "public_key": "PEM-encoded-RSA-4096-public-key"
-}
-```
+Global RBAC assignments; uses `persona_role` enum column `role`.
 
-**Response (200):**
-```json
-{
-    "public_key_fingerprint": "sha256-hex-of-public-key-der",
-    "registered_at": "2026-04-05T10:00:00Z",
-    "expires_at": "2026-07-04T10:00:00Z"
-}
-```
+### roles
 
-**Backend Validations:**
-1. Key is valid RSA-4096 PEM format.
-2. Compute `SHA256(DER-encoded-public-key)` → fingerprint.
-3. Set `public_key_registered_at = now()`.
-4. Set `public_key_expires_at = now() + PUBLIC_KEY_EXPIRY_DAYS` (default 90 days).
-5. Store public key, fingerprint, and expiry.
-6. Emit audit event.
+Reference table used by build assignments and build sections (`role_id`).
 
-> [!CAUTION]
-> Updating a public key invalidates all prior signatures from this user. The backend should warn if the user has active build assignments.
+### api_tokens
 
-#### `GET /users/{id}/public-key`
+- stores only `token_hash` (SHA-256)
+- no `expires_at` column
+- validity window enforced from `created_at + TOKEN_EXPIRY`
+- supports `last_used_at`, `revoked_at`
 
-**Required Role:** Any authenticated user
+### builds
 
-**Response (200):**
-```json
-{
-    "public_key": "PEM-encoded-RSA-4096-public-key",
-    "public_key_fingerprint": "sha256-hex",
-    "registered_at": "2026-04-05T10:00:00Z",
-    "expires_at": "2026-07-04T10:00:00Z",
-    "is_expired": false
-}
-```
+- lifecycle state + final artifact fields
+- `contract_yaml`, `contract_hash`, `is_immutable`, `finalized_at`
 
-#### `PATCH /users/{id}/password`
+### build_assignments
 
-**Required Role:** `ADMIN` or own user
+Per-build role binding (`build_id`, `role_id`, `user_id`), with admin assigner metadata.
 
-**Request:**
-```json
-{
-    "current_password": "old-password",
-    "new_password": "new-password"
-}
-```
+### build_sections
 
-**Response:** `204 No Content`
+Encrypted persona submissions with:
 
-**Backend:**
-1. If own user: validate `current_password` matches.
-2. Hash `new_password` and store.
-3. Set `must_change_password = false`, `password_changed_at = now()`.
-4. Emit audit event.
+- `persona_role`
+- `role_id`
+- `encrypted_payload`
+- `wrapped_symmetric_key` (data owner flow)
+- `section_hash`
+- `signature`
 
-> **Note:** When `ADMIN` resets another user's password, `current_password` is not required. The target user's `must_change_password` is set to `true`, forcing them to change it again on next login.
+### audit_events
 
-#### `GET /users/{id}/tokens`
+Tamper-evident chain fields:
 
-**Required Role:** `ADMIN` or own user
+- `sequence_no`
+- `previous_event_hash`
+- `event_hash`
+- `signature`
+- `actor_public_key`
+- `actor_key_fingerprint`
 
-**Response (200):**
-```json
-{
-    "tokens": [
-        {
-            "id": "uuid",
-            "name": "ci-pipeline",
-            "expires_at": "2026-07-10T09:00:00Z",
-            "last_used_at": "2026-02-20T14:30:00Z",
-            "revoked_at": null,
-            "created_at": "2026-01-10T09:00:00Z"
-        }
-    ]
-}
-```
+`build_id` is nullable to allow system-level events.
 
-#### `POST /users/{id}/tokens`
+### system_logs
 
-**Required Role:** `ADMIN` or own user
-
-**Request:**
-```json
-{
-    "name": "ci-pipeline",
-    "expires_in": "720h"
-}
-```
-
-**Response (201):**
-```json
-{
-    "id": "uuid",
-    "name": "ci-pipeline",
-    "token": "raw-token-value-shown-once-only",
-    "expires_at": "2026-05-05T10:00:00Z"
-}
-```
-
-> [!CAUTION]
-> The raw token is returned **only once** at creation time. The backend stores only the SHA256 hash.
-
-#### `DELETE /users/{id}/tokens/{token_id}`
-
-**Required Role:** `ADMIN` or own user  
-**Response:** `204 No Content`  
-**Backend:** Sets `revoked_at = now()`.
+Operational log feed for admin/auditor views.
 
 ---
 
-### 4.4 Builds
+## 6. Build State Machine
 
-#### `POST /builds`
+Linear transitions:
 
-**Required Role:** `ADMIN`
+- `CREATED -> WORKLOAD_SUBMITTED`
+- `WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED`
+- `ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED`
+- `AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED`
+- `CONTRACT_ASSEMBLED -> FINALIZED`
+- `FINALIZED -> CONTRACT_DOWNLOADED`
 
-**Request:**
-```json
-{
-    "name": "production-deploy-v2.1"
-}
-```
+Cancellation:
 
-> **Signing:** The desktop client signs the mutating request envelope and sends it in `X-Signature`/`X-Signature-Hash` headers.
+- `-> CANCELLED` from any pre-finalized, non-terminal state
 
-**Response (201):**
-```json
-{
-    "id": "uuid",
-    "name": "production-deploy-v2.1",
-    "status": "CREATED",
-    "created_by": "admin-uuid",
-    "created_at": "2026-04-05T10:00:00Z",
-    "is_immutable": false
-}
-```
+Terminal statuses:
 
-**Backend Validations:**
-1. Build name is present.
-2. Request signature headers are valid and verified against the Admin's registered public key.
-3. Create build row.
-4. Emit `BUILD_CREATED` audit event (includes request signature/request hash metadata when present).
+- `FINALIZED`
+- `CONTRACT_DOWNLOADED`
+- `CANCELLED`
 
-#### `GET /builds`
+Role + assignment required per transition:
 
-**Query Parameters:** `?status=CREATED&limit=50&offset=0`
+- `WORKLOAD_SUBMITTED`: `SOLUTION_PROVIDER`
+- `ENVIRONMENT_STAGED`: `DATA_OWNER`
+- `AUDITOR_KEYS_REGISTERED`: `AUDITOR`
+- `CONTRACT_ASSEMBLED`: `AUDITOR`
+- `FINALIZED`: `AUDITOR`
+- `CONTRACT_DOWNLOADED`: `ENV_OPERATOR` (only via acknowledge-download flow)
 
-**Response (200):**
-```json
-{
-    "builds": [ ... ],
-    "limit": 50,
-    "offset": 0
-}
-```
+Additional rules:
 
-#### `GET /builds/{id}`
-
-**Response (200):** Full build object with assignments and sections summary (no encrypted payloads in this response).
-
-#### `GET /builds/{id}/assignments`
-
-**Response (200):**
-```json
-{
-    "build_id": "uuid",
-    "assignments": [
-        { "role_id": "uuid-sp", "role_name": "SOLUTION_PROVIDER", "user_id": "alice-uuid", "user_name": "Alice", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" },
-        { "role_id": "uuid-do", "role_name": "DATA_OWNER", "user_id": "bob-uuid", "user_name": "Bob", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" },
-        { "role_id": "uuid-aud", "role_name": "AUDITOR", "user_id": "charlie-uuid", "user_name": "Charlie", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" },
-        { "role_id": "uuid-eo", "role_name": "ENV_OPERATOR", "user_id": "dave-uuid", "user_name": "Dave", "public_key": "PEM...", "public_key_fingerprint": "sha256-hex" }
-    ]
-}
-```
-
-> **Note:** This endpoint is how the Data Owner retrieves the Auditor's public key for symmetric key wrapping.
-
-#### `POST /builds/{id}/cancel`
-
-**Required Role:** `ADMIN`  
-**Constraint:** Build must not be `FINALIZED`.  
-**Response:** `200 OK` (`{"status":"CANCELLED"}`)  
-**Backend:** Sets status to `CANCELLED`, emits audit event.
+- `PATCH /builds/{id}/status` cannot set `CONTRACT_DOWNLOADED`
+- downloaded acknowledgement is one-time
+- re-export/userdata/download acknowledgement blocked once downloaded
 
 ---
 
-### 4.5 Section Submissions
+## 7. Service-Level Behavior
 
-#### `POST /builds/{id}/sections`
+### 7.1 AuthService
 
-**Required Role:** Assigned persona role for this build (`SOLUTION_PROVIDER`, `DATA_OWNER`, or `AUDITOR`)  
-**Required Build Status:** Role-specific:
-- `SOLUTION_PROVIDER` -> `CREATED`
-- `DATA_OWNER` -> `WORKLOAD_SUBMITTED`
-- `AUDITOR` -> `ENVIRONMENT_STAGED`
+- email/password validation with bcrypt
+- issues random bearer token
+- stores SHA-256 token hash
+- returns token expiry timestamp as `now + TOKEN_EXPIRY`
+- computes setup requirements from password/public-key state
 
-**Request (common shape):**
-```json
-{
-    "role_id": "uuid-role",
-    "encrypted_payload": "base64-encoded-encrypted-section",
-    "encrypted_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-key-or-null",
-    "section_hash": "sha256-hex-of-encrypted-payload",
-    "signature": "base64-encoded-signature-of-section-hash"
-}
-```
+### 7.2 UserService
 
-**Role-specific notes:**
-- `SOLUTION_PROVIDER`: `encrypted_symmetric_key` omitted; payload is encrypted workload.
-- `DATA_OWNER`: `encrypted_symmetric_key` is required (stored as `wrapped_symmetric_key` in database/section responses).
-- `AUDITOR`: used only for encrypted attestation-related section payloads (when applicable in flow).
+- user CRUD and role updates (admin)
+- token creation/revocation/list
+- public key register/read
+- password change and admin reset
+- setup-state computation
 
-**Response (201):**
-```json
-{
-    "id": "section-uuid",
-    "build_id": "build-uuid",
-    "role_id": "role-uuid",
-    "persona_role": "SOLUTION_PROVIDER",
-    "section_hash": "sha256-hex",
-    "submitted_at": "2026-04-05T10:05:00Z"
-}
-```
+### 7.3 BuildService
 
-**Backend Validations:**
-1. Build exists and is at the required status for the submitted role.
-2. User has the global role and explicit build assignment.
-3. `section_hash`/`signature` are required section fields and are persisted as provided.
-4. `DATA_OWNER` submissions must include `encrypted_symmetric_key`.
-5. One section per role per build (`UNIQUE (build_id, role_id)`).
-6. Store section payload and transition status (`CREATED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED`) via service mapping.
+- build creation and retrieval
+- assignment-aware list filtering (`ListBuildsForUser`)
+- strict transition enforcement + transition-role checks
+- assignment check for transition actor
+- finalize requires assigned auditor
 
-> [!IMPORTANT]
-> The backend cannot validate/decrypt `encrypted_symmetric_key` contents; only the assigned Auditor can unwrap and decrypt environment data.
+### 7.4 SectionService
 
----
+- role resolution by `role_id` (or fallback `persona_role`)
+- validates assignment + required current state
+- data owner requires wrapped symmetric key
+- blocks duplicate section submissions by role
+- auto-transitions build status after successful submit
 
-#### `POST /builds/{id}/attestation`
+### 7.5 AssignmentService
 
-**Required Role:** `AUDITOR` (assigned to this build)  
-**Required Build Status:** `ENVIRONMENT_STAGED`
+- enforces workflow-role assignment constraints
+- enforces assignee holds target global role
+- emits assignment audit event
 
-**Request:** Empty body (no payload required).
+### 7.6 AuditService + VerificationService
 
-**Response (200):**
-```json
-{
-    "status": "AUDITOR_KEYS_REGISTERED",
-    "already_registered": false
-}
-```
+- deterministic hash-chain append
+- actor key fingerprint capture
+- full-chain verification:
+  - sequence continuity
+  - previous-hash linkage
+  - event-hash recomputation
+  - required signature checks for signed stages
 
-**Backend Validations:**
-1. Build is in `ENVIRONMENT_STAGED` state.
-2. User is the assigned `AUDITOR` for this build.
-3. Transition to `AUDITOR_KEYS_REGISTERED`.
-4. Emit audit event.
-5. Endpoint is idempotent: if already in `AUDITOR_KEYS_REGISTERED`, `CONTRACT_ASSEMBLED`, or `FINALIZED`, it returns success with `already_registered: true`.
+Signed-stage expectation in verification:
 
-> **Note:** This is a state-transition confirmation only. The Auditor generates attestation keys and signing certificates **locally** and embeds them (encrypted) within the final contract YAML. The backend does not store any key material for this step.
+- `WORKLOAD_SUBMITTED`
+- `ENVIRONMENT_STAGED`
+- `AUDITOR_KEYS_REGISTERED`
+- `CONTRACT_ASSEMBLED`
+- `BUILD_FINALIZED`
+- `CONTRACT_DOWNLOADED`
+
+### 7.7 ExportService
+
+- export/userdata only for assigned `ENV_OPERATOR` on finalized builds
+- `acknowledge-download` verifies hash + signature + assignee
+- writes `CONTRACT_DOWNLOADED` audit event
+- moves build to `CONTRACT_DOWNLOADED`
+
+### 7.8 RotationService
+
+- expired credential reporting
+- admin force-password-change
+- admin public-key revocation
+- background monitor (24h interval from server startup)
 
 ---
 
-#### `POST /builds/{id}/finalize`
+## 8. Route and Access Matrix (Current)
 
-**Required Role:** `AUDITOR` (assigned to this build)  
-**Required Build Status:** `AUDITOR_KEYS_REGISTERED`
+Legend:
 
-**Request:**
-```json
-{
-    "contract_yaml": "final-contract-yaml-string",
-    "contract_hash": "sha256-hex-of-contract-yaml",
-    "signature": "base64-encoded-signature-of-contract-hash",
-    "public_key": "actor-public-key-pem"
-}
-```
+- `Auth`: authenticated bearer token required
+- `Sig`: request-signature headers required
+- `BuildAccess`: admin OR assigned to that build
 
-**Response (200):** `{ "status": "FINALIZED" }`
+### 8.1 Public
 
-**Backend Validations:**
-1. Build is in `CONTRACT_ASSEMBLED` state (UI transitions to this marker before finalize).
-2. User is the assigned `AUDITOR` for this build.
-3. `contract_hash == SHA256(contract_yaml_bytes)` (raw YAML path; legacy data support remains in verification/export).
-4. Signature is valid against the Auditor's **registered public key** (the identity key pair registered at account setup).
-5. Store `contract_yaml` and `contract_hash`.
-6. Set `is_immutable = true`, `finalized_at = now()`.
-7. Transition to `FINALIZED`.
-8. Emit audit event.
+- `GET /health`
+- `GET /openapi.json`
+- `GET /swagger`
+- `GET /swagger/`
+- `POST /auth/login`
 
----
+### 8.2 User/Auth
 
-#### `GET /builds/{id}/sections`
+- `POST /auth/logout` - Auth, signature exempt
+- `GET /roles` - Auth
 
-**Required Role:** Any authenticated user  
-**Required Build Status:** None (current handler returns sections regardless of build status)
+- `GET /users` - ADMIN
+- `POST /users` - ADMIN
+- `PATCH /users/{id}` - ADMIN
+- `PATCH /users/{id}/roles` - ADMIN
+- `DELETE /users/{id}` - ADMIN
+- `PATCH /users/{id}/reactivate` - ADMIN
+- `PATCH /users/{id}/reset-password` - ADMIN
 
-**Response (200):**
-```json
-{
-    "sections": [
-        {
-            "persona_role": "SOLUTION_PROVIDER",
-            "encrypted_payload": "base64-encoded-encrypted-workload",
-            "section_hash": "sha256-hex",
-            "submitted_by": "alice-uuid",
-            "submitted_at": "2026-04-05T10:05:00Z"
-        },
-        {
-            "persona_role": "DATA_OWNER",
-            "encrypted_payload": "base64-encoded-AES-encrypted-env",
-            "wrapped_symmetric_key": "base64-encoded-RSA-OAEP-wrapped-key-or-null",
-            "section_hash": "sha256-hex",
-            "submitted_by": "bob-uuid",
-            "submitted_at": "2026-04-05T10:10:00Z"
-        }
-    ]
-}
-```
+- `PUT /users/{id}/public-key` - owner or ADMIN, signature exempt
+- `GET /users/{id}/public-key` - owner or ADMIN
+- `PATCH /users/{id}/password` - owner or ADMIN, signature exempt
 
-> **Note:** This endpoint is used by the Auditor to download all encrypted artifacts for local assembly. `wrapped_symmetric_key` is the persisted form of submitted `encrypted_symmetric_key`, and can only be unwrapped by the assigned Auditor's private key.
+- `GET /users/{id}/tokens` - owner or ADMIN
+- `POST /users/{id}/tokens` - owner or ADMIN, Sig
+- `DELETE /users/{id}/tokens/{token_id}` - owner or ADMIN, Sig
 
----
+- `GET /users/{id}/assignments` - owner or ADMIN
 
-### 4.6 Audit & Export
+### 8.3 System Logs
 
-#### `GET /builds/{id}/audit`
+- `GET /system-logs` - ADMIN or AUDITOR
 
-**Response (200):**
-```json
-[
-  {
-    "sequence_no": 1,
-    "event_type": "BUILD_CREATED",
-    "actor_user_id": "uuid",
-    "actor_key_fingerprint": "sha256-hex",
-    "event_data": { "...": "..." },
-    "event_hash": "sha256-hex",
-    "previous_event_hash": "sha256-hex",
-    "signature": "base64-signature-or-null",
-    "created_at": "2026-04-05T10:00:00Z"
-  }
-]
-```
+### 8.4 Builds
 
-#### `GET /builds/{id}/verify`
+- `GET /builds` - Auth, assignment-filtered for non-admin
+- `POST /builds` - ADMIN, Sig
 
-**Response (200):**
-```json
-{
-    "is_valid": true,
-    "total_events": 5,
-    "verified_events": 5,
-    "failed_events": [],
-    "genesis_hash": "sha256-hex",
-    "chain_intact": true,
-    "signatures_valid": true
-}
-```
+All `/builds/{id}/...` routes enforce BuildAccess middleware:
 
-**Response (200 with errors):**
-```json
-{
-    "is_valid": false,
-    "chain_intact": false,
-    "signatures_valid": false,
-    "verified_events": 3,
-    "failed_events": [
-        {
-            "sequence_no": 4,
-            "failure_type": "signature_invalid",
-            "details": "signature verification failed"
-        }
-    ]
-}
-```
+- `GET /builds/{id}`
+- `PATCH /builds/{id}/status` (Sig)
+- `POST /builds/{id}/attestation` - AUDITOR, Sig
+- `POST /builds/{id}/finalize` - AUDITOR, Sig
+- `POST /builds/{id}/cancel` - ADMIN, Sig
 
-#### `GET /builds/{id}/export`
+- `GET /builds/{id}/sections`
+- `POST /builds/{id}/sections` (Sig)
 
-**Required Build Status:** `FINALIZED`  
-**Required Role:** Assigned `ENV_OPERATOR` only  
-**Response:** `200 OK` with `Content-Type: application/json`  
-Returns `contract_yaml` as stored (raw YAML in current builds, legacy base64 supported by client fallback).
+- `GET /builds/{id}/audit`
+- `GET /builds/{id}/audit-trail`
 
-#### `GET /builds/{id}/userdata`
+- `GET /builds/{id}/assignments`
+- `POST /builds/{id}/assignments` - ADMIN, Sig
+- `DELETE /builds/{id}/assignments` - ADMIN, Sig
 
-**Required Build Status:** `FINALIZED`  
-**Required Role:** Assigned `ENV_OPERATOR` only  
-**Response:** `200 OK` with `Content-Type: application/json`  
-Returns decoded raw YAML (`contract_yaml`) for deployment.
+- `GET /builds/{id}/export`
+- `GET /builds/{id}/userdata`
+- `POST /builds/{id}/acknowledge-download` (Sig)
+- `GET /builds/{id}/verify`
+- `GET /builds/{id}/verify-contract`
 
-> [!IMPORTANT]
-> Compatibility note: verification/export paths support both raw and base64 `contract_yaml` values so legacy builds remain downloadable/verifiable.
+Export/userdata/acknowledge still enforce assigned ENV_OPERATOR at service level.
 
-#### `POST /builds/{id}/acknowledge-download`
+### 8.5 Rotation
 
-**Required Role:** `ENV_OPERATOR` (assigned to this build)  
-**Required Build Status:** `FINALIZED`
-
-**Request:**
-```json
-{
-    "contract_hash": "sha256-hex-of-contract-yaml",
-    "signature": "base64-encoded-signature-of-contract-hash"
-}
-```
-
-**Response (204):** `No Content`
-
-**Backend Validations:**
-1. Build is in `FINALIZED` state.
-2. User is the assigned `ENV_OPERATOR` for this build.
-3. `contract_hash` matches the stored `contract_hash` on the build.
-4. Signature is valid against the Env Operator's **registered public key**.
-5. Emit `CONTRACT_DOWNLOADED` audit event with Env Operator's signature and key fingerprint.
-
-> **Note:** This endpoint provides cryptographic proof-of-receipt. The Env Operator confirms they downloaded and verified the correct contract.
+- `GET /rotation/expired` - ADMIN
+- `POST /rotation/force-password-change/{user_id}` - ADMIN, Sig
+- `POST /rotation/revoke-key/{user_id}` - ADMIN, Sig
 
 ---
 
-## 5. Audit Hash Chain Implementation
+## 9. Frontend/Electron Implementation Notes
 
-### 5.1 Event Data Canonical Form
+## 9.1 App Shell and Role Switching
 
-```go
-// internal/service/audit_service.go
+- `App.jsx` restores role set from persisted auth state
+- current role can be switched only among server-returned roles
+- UI route availability changes on role switch
+- backend still enforces access server-side
 
-type AuditEventData struct {
-    BuildID    string `json:"build_id"`
-    EventType  string `json:"event_type"`
-    ActorID    string `json:"actor_id"`
-    ActorKeyFP string `json:"actor_key_fingerprint"`
-    Timestamp  string `json:"timestamp"`      // RFC3339
-    Details    any    `json:"details"`         // Event-specific payload
-}
-```
+## 9.2 Build Management
 
-> [!IMPORTANT]
-> Current implementation canonicalizes event JSON using Go `encoding/json` normalization (unmarshal + marshal with sorted map keys) before hash recomputation. This is deterministic for current payloads and fixes JSONB representation drift. Full RFC 8785 JCS can be adopted later as an enhancement.
+- admin-only create-build flow
+- role-specific assignee dropdowns
+- assignee must be setup-ready and have target global role
+- active/completed build tables with pagination
 
-### 5.2 Hash Chain Computation
+## 9.3 Build Details Tabs by Role
 
-```go
-func ComputeGenesisHash(buildID string) string {
-    seed := fmt.Sprintf("IBM_CC:%s", buildID)
-    hash := sha256.Sum256([]byte(seed))
-    return hex.EncodeToString(hash[:])
-}
+- ADMIN: Assignments, Audit
+- SOLUTION_PROVIDER: Assignments, Add Workload, Audit
+- DATA_OWNER: Assignments, Add Environment, Audit
+- AUDITOR: Assignments, Sign & Add Attestation, Finalise Contract, Audit
+- ENV_OPERATOR: Assignments, Export Contract, Audit
+- VIEWER: Assignments, Audit
 
-func ComputeEventHash(canonicalEventJSON []byte, previousHash string) string {
-    payload := append(canonicalEventJSON, []byte(previousHash)...)
-    hash := sha256.Sum256(payload)
-    return hex.EncodeToString(hash[:])
-}
-```
+## 9.4 Local Crypto Boundary
 
-### 5.3 Chain Verification
+Sensitive cryptographic operations stay local in Electron main process through preload IPC bridges:
 
-```go
-func (s *VerificationService) VerifyBuildChain(ctx context.Context, buildID uuid.UUID) (*VerificationResult, error) {
-    events, err := s.repo.GetAuditEventsByBuild(ctx, buildID)
-    if err != nil {
-        return nil, err
-    }
-
-    result := &VerificationResult{
-        BuildID:         buildID,
-        EventsVerified:  len(events),
-        ChainValid:      true,     // assume valid, set false on failure
-        SignaturesValid:  true,     // assume valid, set false on failure
-    }
-    expectedPrevHash := ComputeGenesisHash(buildID.String())
-
-    for i, event := range events {
-        // 1. Verify chain linkage
-        if event.PreviousEventHash != expectedPrevHash {
-            result.Errors = append(result.Errors,
-                fmt.Sprintf("Event #%d: previous_hash mismatch", i))
-            result.ChainValid = false
-        }
-
-        // 2. Recompute and verify event hash (canonicalized event JSON)
-        recomputed := ComputeEventHash(event.EventData, event.PreviousEventHash)
-        if recomputed != event.EventHash {
-            result.Errors = append(result.Errors,
-                fmt.Sprintf("Event #%d: event_hash mismatch", i))
-            result.ChainValid = false
-        }
-
-        // 3. Verify signature against REGISTERED public key
-        // Signature hash target is event-specific:
-        // - BUILD_FINALIZED / CONTRACT_DOWNLOADED: event_data.contract_hash
-        // - BUILD_CREATED / ROLE_ASSIGNED: event_data.request_signature_hash (if present)
-        // - otherwise: event.EventHash
-        if event.Signature != "" {
-            hashToVerify := signatureHashForEvent(event.EventType, event.EventData, event.EventHash)
-            pubKey, err := s.repo.GetUserPublicKeyByFingerprint(ctx, event.ActorKeyFingerprint)
-            if err != nil {
-                result.Errors = append(result.Errors,
-                    fmt.Sprintf("Event #%d: cannot resolve public key for fingerprint %s", i, event.ActorKeyFingerprint))
-                result.SignaturesValid = false
-            } else if err := VerifyRSAPSSSignature(pubKey, hashToVerify, event.Signature); err != nil {
-                result.Errors = append(result.Errors,
-                    fmt.Sprintf("Event #%d: invalid signature for key %s", i, event.ActorKeyFingerprint))
-                result.SignaturesValid = false
-            }
-        } else if requiresSignature(event.EventType) {
-            result.Errors = append(result.Errors,
-                fmt.Sprintf("Event #%d: missing signature for %s", i, event.EventType))
-            result.SignaturesValid = false
-        }
-
-        expectedPrevHash = event.EventHash
-    }
-
-    return result, nil
-}
-```
+- key generation/storage
+- hashing/signing
+- contract-cli encryption/signing orchestration
+- local file save/read for export flows
 
 ---
 
-## 6. Authentication & Authorization
+## 10. Security Controls
 
-### 6.1 Auth Middleware Flow
-
-```mermaid
-flowchart LR
-    A[Request] --> B{Has Bearer Token?}
-    B -->|No| C[401 Unauthorized]
-    B -->|Yes| D[SHA256 hash token]
-    D --> E{Token exists in DB?}
-    E -->|No| C
-    E -->|Yes| F{Token revoked?}
-    F -->|Yes| C
-    F -->|No| G{Token expired?}
-    G -->|Yes| C
-    G -->|No| H[Load user + roles]
-    H --> I{User active?}
-    I -->|No| C
-    I -->|Yes| J{Setup complete?}
-    J -->|No| K{Is setup endpoint?}
-    K -->|Yes| L[Set user in context]
-    K -->|No| M[403 Account setup required]
-    J -->|Yes| L
-    L --> N[Next handler]
-```
-
-**Setup Complete Check:**
-```go
-func isSetupComplete(user *model.User) bool {
-    return !user.MustChangePassword &&
-        user.PublicKey != nil &&
-        user.PublicKeyExpiresAt != nil &&
-        user.PublicKeyExpiresAt.After(time.Now())
-}
-
-var setupOnlyEndpoints = map[string]bool{
-    "PATCH /users/{id}/password":   true,
-    "PUT /users/{id}/public-key":   true,
-    "POST /auth/logout":            true,
-}
-```
-
-### 6.2 Token Hashing
-
-```go
-func HashToken(rawToken string) string {
-    hash := sha256.Sum256([]byte(rawToken))
-    return hex.EncodeToString(hash[:])
-}
-
-func GenerateToken() (raw string, hashed string) {
-    b := make([]byte, 32)
-    crypto_rand.Read(b)
-    raw = base64.URLEncoding.EncodeToString(b)
-    hashed = HashToken(raw)
-    return
-}
-```
-
-### 6.3 Build Assignment Check
-
-```go
-// middleware/assignment.go
-
-// RequireAssignment returns middleware that verifies the authenticated user
-// is assigned to the build for the given persona role.
-func RequireAssignment(role model.PersonaRole) func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            user := UserFromContext(r.Context())
-            buildID := chi.URLParam(r, "id")
-
-            assignment, err := repo.GetBuildAssignment(r.Context(), buildID, role)
-            if err != nil || assignment.UserID != user.ID {
-                http.Error(w, "not assigned to this build for role "+string(role), http.StatusForbidden)
-                return
-            }
-
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-```
-
-### 6.4 RBAC + Assignment Matrix
-
-| Endpoint | ADMIN | SP | DO | AUD | EO | VIEWER | Assignment Required |
-|---|---|---|---|---|---|---|---|
-| `GET /users` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
-| `POST /users` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
-| `PATCH /users/{id}/roles` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
-| `PUT /users/{id}/public-key` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
-| `GET /users/{id}/public-key` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `PATCH /users/{id}/password` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
-| `GET /users/{id}/tokens` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
-| `POST /users/{id}/tokens` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
-| `DELETE /users/{id}/tokens/{tid}` | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | ✅¹ | — |
-| `GET /builds` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `POST /builds` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
-| `GET /builds/{id}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `GET /builds/{id}/assignments` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `POST /builds/{id}/assignments` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
-| `POST /builds/{id}/cancel` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
-| `POST .../sections` (SP role) | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ SP |
-| `POST .../sections` (DO role) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ DO |
-| `POST .../attestation` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
-| `PATCH .../status` (to `CONTRACT_ASSEMBLED`) | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
-| `POST .../finalize` | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ AUD |
-| `GET .../sections` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `GET .../audit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `GET .../verify` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `GET .../export` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
-| `GET .../userdata` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
-| `POST .../acknowledge-download` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ EO |
-
-> ¹ ADMIN can access any user; other roles can only access their own (`user_id` must match authenticated user).
+- token hashes only at rest (no raw token persistence in DB)
+- request-signature verification bound to registered public keys
+- setup-gated account activation before full API usage
+- layered RBAC + assignment authorization
+- audit hash chain tamper detection
+- terminal build-state immutability semantics
 
 ---
 
-## 7. Error Handling
+## 11. Configuration (Backend)
 
-### 7.1 Standard Error Response
+From `internal/config/config.go`:
 
-```json
-{
-    "error": {
-        "code": "INVALID_STATE_TRANSITION",
-        "message": "Build is in CREATED state; expected WORKLOAD_SUBMITTED for environment submission.",
-        "details": {
-            "current_status": "CREATED",
-            "expected_status": "WORKLOAD_SUBMITTED"
-        }
-    }
-}
-```
+- `SERVER_HOST` (default `0.0.0.0`)
+- `SERVER_PORT` (default `8080`)
+- `DATABASE_URL` (required)
+- `TOKEN_EXPIRY` (default `24h`)
+- `BCRYPT_COST` (default `12`)
+- `LOG_LEVEL` (default `info`)
+- `LOG_FORMAT` (default `json`)
+- `MAX_PAYLOAD_SIZE` (default `52428800`)
+- `CORS_ALLOWED_ORIGINS` (default `http://localhost:5173,http://127.0.0.1:5173,null`)
+- `CORS_ALLOW_ALL` (default `false`)
+- `TRUST_PROXY_HEADERS` (default `false`)
+- `REQUEST_TIMEOUT` (default `30s`)
 
-### 7.2 Error Codes
+Server startup seeding env vars:
 
-| HTTP Status | Error Code | Description |
-|---|---|---|
-| `400` | `INVALID_REQUEST` | Malformed request body or missing fields |
-| `400` | `HASH_MISMATCH` | Computed hash does not match submitted hash |
-| `400` | `INVALID_SIGNATURE_HEADERS` | Missing/invalid request signature headers |
-| `400` | `INVALID_SIGNATURE` | Signature verification failed against registered public key |
-| `400` | `INVALID_CERTIFICATE` | PEM certificate is malformed or expired |
-| `400` | `INVALID_PUBLIC_KEY` | Public key is not valid RSA-4096 PEM |
-| `400` | `MISSING_PUBLIC_KEY` | Assigned user has not registered a public key |
-| `400` | `PUBLIC_KEY_EXPIRED` | User's public key has expired; must register a new key |
-| `401` | `UNAUTHORIZED` | Missing or invalid bearer token |
-| `401` | `TOKEN_EXPIRED` | Bearer token has expired |
-| `403` | `FORBIDDEN` | User lacks the required role |
-| `403` | `NOT_ASSIGNED` | User is not assigned to this build for the required role |
-| `403` | `ACCOUNT_SETUP_REQUIRED` | User must complete account setup (password change and/or public key registration) |
-| `404` | `BUILD_NOT_FOUND` | Build ID does not exist |
-| `404` | `USER_NOT_FOUND` | User ID does not exist |
-| `409` | `DUPLICATE_EMAIL` | Email already registered |
-| `409` | `DUPLICATE_SECTION` | Section already submitted for this persona |
-| `422` | `INVALID_STATE_TRANSITION` | Build is not in the required state for this action |
-| `422` | `BUILD_IMMUTABLE` | Cannot modify a finalized build |
-| `500` | `INTERNAL_ERROR` | Unexpected server error |
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
+- `ADMIN_NAME`
 
 ---
 
-## 8. Configuration
+## 12. Known Constraints / Backlog
 
-### 8.1 Environment Variables
-
-```go
-// internal/config/config.go
-
-type Config struct {
-    // Server
-    ServerHost  string `env:"SERVER_HOST"  default:"0.0.0.0"`
-    ServerPort  int    `env:"SERVER_PORT"  default:"8080"`
-
-    // Database
-    DatabaseURL string `env:"DATABASE_URL" required:"true"`
-
-    // Auth
-    TokenExpiry   time.Duration `env:"TOKEN_EXPIRY"    default:"24h"`
-    BcryptCost    int           `env:"BCRYPT_COST"     default:"12"`
-
-    // Credential Rotation
-    PasswordRotationDays int `env:"PASSWORD_ROTATION_DAYS" default:"90"`
-    PublicKeyExpiryDays  int `env:"PUBLIC_KEY_EXPIRY_DAYS"  default:"90"`
-
-    // Logging
-    LogLevel  string `env:"LOG_LEVEL"  default:"info"`
-    LogFormat string `env:"LOG_FORMAT" default:"json"`
-
-    // Limits
-    MaxPayloadSize int64 `env:"MAX_PAYLOAD_SIZE" default:"52428800"` // 50MB
-}
-```
-
-### 8.2 nginx Configuration (Reference)
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name hpcr-builder.example.com;
-
-    ssl_certificate     /etc/ssl/certs/server.crt;
-    ssl_certificate_key /etc/ssl/private/server.key;
-    ssl_protocols       TLSv1.3;
-
-    client_max_body_size 50M;
-
-    # Security headers
-    add_header X-Content-Type-Options    nosniff;
-    add_header X-Frame-Options           DENY;
-    add_header X-XSS-Protection          "1; mode=block";
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains";
-
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api:10m rate=30r/m;
-
-    location /api/ {
-        limit_req zone=api burst=10 nodelay;
-        proxy_pass http://127.0.0.1:8080/;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+- Build listing for non-admin users currently performs assignment-first filtering then build fetches (functional but not the most query-efficient shape).
+- Roles are modeled in both `persona_role` enum (`user_roles`) and `roles` table (`build_assignments`, `build_sections`) for backward compatibility and staged migration.
+- OpenAPI endpoint is static and can lag runtime behavior.
 
 ---
 
-## 9. Electron Desktop — Crypto Operations Detail
-
-### 9.1 contract-cli Integration
-
-The Electron app invokes `contract-cli` (built from `contract-go`) as a subprocess via Node.js child_process in the main process. The CLI uses `encrypt-string` to encrypt individual sections (workload, env, attestation public key) with the HPCR encryption certificate.
-
-**HPCR Contract Structure:**
-
-Plain text contract (before encryption):
-```yaml
-env: |
-  type: env
-  logging:
-    logRouter:
-      hostname: example.logs.cloud.ibm.com
-      iamApiKey: your-api-key
-  signingKey: <signing-key-pem>
-workload: |
-  type: workload
-  compose:
-    archive: <docker-compose-base64>
-envWorkloadSignature: <signature>
-attestationPublicKey: <attestation-public-key-pem>
-```
-
-Final contract (after encryption):
-```yaml
-env: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
-workload: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
-envWorkloadSignature: <signature>
-attestationPublicKey: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
-```
-
-**CLI Usage:**
-```bash
-# Encrypt a section (workload, env, or attestation public key)
-echo "<plain-text-content>" | contract-cli encrypt-string --in - --cert <hpcr-encryption-cert-path>
-
-# Output: hyper-protect-basic.<encrypted-base64>.<encrypted-base64>
-```
-
-**Node.js Bridge (Main Process):**
-```javascript
-// main/crypto/contractCli.js
-
-const { spawn } = require('child_process');
-const fs = require('fs').promises;
-
-class ContractCliBridge {
-  constructor(cliPath) {
-    this.cliPath = cliPath;
-  }
-
-  /**
-   * Encrypt a string section using contract-cli encrypt-string.
-   * Used for workload, env, and attestation public key.
-   */
-  async encryptSection(plainText, encryptionCertPath) {
-    return new Promise((resolve, reject) => {
-      const process = spawn(this.cliPath, [
-        'encrypt-string',
-        '--in', '-',
-        '--cert', encryptionCertPath
-      ]);
-
-      let stdout = '';
-      let stderr = '';
-
-      process.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      process.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      process.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`contract-cli encrypt-string failed: ${stderr}`));
-        } else {
-          resolve(stdout.trim()); // hyper-protect-basic.xxx.yyy
-        }
-      });
-
-      process.stdin.write(plainText);
-      process.stdin.end();
-    });
-  }
-
-  /**
-   * Assemble final contract YAML from encrypted sections.
-   */
-  assembleContract({
-    encryptedWorkload,
-    encryptedEnv,
-    envWorkloadSignature,
-    encryptedAttestationKey
-  }) {
-    return `env: ${encryptedEnv}
-workload: ${encryptedWorkload}
-envWorkloadSignature: ${envWorkloadSignature}
-attestationPublicKey: ${encryptedAttestationKey}
-`;
-  }
-}
-
-module.exports = ContractCliBridge;
-```
-
-### 9.2 Local Key & Encryption Operations
-
-```javascript
-// main/crypto/keyManager.js
-
-const crypto = require('crypto');
-const { promisify } = require('util');
-
-const generateKeyPair = promisify(crypto.generateKeyPair);
-
-class KeyManager {
-  /**
-   * Generate RSA 4096-bit key pair for user identity (signing + key wrapping).
-   */
-  async generateIdentityKeyPair() {
-    const { publicKey, privateKey } = await generateKeyPair('rsa', {
-      modulusLength: 4096,
-      publicKeyEncoding: {
-        type: 'spki',
-        format: 'pem'
-      },
-      privateKeyEncoding: {
-        type: 'pkcs8',
-        format: 'pem'
-      }
-    });
-    return { publicKey, privateKey };
-  }
-
-  /**
-   * Generate RSA 4096-bit key pair for attestation.
-   */
-  async generateAttestationKeyPair() {
-    return this.generateIdentityKeyPair();
-  }
-
-  /**
-   * Generate AES-256 symmetric key for environment staging.
-   */
-  generateSymmetricKey() {
-    return crypto.randomBytes(32); // 256 bits
-  }
-
-  /**
-   * Store key securely using OS keychain (via keytar or similar).
-   */
-  async storeKey(label, key) {
-    // Implementation using electron-store or keytar
-    // For now, store encrypted in user data directory
-  }
-
-  /**
-   * Register public key with backend.
-   */
-  async registerPublicKey(publicKeyPem, apiClient) {
-    const response = await apiClient.put('/users/me/public-key', {
-      public_key: publicKeyPem
-    });
-    return response.data.public_key_fingerprint;
-  }
-}
-
-module.exports = KeyManager;
-```
-
-```javascript
-// main/crypto/encryptor.js
-
-const crypto = require('crypto');
-
-class Encryptor {
-  /**
-   * AES-256-GCM encrypt data with given symmetric key.
-   */
-  encryptWithSymmetricKey(data, key) {
-    const iv = crypto.randomBytes(12); // 96-bit IV for GCM
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    
-    const encrypted = Buffer.concat([
-      cipher.update(data),
-      cipher.final()
-    ]);
-    
-    const authTag = cipher.getAuthTag();
-    
-    // Return: iv + authTag + encrypted
-    return Buffer.concat([iv, authTag, encrypted]);
-  }
-
-  /**
-   * RSA-OAEP wrap symmetric key with recipient's public key.
-   */
-  wrapSymmetricKey(symmetricKey, recipientPublicKeyPem) {
-    return crypto.publicEncrypt(
-      {
-        key: recipientPublicKeyPem,
-        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-        oaepHash: 'sha256'
-      },
-      symmetricKey
-    );
-  }
-
-  /**
-   * AES-256-GCM decrypt data with given symmetric key.
-   */
-  decryptWithSymmetricKey(encrypted, key) {
-    const iv = encrypted.slice(0, 12);
-    const authTag = encrypted.slice(12, 28);
-    const ciphertext = encrypted.slice(28);
-    
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(authTag);
-    
-    return Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final()
-    ]);
-  }
-
-  /**
-   * RSA-OAEP unwrap symmetric key with own private key.
-   */
-  unwrapSymmetricKey(wrappedKey, privateKeyPem) {
-    return crypto.privateDecrypt(
-      {
-        key: privateKeyPem,
-        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-        oaepHash: 'sha256'
-      },
-      wrappedKey
-    );
-  }
-}
-
-module.exports = Encryptor;
-```
-
-### 9.3 Signing & Hashing
-
-```javascript
-// main/crypto/signer.js
-
-const crypto = require('crypto');
-const fs = require('fs').promises;
-
-class Signer {
-  /**
-   * Compute SHA256 hash of file contents.
-   */
-  async hashFile(filePath) {
-    const data = await fs.readFile(filePath);
-    return crypto.createHash('sha256').update(data).digest('hex');
-  }
-
-  /**
-   * Compute SHA256 hash of buffer/string.
-   */
-  hash(data) {
-    return crypto.createHash('sha256').update(data).digest('hex');
-  }
-
-  /**
-   * Sign a hash using RSA-PSS with SHA-256.
-   */
-  sign(hash, privateKeyPem) {
-    const sign = crypto.createSign('RSA-SHA256');
-    sign.update(hash);
-    return sign.sign(
-      {
-        key: privateKeyPem,
-        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
-      },
-      'base64'
-    );
-  }
-
-  /**
-   * Verify a signature against a hash and public key.
-   */
-  verify(hash, signature, publicKeyPem) {
-    const verify = crypto.createVerify('RSA-SHA256');
-    verify.update(hash);
-    return verify.verify(
-      {
-        key: publicKeyPem,
-        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
-      },
-      signature,
-      'base64'
-    );
-  }
-}
-
-module.exports = Signer;
-```
-
-### 9.4 Persona Workflow (Client-Side)
-
-```mermaid
-sequenceDiagram
-    participant SP as Solution Provider (Electron)
-    participant DO as Data Owner (Electron)
-    participant AU as Auditor (Electron)
-    participant EO as Env Operator (Electron)
-    participant BE as Go Backend
-
-    Note over SP,AU: All personas have registered RSA-4096 public keys at account setup
-
-    Note over SP: Load HPCR encryption cert
-    SP->>SP: Encrypt workload via contract-cli (Node.js)
-    SP->>SP: SHA256(workload.enc) → hash
-    SP->>SP: Sign(hash, sp_private_key) → signature
-    SP->>BE: POST /builds/{id}/sections (role_id=SP)
-
-    Note over DO: Retrieve Auditor's registered public key
-    DO->>BE: GET /builds/{id}/assignments
-    BE-->>DO: Auditor's RSA public key
-    DO->>DO: Generate AES-256 symmetric key (Node.js crypto)
-    DO->>DO: AES-256-GCM encrypt env section
-    DO->>DO: RSA-OAEP wrap AES key with Auditor's public key
-    DO->>DO: SHA256(encrypted_env) → hash
-    DO->>DO: Sign(hash, do_private_key) → signature
-    DO->>BE: POST /builds/{id}/sections (role_id=DO, encrypted_symmetric_key)
-
-    Note over AU: Generate signing + attestation keys
-    AU->>BE: POST /builds/{id}/attestation (readiness confirmation)
-    AU->>BE: GET /builds/{id}/sections (download encrypted artifacts)
-    AU->>AU: RSA-OAEP unwrap AES key with own private key
-    AU->>AU: AES-256-GCM decrypt env section
-    AU->>AU: Inject signing certificate into env
-    AU->>AU: Encrypt env via contract-cli (HPCR cert)
-    AU->>AU: Assemble contract.yaml
-    AU->>AU: SHA256(contract.yaml) → hash
-    AU->>AU: PATCH /builds/{id}/status -> CONTRACT_ASSEMBLED
-    AU->>AU: Sign(hash, auditor_identity_key) → signature
-    AU->>BE: POST /builds/{id}/finalize
-
-    EO->>BE: GET /builds/{id}/userdata
-    EO->>BE: POST /builds/{id}/acknowledge-download
-    Note over EO: Deploy to HPCR instance
-```
-
----
-
-## 10. Deployment
-
-### 10.1 Docker Compose
-
-```yaml
-services:
-  reverse_proxy:
-    image: nginx:1.27-alpine
-    depends_on:
-      backend:
-        condition: service_started
-    ports:
-      - "${REVERSE_PROXY_PORT:-8080}:80"
-    volumes:
-      - ./config/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-    networks:
-      - app_net
-    restart: unless-stopped
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-hpcr_builder}
-      POSTGRES_USER: ${POSTGRES_USER:-hpcr}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hpcr} -d ${POSTGRES_DB:-hpcr_builder}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - db_net
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-hpcr}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hpcr_builder}?sslmode=disable
-      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
-      SERVER_PORT: ${SERVER_PORT:-8080}
-      TOKEN_EXPIRY: ${TOKEN_EXPIRY:-24h}
-      BCRYPT_COST: ${BCRYPT_COST:-12}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-      MAX_PAYLOAD_SIZE: ${MAX_PAYLOAD_SIZE:-52428800}
-      ADMIN_NAME: ${ADMIN_NAME:-System Admin}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@hpcr-builder.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    expose:
-      - "8080"
-    networks:
-      - app_net
-      - db_net
-    restart: unless-stopped
-
-  migrate:
-    image: migrate/migrate:4
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command:
-      [
-        "-path=/migrations",
-        "-database=postgres://${POSTGRES_USER:-hpcr}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hpcr_builder}?sslmode=disable",
-        "up"
-      ]
-    volumes:
-      - ./backend/migrations:/migrations:ro
-    networks:
-      - db_net
-
-networks:
-  app_net:
-    internal: true
-  db_net:
-    internal: true
-```
-
-> [!WARNING]
-> The above Docker Compose is for **local development only**. For production, use TLS termination on the reverse proxy (see §8.2 nginx reference config) and set strong, randomly generated passwords via environment variables. Never use `sslmode=disable` in production.
-
-### 10.2 Backend Dockerfile
-
-```dockerfile
-FROM golang:1.24-alpine AS builder
-
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /server ./cmd/server
-
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /server /server
-
-EXPOSE 8080
-ENTRYPOINT ["/server"]
-```
-
-### 10.3 Database Migrations
-
-Migrations are managed via [golang-migrate](https://github.com/golang-migrate/migrate):
-
-```bash
-# Run migrations up
-migrate -path ./migrations -database "$DATABASE_URL" up
-
-# Rollback last migration
-migrate -path ./migrations -database "$DATABASE_URL" down 1
-```
-
----
-
-## 11. Testing Strategy
-
-| Layer | Tool | Coverage Target |
-|---|---|---|
-| Unit (services) | Go `testing` + `testify` | State machine, hash chain, validation logic, assignment checks |
-| Unit (handlers) | `httptest` | Request parsing, response codes, error handling, RBAC + assignment enforcement |
-| Integration | `testcontainers-go` (PostgreSQL) | Full DB round-trip, migration tests |
-| API (E2E) | `httptest` + test fixtures | Complete build lifecycle flow with assignments |
-| Electron UI unit | Vitest/Jest | Service adapters, request signing, view state logic |
-| Electron integration | Playwright/Cypress (or equivalent) | Full persona workflow against local backend |
-
-### Key Test Scenarios
-
-1. **Happy path:** Full build lifecycle from `CREATED` → `FINALIZED` with proper assignments.
-2. **Invalid transitions:** Attempt to skip a state (e.g., `CREATED` → `FINALIZED`).
-3. **Role enforcement:** Wrong persona attempts a section submission.
-4. **Assignment enforcement:** Correct role but not assigned to this build.
-5. **Hash mismatch:** Submit a section with an incorrect hash.
-6. **Signature failure:** Submit with an invalid signature.
-7. **Signature identity mismatch:** Submit with a valid signature from a non-registered key.
-8. **Immutability:** Attempt to modify a `FINALIZED` build.
-9. **Audit chain integrity:** Verify a tampered event is detected.
-10. **Token lifecycle:** Create, use, expire, revoke, attempt to reuse expired/revoked token.
-11. **Cancellation:** Admin cancels at each pre-finalized state.
-12. **Key wrapping:** Verify only the assigned Auditor can unwrap the symmetric key.
-13. **Public key registration:** Register, update, verify fingerprint computation.
-14. **Request-signature enforcement:** Mutating request without signature headers must fail.
-
----
-
-> *End ofIBM Confidential Computing Contract Generator LLD v0.2*
+> End of LLD v0.3

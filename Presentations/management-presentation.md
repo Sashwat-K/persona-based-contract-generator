@@ -3,97 +3,101 @@
 
 **Audience:** Leadership, Product, Program Management  
 **Duration:** 12-15 minutes  
-**Date:** April 10, 2026
+**Date:** April 12, 2026
 
 ---
 
 ## Slide 1: Executive Summary
-- We have delivered a working end-to-end confidential contract generation flow.
-- Multi-persona security model is operational across desktop app + backend.
-- Critical stability and workflow issues from prior iterations are resolved.
-- Current focus is execution readiness, documentation maturity, and rollout confidence.
+- Core product flow is operational end-to-end across all personas.
+- Security controls are now implementation-documented and auditable.
+- Deployment runbook is now formalized for local and production rollout.
+- Current phase is controlled release execution and operational hardening.
 
 ---
 
 ## Slide 2: Business Problem We Solve
-- High-trust environments require strict separation of duties.
-- Contracts must be cryptographically verifiable and tamper-evident.
-- Teams need an auditable process, not just file generation.
-- Goal: reduce deployment risk in confidential computing workflows.
+- Confidential computing deployments need strict separation of duties.
+- Governance requires cryptographic proof, not just process compliance.
+- Teams need verifiable workflow evidence from build creation to deployment handoff.
+- We provide a persona-governed, tamper-evident contract lifecycle.
 
 ---
 
 ## Slide 3: What Is Delivered
-- Electron desktop app for persona-driven workflows.
-- Go backend for orchestration, authorization, audit, and verification.
-- Role + assignment-based control for every build.
-- Finalized contracts with integrity checks and download acknowledgment proof.
+- Electron desktop app for persona-specific workflows and local cryptography.
+- Go backend for orchestration, authorization, audit chain, and verification APIs.
+- Role + assignment controls on every build action.
+- Final contract handoff includes signed download acknowledgment proof.
 
 ---
 
 ## Slide 4: Security Posture (Leadership View)
-- All mutating requests are signed and verified.
-- Identity-bound cryptography with registered RSA keys.
-- Immutable finalized artifacts.
-- Hash-chained audit trail for tamper evidence.
-- Enforced account setup and credential hygiene (password/public key requirements).
+- Signed mutating requests validated against registered user keys.
+- Setup guard blocks access until password/public-key setup is complete.
+- Immutable workflow controls with explicit state machine enforcement.
+- Hash-chained audit trail and contract verification endpoints integrated.
+- Hardened Electron runtime and hardened container deployment baseline in place.
 
 ---
 
-## Slide 5: Workflow Governance
-- Linear state model: `CREATED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED -> FINALIZED`.
-- Controlled cancellation path for pre-finalized builds.
-- Explicit build assignments prevent unauthorized actions even with global role membership.
+## Slide 5: Workflow Governance (Current)
+- Lifecycle now includes final delivery acknowledgment stage:
+  - `CREATED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED -> FINALIZED -> CONTRACT_DOWNLOADED`
+- Cancellation is controlled and limited to non-terminal states.
+- Download acknowledgment is one-time and prevents repeated export.
+- Governance remains enforced by role + explicit assignment per build.
 
 ---
 
-## Slide 6: User Experience Improvements Completed
-- Account setup handling and setup-required messaging improved.
-- Duplicate action and retry edge cases addressed.
-- Assignment view freshness and refresh controls added.
-- Audit and verification messaging made actionable for operators.
+## Slide 6: Access and Accountability Model
+- Admin sees global build scope.
+- Non-admin users only see builds they are assigned to.
+- Build-level routes require assignment (or admin) at middleware level.
+- Each critical stage is attributable to a persona and verifiable signature context.
 
 ---
 
-## Slide 7: Compliance & Audit Readiness
-- Event timeline with actor identity and cryptographic traces.
-- Contract integrity verification endpoint and UI flow integrated.
-- Download acknowledgment produces non-repudiation event for env operator.
-- Documentation now aligned across HLD, LLD, desktop, and API specs.
+## Slide 7: Compliance and Audit Readiness
+- Audit trail captures actor, event chain, and signature context.
+- Verification is available both for audit chain and finalized contract integrity.
+- System logs include operational/security events (not only login).
+- Manual verification guidance is exposed in UI for operational transparency.
 
 ---
 
-## Slide 8: Current Risks
-- Team velocity still depends on disciplined test execution across personas.
-- Operational readiness depends on environment consistency (desktop + backend versions).
-- Formal release hardening (packaging, UAT matrix, rollback playbook) remains to be finalized.
+## Slide 8: Deployment Readiness
+- Standardized Docker Compose deployment topology delivered.
+- Production TLS overlay documented with certificate integration.
+- Environment variable hardening guidance and validation checklist documented.
+- Upgrade/rollback and post-deploy validation runbooks now available.
 
 ---
 
-## Slide 9: Next 2-3 Week Plan
-- Complete regression pass for all persona flows.
-- Finalize release checklist and environment runbook.
-- Define go-live criteria and acceptance gates.
-- Execute stakeholder demo + signoff cycle.
+## Slide 9: Documentation Maturity (Now Completed)
+- Security architecture document delivered:
+  - `Design/5-security-design.md`
+- Deployment runbook delivered:
+  - `Design/6-deployment-guide.md`
+- Existing HLD/LLD/Desktop/API docs synchronized to implementation.
 
 ---
 
-## Slide 10: Decisions Needed from Management
-- Confirm target release milestone and acceptance threshold.
-- Confirm pilot scope (teams/users/environments).
-- Confirm support model for first rollout window.
+## Slide 10: Current Risks
+- Release confidence still depends on disciplined end-to-end regression execution.
+- Operational success depends on environment consistency (client version + backend version + config).
+- Key-storage hardening roadmap (OS keychain/HSM path) remains an improvement area.
 
 ---
 
-## Slide 11: Success Metrics
-- 100% pass rate on critical workflow scenarios.
-- Zero high-severity security or integrity defects.
-- Mean time to resolve operational issue within agreed SLA.
-- Positive auditability outcome in pilot review.
+## Slide 11: Next 2-3 Week Plan
+- Run full persona regression and negative security-path testing.
+- Execute staging deployment drill using production runbook.
+- Finalize go-live criteria and rollback acceptance checks.
+- Run stakeholder demo using verification and audit evidence flows.
 
 ---
 
-## Slide 12: Closing
-- System is now functionally coherent and security-aligned.
-- Documentation and implementation are synchronized.
-- We are ready to move from feature completion to controlled rollout execution.
+## Slide 12: Decisions Needed from Management
+- Confirm target release milestone and pilot scope.
+- Confirm acceptance thresholds for security/operational readiness.
+- Confirm support ownership for first rollout window and incident response.

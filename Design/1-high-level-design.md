@@ -1,14 +1,14 @@
-#IBM Confidential Computing Contract Generator — High-Level Design (HLD)
+# IBM Confidential Computing Contract Generator — High-Level Design (HLD)
 
-> **Version:** 0.4  
-> **Date:** 2026-04-05  
+> **Version:** 0.5  
+> **Date:** 2026-04-12  
 > **Status:** Draft
 
 ---
 
 ## 1. Introduction
 
-TheIBM Confidential Computing Contract Generator is a self-hosted, open-source system that enables organizations to collaboratively construct, sign, and finalize encrypted userdata contracts (YAML format) for **HPCR**, **HPCR4RHVS**, and **HPCC** deployments.
+The IBM Confidential Computing Contract Generator is a self-hosted, open-source system that enables organizations to collaboratively construct, sign, and finalize encrypted userdata contracts (YAML format) for **HPCR**, **HPCR4RHVS**, and **HPCC** deployments.
 
 The system enforces a strict, linear, multi-persona workflow with cryptographic identity binding. Each persona registers an RSA public key at account creation and contributes exactly once per build. Builds require explicit user-to-role assignments, ensuring accountability. Once finalized, the contract becomes immutable.
 
@@ -124,7 +124,7 @@ The Electron desktop application is the primary client interface for all users. 
 6. **Production Distribution**
    - Cross-platform builds (macOS, Windows, Linux)
    - Code signing support for trusted distribution
-   - Auto-update capability (configurable)
+   - Signed installer/distribution artifacts with manual update rollout
    - Installer and portable versions
    - Comprehensive build documentation
 
@@ -151,7 +151,7 @@ Until setup is complete, the backend restricts the token to setup-only endpoints
 
 Every user registers an RSA-4096 **public key** with their profile. The private key never leaves the user's machine.
 
-Public keys have a configurable expiry (default: **90 days**). When a key expires:
+Public keys currently expire after **90 days**. When a key expires:
 - The user is blocked from participating in builds until they register a new key.
 - The auth middleware treats an expired key similarly to a missing key — setup-only endpoints are accessible.
 - Previous signatures made with the old key remain valid for audit verification (the fingerprint in audit events references the key used at the time).
@@ -170,10 +170,10 @@ The backend enforces periodic credential rotation:
 
 | Credential | Rotation Interval | Mechanism |
 |---|---|---|
-| **Password** | Every 90 days (configurable) | Backend sets `must_change_password = true` via a scheduled job. User is forced into setup flow on next login. |
-| **Public Key** | Every 90 days (configurable) | Backend checks `public_key_expires_at`. Expired keys block build participation until a new key is registered. |
+| **Password** | Every 90 days | Backend marks expired credentials via rotation checks; user is forced into setup flow on next login. |
+| **Public Key** | Every 90 days | Backend checks `public_key_expires_at`. Expired keys block build participation until a new key is registered. |
 
-Both intervals are configurable via environment variables (`PASSWORD_ROTATION_DAYS`, `PUBLIC_KEY_EXPIRY_DAYS`).
+In the current implementation, the 90-day window is encoded in DB/query logic and rotation checks.
 
 ---
 
@@ -286,20 +286,21 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 
 | | |
 |---|---|
-| **Provides** | Signed build creation metadata, user management |
+| **Provides** | Signed build + assignment operations, user management |
 
 **Build Creation (Local Actions):**
 
-1. Compose build metadata: name + assignments (user-to-role mapping).
-2. Compute `SHA256(canonical_json(build_metadata))` locally.
-3. Sign the hash with the Admin's **registered identity private key**.
-4. Upload build request with signature.
+1. Compose build metadata (build name).
+2. Compute `SHA256(canonical_json(build_create_request))` locally.
+3. Sign the canonical request hash with the Admin's **registered identity private key**.
+4. Create the build via `POST /builds`.
+5. Assign personas with separate signed calls to `POST /builds/{id}/assignments` (one per workflow role).
 
 **Backend Actions:**
 
-- Verifies signature against the Admin's **registered public key**.
-- Creates build + assignments in a transaction.
-- Emits `BUILD_CREATED` audit event with Admin's signature.
+- Verifies each mutating request signature against the Admin's **registered public key**.
+- Creates the build (`POST /builds`) and records a `BUILD_CREATED` audit event.
+- Processes assignment calls (`POST /builds/{id}/assignments`) with role/assignment validation and emits `ROLE_ASSIGNED` audit events.
 
 **Other Admin responsibilities:**
 
@@ -325,6 +326,7 @@ stateDiagram-v2
     ENVIRONMENT_STAGED --> AUDITOR_KEYS_REGISTERED
     AUDITOR_KEYS_REGISTERED --> CONTRACT_ASSEMBLED
     CONTRACT_ASSEMBLED --> FINALIZED
+    FINALIZED --> CONTRACT_DOWNLOADED
     CREATED --> CANCELLED : Admin only
     WORKLOAD_SUBMITTED --> CANCELLED : Admin only
     ENVIRONMENT_STAGED --> CANCELLED : Admin only
@@ -338,7 +340,8 @@ stateDiagram-v2
 - Each persona contributes exactly once.
 - Build participation requires both correct role **and** explicit assignment.
 - No concurrent edits.
-- **FINALIZED** builds are immutable.
+- **FINALIZED**, **CONTRACT_DOWNLOADED**, and **CANCELLED** are immutable end states for workflow mutations.
+- The only allowed post-finalization state change is the download acknowledgment path (`FINALIZED -> CONTRACT_DOWNLOADED`).
 - Backend performs no contract assembly.
 - Signatures are verified against registered public keys, never request-supplied keys.
 - The backend never has access to the symmetric key protecting the environment section.
@@ -372,11 +375,11 @@ erDiagram
 - **User** — A person using the system. Carries their identity (password, public key) and links to everything they do.
 - **Role** — A reference table of persona types (seeded at deployment). Not an ENUM — it's a first-class table so all other tables reference it via foreign key.
 - **User Role** — Junction table: "User X has role Y, assigned by Admin Z." A user can have multiple roles.
-- **Build** — A contract being collaboratively constructed. Tracks the current status, stores the encryption certificate (from SP), and eventually holds the final contract YAML (raw YAML in current flow; legacy rows may be base64).
+- **Build** — A contract being collaboratively constructed. Tracks current lifecycle status and eventually holds the final contract YAML/hash (raw YAML in current flow; legacy rows may be base64). `encryption_certificate` exists as an optional compatibility field.
 - **Build Assignment** — "For Build B, role Y is performed by User X." This is how the Admin binds specific users to specific builds. One user per role per build.
-- **Build Section** — Encrypted data submitted by a persona during the build. Only 2 sections per build: workload (from SP) and environment (from DO). Contains the encrypted payload, the hash, and the user's signature.
+- **Build Section** — Encrypted data submitted by a persona during the build. Current flow stores up to 3 role sections (Solution Provider, Data Owner, Auditor), each with encrypted payload, hash, and signature metadata.
 - **Audit Event** — A tamper-evident log entry. Each event hashes its data together with the previous event's hash, forming an unbreakable chain. Signed by the actor's registered key.
-- **API Token** — Bearer tokens for authentication. Stored as SHA-256 hashes (never plaintext). Have an expiry date and can be revoked.
+- **API Token** — Bearer tokens for authentication. Stored as SHA-256 hashes (never plaintext), revocable, and evaluated against configured token TTL from creation time.
 
 ### User
 
@@ -484,10 +487,11 @@ erDiagram
 | `user_id` | reference |
 | `name` | string |
 | `token_hash` | string |
-| `expires_at` | timestamp |
 | `last_used_at` | timestamp |
 | `revoked_at` | timestamp (nullable) |
 | `created_at` | timestamp |
+
+> Token validity is derived at runtime from `created_at + TOKEN_EXPIRY`; there is no persisted `expires_at` column.
 
 ---
 
@@ -514,21 +518,28 @@ Every significant action in the system (build creation, section submission, fina
 
 ### Who Signs What?
 
-The current implementation carries signatures in two places:
+The current implementation validates signatures in three ways:
 
-1. **Audit event signatures (always required):**
-| Event | Persona | Signed By |
-|---|---|---|
-| `BUILD_FINALIZED` | Auditor | Auditor's registered private key |
-| `CONTRACT_DOWNLOADED` | Env Operator | Env Operator's registered private key |
+1. **Signed stage events in audit chain (required):**
+| Event | Persona |
+|---|---|
+| `WORKLOAD_SUBMITTED` | Solution Provider |
+| `ENVIRONMENT_STAGED` | Data Owner |
+| `AUDITOR_KEYS_REGISTERED` | Auditor |
+| `CONTRACT_ASSEMBLED` | Auditor |
+| `BUILD_FINALIZED` | Auditor |
+| `CONTRACT_DOWNLOADED` | Env Operator |
 
-2. **Request-signature derived audit signatures (captured when present):**
-| Event | Persona | Source |
-|---|---|---|
-| `BUILD_CREATED` | Admin | `X-Signature` on signed mutating request |
-| `ROLE_ASSIGNED` | Admin | `X-Signature` on signed mutating request |
+2. **Request-signature metadata captured on mutating calls (when applicable):**
+| Event | Source |
+|---|---|
+| `BUILD_CREATED` | signed mutating request headers |
+| `ROLE_ASSIGNED` | signed mutating request headers |
 
-Section submissions (`WORKLOAD_SUBMITTED`, `ENVIRONMENT_STAGED`) still carry cryptographic signatures on section payloads (`section_hash` + `signature`) in `build_sections`; these are separate from audit-event signature fields.
+3. **Section payload signatures in `build_sections`:**
+| Field | Purpose |
+|---|---|
+| `section_hash` + `signature` | persona-level cryptographic proof of submitted section payload |
 
 ### How the Chain Works
 
@@ -539,8 +550,9 @@ flowchart LR
     E1["Event 1: WORKLOAD_SUBMITTED\nhash = SHA256(data + E0.hash)"] --> E2
     E2["Event 2: ENVIRONMENT_STAGED\nhash = SHA256(data + E1.hash)"] --> E3
     E3["Event 3: AUDITOR_KEYS_REGISTERED\nhash = SHA256(data + E2.hash)"] --> E4
-    E4["Event 4: BUILD_FINALIZED\nhash = SHA256(data + E3.hash)"] --> E5
-    E5["Event 5: CONTRACT_DOWNLOADED\nhash = SHA256(data + E4.hash)"]
+    E4["Event 4: CONTRACT_ASSEMBLED\nhash = SHA256(data + E3.hash)"] --> E5
+    E5["Event 5: BUILD_FINALIZED\nhash = SHA256(data + E4.hash)"] --> E6
+    E6["Event 6: CONTRACT_DOWNLOADED\nhash = SHA256(data + E5.hash)"]
 ```
 
 ### Step-by-Step Example
@@ -560,7 +572,7 @@ event_data = {
     "actor_id": "admin-uuid",
     "actor_key_fingerprint": "abc123...",
     "build_id": "550e8400...",
-    "details": { "name": "prod-v2.1", "assignments": { ... } },
+    "details": { "name": "prod-v2.1" },
     "event_type": "BUILD_CREATED",
     "timestamp": "2026-04-05T10:00:00Z"
 }
@@ -602,62 +614,78 @@ The `GET /builds/{id}/verify` endpoint:
 
 ## 9. API Surface
 
-### Roles
+### Platform & Docs
 
 | Method | Endpoint |
 |---|---|
-| `GET` | `/roles` |
+| `GET` | `/health` |
+| `GET` | `/openapi.json` |
+| `GET` | `/swagger` |
 
-### Auth
+### Auth & Role Discovery
 
 | Method | Endpoint |
 |---|---|
 | `POST` | `/auth/login` |
 | `POST` | `/auth/logout` |
+| `GET` | `/roles` |
 
-### Users
+### User Management
 
 | Method | Endpoint |
 |---|---|
 | `GET` | `/users` |
 | `POST` | `/users` |
+| `PATCH` | `/users/{id}` |
 | `PATCH` | `/users/{id}/roles` |
+| `DELETE` | `/users/{id}` |
+| `PATCH` | `/users/{id}/reactivate` |
+| `PATCH` | `/users/{id}/reset-password` |
 | `PUT` | `/users/{id}/public-key` |
 | `GET` | `/users/{id}/public-key` |
 | `PATCH` | `/users/{id}/password` |
 | `GET` | `/users/{id}/tokens` |
 | `POST` | `/users/{id}/tokens` |
 | `DELETE` | `/users/{id}/tokens/{token_id}` |
+| `GET` | `/users/{id}/assignments` |
 
-### Builds
+### Build Lifecycle & Data
 
 | Method | Endpoint |
 |---|---|
 | `GET` | `/builds` |
 | `POST` | `/builds` |
 | `GET` | `/builds/{id}` |
-| `POST` | `/builds/{id}/cancel` |
-| `GET` | `/builds/{id}/assignments` |
-| `POST` | `/builds/{id}/assignments` |
-
-### Sections
-
-| Method | Endpoint |
-|---|---|
-| `POST` | `/builds/{id}/sections` |
+| `PATCH` | `/builds/{id}/status` |
 | `POST` | `/builds/{id}/attestation` |
 | `POST` | `/builds/{id}/finalize` |
+| `POST` | `/builds/{id}/cancel` |
 | `GET` | `/builds/{id}/sections` |
+| `POST` | `/builds/{id}/sections` |
+| `GET` | `/builds/{id}/assignments` |
+| `POST` | `/builds/{id}/assignments` |
+| `DELETE` | `/builds/{id}/assignments` |
 
-### Audit & Export
+### Audit, Verification, and Export
 
 | Method | Endpoint |
 |---|---|
 | `GET` | `/builds/{id}/audit` |
+| `GET` | `/builds/{id}/audit-trail` |
 | `GET` | `/builds/{id}/verify` |
+| `GET` | `/builds/{id}/verify-contract` |
 | `GET` | `/builds/{id}/export` |
 | `GET` | `/builds/{id}/userdata` |
 | `POST` | `/builds/{id}/acknowledge-download` |
+
+### Admin Operations
+
+| Method | Endpoint |
+|---|---|
+| `GET` | `/system-logs` |
+| `GET` | `/rotation/expired` |
+| `POST` | `/rotation/force-password-change/{user_id}` |
+| `POST` | `/rotation/revoke-key/{user_id}` |
 
 ---
 
@@ -696,12 +724,12 @@ The `GET /builds/{id}/verify` endpoint:
 | Category | Details |
 |---|---|
 | **Transport Security** | TLS 1.3 via nginx |
-| **Authentication** | Bearer tokens (stored hashed, with expiry) |
+| **Authentication** | Bearer tokens (stored as SHA-256 hashes); validity enforced by `TOKEN_EXPIRY` against token `created_at` |
 | **Authorization** | Strict server-side RBAC + per-build assignment checks |
 | **Mutating Request Signing** | All authenticated mutating endpoints require `X-Signature`, `X-Signature-Hash`, `X-Timestamp` (+ optional `X-Key-Fingerprint`) except setup/logout exemptions; backend verifies against registered user public key |
-| **Cryptographic Identity** | All users register RSA-4096 public keys; signatures verified against registered keys; keys expire after 90 days (configurable) |
+| **Cryptographic Identity** | All users register RSA-4096 public keys; signatures verified against registered keys; keys expire after 90 days |
 | **Private Key Isolation** | All private keys generated and stored locally; never transmitted |
-| **Credential Rotation** | Passwords and public keys rotate every 90 days (configurable). Backend forces setup flow on expiry |
+| **Credential Rotation** | Passwords and public keys rotate every 90 days. Backend forces setup flow on expiry |
 | **First-Login Enforcement** | All new users (including seeded admin) must change password and register public key before accessing any functionality |
 | **Environment Staging Protection** | Encrypted with AES-256-GCM locally; symmetric key wrapped with Auditor's RSA public key (RSA-OAEP). Backend never has access to the unwrapped symmetric key |
 | **Final Contract Integrity** | SHA256 hash + signature; immutable after FINALIZED |
@@ -731,28 +759,21 @@ The `GET /builds/{id}/verify` endpoint:
 
 ---
 
-## 13. Summary of v0.4 Changes
+## 13. Summary of v0.5 Changes
 
-- **Public key registration:** All personas register RSA-4096 public keys at account creation. Private keys never leave the client.
-- **Build assignments:** Admin assigns specific users to persona roles per build. RBAC is now two-layered (role + assignment).
-- **Identity-bound signature verification:** Backend verifies all signatures against registered public keys, not request-supplied keys.
-- **Secure environment staging via key wrapping:** Data Owner wraps the AES symmetric key with the Auditor's registered RSA public key (RSA-OAEP). Backend never sees the unwrapped key. Only the assigned Auditor can decrypt.
-- **`CONTRACT_ASSEMBLED` retained in current backend state machine:** `AUDITOR_KEYS_REGISTERED` → `CONTRACT_ASSEMBLED` → `FINALIZED`.
-- **Added cryptographic standards section (§7):** RSA-4096, RSA-PSS/SHA-256, AES-256-GCM, RSA-OAEP, RFC 8785.
-- **Token expiry:** API tokens now have an `expires_at` field.
-- **New API endpoints:** Public key management, build assignments, section downloads, password change.
-- **Audit event `build_id` is now nullable** to support system-level events (user creation, role assignment, token management).
-- **Encryption certificate stored on build:** Solution Provider uploads the HPCR encryption certificate; stored on the build for the Auditor to retrieve.
-- **First-login setup flow:** All new users (including seeded admin) must change password and register public key on first login.
-- **Credential rotation:** Passwords and public keys expire every 90 days (configurable). Expired credentials force the user into setup flow.
-- **Public key expiry:** Keys have a configurable `public_key_expires_at` timestamp. Expired keys block build participation.
-- **Admin signs build creation:** Build creation requests include the Admin's signature, providing cryptographic proof of who authorized the build and its assignments.
-- **Request-signature metadata captured in audit chain:** `BUILD_CREATED` and `ROLE_ASSIGNED` persist `request_signature_hash` and associated request signature.
-- **Env Operator download acknowledgment:** Env Operator signs the contract hash upon download, providing cryptographic proof of receipt in the audit chain.
-- **Attestation confirmation is idempotent:** Re-running `POST /builds/{id}/attestation` returns success when already registered/finalized.
-- **Contract storage compatibility:** Verification/export logic supports both raw YAML and legacy base64 contract rows.
-- **Expanded audit hash chain documentation (§8):** Detailed walkthrough with diagrams and examples for clarity.
+- Corrected lifecycle to include `FINALIZED -> CONTRACT_DOWNLOADED`.
+- Documented signed-event expectations across all signed stages (`WORKLOAD_SUBMITTED` through `CONTRACT_DOWNLOADED`).
+- Updated token model: no persisted `expires_at` column in `api_tokens`; TTL enforced from `created_at + TOKEN_EXPIRY`.
+- Aligned API surface with current routes (`/health`, swagger/openapi, `/builds/{id}/audit-trail`, `/builds/{id}/verify-contract`, rotation endpoints, system logs).
+- Documented current build access model:
+  - non-admin build list is assignment-filtered
+  - `/builds/{id}` tree requires admin or build assignment
+- Updated assignment constraints:
+  - assignable workflow roles are SP/DO/AUD/EO
+  - assignee must hold target global role
+- Updated `/users/{id}/assignments` access model to owner-or-admin only.
+- Clarified credential-rotation behavior as current 90-day implementation.
 
 ---
 
-> *End ofIBM Confidential Computing Contract Generator HLD v0.4*
+> *End of IBM Confidential Computing Contract Generator HLD v0.5*

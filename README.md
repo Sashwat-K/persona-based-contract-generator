@@ -1,160 +1,201 @@
-#IBM Confidential Computing Contract Generator
+# IBM Confidential Computing Contract Generator
 
-> **IBM Confidential Computing Contract Generator** is a self-hosted, open-source system that enables organizations to collaboratively construct, sign, and finalize encrypted userdata contracts (YAML format) for HPCR (Hyper Protect Container Runtime), HPCR4RHVS, and HPCC deployments.
+> Self-hosted, open-source platform to collaboratively build, verify, and deliver encrypted HPCR/HPCR4RHVS/HPCC userdata contracts with persona-based controls and cryptographic auditability.
 
-The system enforces a strict, linear, multi-persona workflow. Each persona contributes exactly once per build. Once finalized, the contract becomes immutable.
+The system enforces a linear multi-persona workflow with role + per-build assignment controls. All private-key operations happen on the desktop client; backend validates signatures, enforces workflow/state rules, and stores encrypted artifacts and audit metadata.
 
 ## Table of Contents
-- [Architecture & Principles](#architecture--principles)
-- [Workflow Personas](#workflow-personas)
-- [Project Structure](#project-structure)
+- [Key Capabilities](#key-capabilities)
+- [Architecture](#architecture)
+- [Workflow and Personas](#workflow-and-personas)
+- [Security Model](#security-model)
+- [Repository Structure](#repository-structure)
 - [Getting Started](#getting-started)
-- [API Documentation](#api-documentation)
+- [Running the Desktop App](#running-the-desktop-app)
+- [API and Operations Endpoints](#api-and-operations-endpoints)
 - [Documentation](#documentation)
 
-## Architecture & Principles
-- **Client-Side Crypto:** All cryptographic operations (encryption, signing, contract assembly) are executed locally on the client (e.g., the Flutter desktop application). 
-- **Zero-Knowledge Backend:** The Go backend **never** performs encryption, signing, or contract assembly. It only orchestrates the workflow, verifies signatures, stores encrypted artifacts, and maintains an audit hash chain.
-- **Auditability:** Every action produces a deterministic hash chain event, ensuring a tamper-evident audit trail.
-- **Immutability:** The final artifact is a signed and encrypted YAML contract file that cannot be modified once assembled.
+## Key Capabilities
+- Persona-driven contract workflow (`ADMIN`, `SOLUTION_PROVIDER`, `DATA_OWNER`, `AUDITOR`, `ENV_OPERATOR`, `VIEWER`).
+- Strict lifecycle enforcement from build creation through download acknowledgment.
+- Assignment-based access (role alone is not enough to act on a build).
+- Signed mutating API requests (`X-Signature*` headers) with backend verification.
+- Hash-chained audit trail and verification APIs.
+- Electron desktop app with IBM Carbon UI and local cryptographic execution.
 
-## Workflow Personas
+## Architecture
 
-The contract building process follows a strict linear progression, with distinct duties:
+```text
+[ Electron Desktop App ]  <----HTTP/HTTPS---->  [ nginx Reverse Proxy ]  --->  [ Go Backend ]  --->  [ PostgreSQL ]
+```
 
-1. **Solution Provider:** Provides the workload definition and encryption certificate. Encrypts the workload locally and signs the hash.
-2. **Data Owner:** Provides logging credentials and environment configuration. Generates a random symmetric key locally to encrypt the environment section, then signs and uploads the encrypted payload.
-3. **Auditor:** Provides the attestation public key and signing key/cert. Downloads the staged encrypted payloads, decrypts them locally, performs the final contract assembly, and signs the final `.yaml` artifact.
-4. **Env Operator:** Downloads the finalized YAML contract to deploy to the HPCR instance. (No cryptographic operations performed).
-5. **Admin:** Manages users, assigns roles, and can cancel pre-finalized builds.
-6. **Viewer:** Has read-only access to builds and audit logs.
+Principles:
+- Client-side crypto: encryption/signing/contract assembly run on desktop client.
+- Backend orchestration: state machine, authorization, signature verification, audit chain.
+- Zero private-key exposure to backend.
 
-## Project Structure
+## Workflow and Personas
 
-This repository is a monorepo containing:
+Current build lifecycle:
 
-- **`backend/`**: The Go-based API server using `chi` for routing, `pgx`/`sqlc` for PostgreSQL persistence, and structured `slog` logging.
-- **`config/nginx/`**: Nginx reverse proxy configuration used by Docker Compose.
-- **`scripts/`**: Bootstrap and infrastructure bring-up scripts.
-- **`Design/`**: Contains architectural documentation (HLD, LLD, and Project Timeline).
+```text
+CREATED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED -> FINALIZED -> CONTRACT_DOWNLOADED
+```
 
-*(Note: The Flutter Desktop Application is planned for the next development phase).*
+Cancellation is allowed from non-terminal pre-finalized states.
+
+Persona responsibilities:
+1. `SOLUTION_PROVIDER`: encrypts/submits workload section with hash + signature.
+2. `DATA_OWNER`: encrypts environment section, wraps symmetric key for auditor, submits hash + signature.
+3. `AUDITOR`: registers attestation stage readiness and finalizes contract with signature.
+4. `ENV_OPERATOR`: exports finalized contract and submits signed download acknowledgment.
+5. `ADMIN`: manages users/roles, creates builds, assigns build personas, may cancel eligible builds.
+6. `VIEWER`: read-only visibility.
+
+## Security Model
+- Backend verifies mutating request signatures against registered user public keys.
+- Build access uses two layers:
+  - global role checks
+  - explicit build assignment checks
+- Setup guard blocks non-setup endpoints until required password/key setup is complete.
+- Audit integrity is verifiable via hash chain + signature verification.
+- Desktop app hardening includes sandboxed renderer, context isolation, sender-validated IPC, and blocked webviews.
+
+For detailed controls, see [Security Design](./Design/5-security-design.md).
+
+## Repository Structure
+
+- `app/`: Electron + React + IBM Carbon desktop application.
+- `backend/`: Go API server (`chi`, `pgx`, `sqlc`) and business/security logic.
+- `config/nginx/`: reverse-proxy configs (`default.conf`, `tls.conf`).
+- `scripts/`: helper scripts including bring-up bootstrap.
+- `Design/`: architecture, API, security, and deployment documentation.
 
 ## Getting Started
 
 ### Prerequisites
-- [Go](https://go.dev/) 1.25+
-- [PostgreSQL](https://www.postgresql.org/) 16
-- (Optional) Docker & Docker Compose for local deployment
+- Docker + Docker Compose v2 (recommended)
+- For local backend-only run: Go `1.25+`, PostgreSQL `16`
+- For desktop app development: Node `>=25.9.0`, npm `>=11.12.1`
 
-### Option 1: Bring Up Full Stack with Docker Compose (Recommended for Local)
+### Option 1: Full Stack via Docker Compose (Local HTTP)
 
-The root `docker-compose.yaml` runs:
-- `reverse_proxy` (public entrypoint)
-- `backend` (Go API, internal only)
-- `postgres` (DB, internal only)
-- `migrate` (one-shot migration job)
-
-Traffic flow:
-`Client -> reverse_proxy -> backend -> postgres`
-
-1. Create env file:
+1. Prepare environment:
    ```bash
    cp .env.example .env
    ```
 
-2. Start stack:
+2. Set required secrets/DB values in `.env`:
+   - `POSTGRES_PASSWORD`
+   - `ADMIN_PASSWORD`
+   - `DATABASE_URL`
+   - `MIGRATE_DATABASE_URL`
+
+3. Start stack:
    ```bash
    docker compose -f docker-compose.yaml up -d --build
    ```
 
-3. API is available via reverse proxy:
-   - Base URL: `http://localhost:8080`
-   - Health: `http://localhost:8080/health`
-   - Swagger UI: `http://localhost:8080/swagger`
+4. Validate:
+   ```bash
+   curl -sS http://localhost:8080/health
+   ```
 
-4. Stop stack:
+5. Stop:
    ```bash
    docker compose -f docker-compose.yaml down
    ```
 
 Notes:
-- Postgres data is persisted to `${POSTGRES_DATA_DIR:-./data/postgres}`.
-- `ADMIN_EMAIL` / `ADMIN_PASSWORD` are used only when seeding the very first user on a fresh DB.
-- The local default uses `config/nginx/default.conf` (HTTP only).
+- Postgres data persists at `${POSTGRES_DATA_DIR:-./data/postgres}`.
+- Initial admin seed (`ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`) runs only on empty DB.
 
-### Option 2: Production Compose (TLS + Hardened Runtime)
+### Option 2: Production-Style Deployment (TLS)
 
-1. Create env file and set strong secrets:
+1. Prepare `.env`:
    ```bash
    cp .env.example .env
    ```
-   Required production changes in `.env`:
-   - Set strong values for `POSTGRES_PASSWORD` and `ADMIN_PASSWORD`
-   - Set `DATABASE_URL` / `MIGRATE_DATABASE_URL` to production DB credentials
-   - Use database TLS (for example `sslmode=require` or `sslmode=verify-full`)
-   - Set `NGINX_CONF_PATH=./config/nginx/tls.conf`
-   - Set `TLS_CERT_PATH` and `TLS_KEY_PATH` to real certificate/key files
 
-2. Start stack with production overlay:
+2. Update production values:
+   - strong `POSTGRES_PASSWORD` and `ADMIN_PASSWORD`
+   - production `DATABASE_URL` / `MIGRATE_DATABASE_URL`
+   - `NGINX_CONF_PATH=./config/nginx/tls.conf`
+   - valid `TLS_CERT_PATH` and `TLS_KEY_PATH`
+   - restrictive `CORS_ALLOWED_ORIGINS` and `CORS_ALLOW_ALL=false`
+
+3. Start stack:
    ```bash
    docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build
    ```
 
-3. Access API:
-   - HTTPS Base URL: `https://localhost:8443`
-   - Health: `https://localhost:8443/health`
+4. Validate:
+   ```bash
+   curl -k https://localhost:8443/health
+   ```
 
-4. Stop stack:
+5. Stop:
    ```bash
    docker compose -f docker-compose.yaml -f docker-compose.prod.yaml down
    ```
 
 ### Option 3: One-Command Bootstrap Script
 
-Use:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sashwat-K/persona-based-contract-generator/main/scripts/bring_up.sh | bash
 ```
 
-What it does:
-- Clones the repo (if needed)
-- Generates random `POSTGRES_PASSWORD` and `ADMIN_PASSWORD`
-- Writes `.env` from `.env.example`
-- Starts Docker Compose stack
-- Prints generated admin username/password
+This script clones (if needed), generates strong passwords, writes `.env`, and starts compose.
 
-### Option 4: Run Backend Locally (without Compose)
+### Option 4: Run Backend Locally (Without Compose)
 
-1. **Start PostgreSQL:**
+From `backend/`:
+
+```bash
+DATABASE_URL="postgres://<user>:<pass>@localhost:5432/<db>?sslmode=disable" go run ./cmd/server/
+```
+
+(Ensure migrations are applied first.)
+
+## Running the Desktop App
+
+From `app/`:
+
+1. Install dependencies:
    ```bash
-   docker run -d --name hpcr-postgres -e POSTGRES_DB=hpcr_builder -e POSTGRES_USER=hpcr -e POSTGRES_PASSWORD=devpass -p 5432:5432 postgres:16-alpine
+   npm install
    ```
 
-2. **Run Migrations:**
+2. Start dev mode (Vite + Electron):
    ```bash
-   docker run --rm -v "$PWD/backend/migrations:/migrations" --network host migrate/migrate \
-     -path=/migrations \
-     -database "postgres://hpcr:devpass@localhost:5432/hpcr_builder?sslmode=disable" up
+   npm run dev
    ```
 
-3. **Start the API Server** (from `backend/`):
-   ```bash
-   cd backend
-   DATABASE_URL="postgres://hpcr:devpass@localhost:5432/hpcr_builder?sslmode=disable" go run ./cmd/server/
-   ```
+3. Configure backend server URL in login/server settings.
 
-## API Documentation
-- Swagger UI: `http://localhost:8080/swagger`
-- OpenAPI JSON: `http://localhost:8080/openapi.json`
+Useful scripts:
+- `npm run build` (renderer build)
+- `npm run package` (electron-builder package)
+- `npm run package:mac|win|linux` (platform-specific packaging)
 
-On first boot with an empty database, the server auto-seeds an initial admin user from:
-- `ADMIN_NAME`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
+Detailed packaging guide: [app/BUILD.md](./app/BUILD.md)
+
+## API and Operations Endpoints
+
+Default local endpoints:
+- Health: `GET /health`
+- Swagger UI: `GET /swagger`
+- OpenAPI JSON: `GET /openapi.json`
+
+Build verification:
+- `GET /builds/{id}/verify`
+- `GET /builds/{id}/verify-contract`
 
 ## Documentation
-For detailed architectural choices and API contracts, refer to the documents in the `Design/` directory:
-- [High-Level Design (HLD)](Design/high-level-design.md)
-- [Low-Level Design (LLD)](Design/low-level-design.md)
-- [Project Timeline](Design/project-timeline.md)
+
+- [High-Level Design](./Design/1-high-level-design.md)
+- [Low-Level Design](./Design/2-low-level-design.md)
+- [Desktop App Design](./Design/3-desktop-app-design.md)
+- [API Documentation](./Design/4-api-documentation.md)
+- [Security Design](./Design/5-security-design.md)
+- [Deployment Guide](./Design/6-deployment-guide.md)
