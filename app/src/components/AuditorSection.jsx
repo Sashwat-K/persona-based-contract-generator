@@ -210,7 +210,14 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
       } else {
         // cert mode — validate fields
         if (!certCountry || !certState || !certLocality || !certOrg || !certUnit || !certDomain || !certEmail) {
-          setError('Please fill in all certificate fields.'); return;
+          setError('Please fill in all certificate fields.');
+          setStep1Running(false);
+          return;
+        }
+        if (certCountry.length !== 2) {
+          setError('Country code must be exactly 2 characters (e.g., US, IN, GB).');
+          setStep1Running(false);
+          return;
         }
         addLine('info', '-- Generating self-signed X.509 signing certificate --');
         result = await window.electron.auditor.generateSigningCert({
@@ -609,8 +616,15 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate 
 
           {signingMode === 'cert' && (
             <div className="workflow-grid-form">
-              <TextInput id="cert-country" labelText="Country (2-letter code)" placeholder="US"
-                value={certCountry} onChange={e => setCertCountry(e.target.value)} />
+              <TextInput
+                id="cert-country"
+                labelText="Country (2-letter ISO code)"
+                placeholder="US"
+                value={certCountry}
+                onChange={e => setCertCountry(e.target.value.toUpperCase().slice(0, 2))}
+                maxLength={2}
+                helperText="Must be exactly 2 characters (e.g., US, IN, GB)"
+              />
               <TextInput id="cert-state" labelText="State / Province" placeholder="California"
                 value={certState} onChange={e => setCertState(e.target.value)} />
               <TextInput id="cert-locality" labelText="Locality / City" placeholder="San Jose"

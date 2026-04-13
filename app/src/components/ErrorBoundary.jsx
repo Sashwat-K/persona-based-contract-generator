@@ -58,7 +58,7 @@ class ErrorBoundary extends React.Component {
     window.location.reload();
   };
 
-  handleCopyError = () => {
+  handleCopyError = async () => {
     const { error, errorInfo } = this.state;
     const text = [
       `Timestamp: ${new Date().toISOString()}`,
@@ -73,10 +73,35 @@ class ErrorBoundary extends React.Component {
       errorInfo?.componentStack || 'N/A'
     ].join('\n');
 
-    navigator.clipboard.writeText(text).then(() => {
-      this.setState({ copied: true });
-      setTimeout(() => this.setState({ copied: false }), 2000);
-    });
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
+    } catch (clipboardError) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+
+      try {
+        const copied = document.execCommand('copy');
+        if (!copied) {
+          throw clipboardError;
+        }
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+
+    this.setState({ copied: true });
+    setTimeout(() => this.setState({ copied: false }), 2000);
   };
 
   render() {

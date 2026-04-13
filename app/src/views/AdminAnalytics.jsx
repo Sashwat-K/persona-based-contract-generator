@@ -186,11 +186,15 @@ const AdminAnalytics = () => {
 
   // Calculate metrics
   const expiredKeys = useMemo(() => users.filter((u) => {
+    // Include users without registered keys (first-login users)
+    if (!u.public_key_fingerprint) return true;
     if (!u.public_key_expires_at) return false;
     return new Date(u.public_key_expires_at) < new Date();
   }).length, [users]);
 
   const expiredPasswords = useMemo(() => users.filter((u) => {
+    // Include users who must change password (first-login users)
+    if (u.must_change_password) return true;
     if (!u.password_expires_at) return false;
     return new Date(u.password_expires_at) < new Date();
   }).length, [users]);

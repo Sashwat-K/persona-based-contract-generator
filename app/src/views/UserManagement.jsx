@@ -16,7 +16,8 @@ import {
   OverflowMenu,
   OverflowMenuItem,
   Checkbox,
-  ToastNotification
+  ToastNotification,
+  Pagination
 } from '@carbon/react';
 import { Add, Renew } from '@carbon/icons-react';
 import userService from '../services/userService';
@@ -63,6 +64,8 @@ const UserManagement = () => {
   const [notification, setNotification] = useState(null);
   const [showInactive, setShowInactive] = useState(false);
   const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -102,7 +105,8 @@ const UserManagement = () => {
 
   const headers = useMemo(() => ACTIVE_TABLE_HEADERS, []);
 
-  const rows = useMemo(() => (
+  // All active user rows (before pagination)
+  const allActiveRows = useMemo(() => (
     users
       .filter((u) => u.is_active)
       .map((u) => {
@@ -183,6 +187,20 @@ const UserManagement = () => {
         };
       })
   ), [users]);
+
+  // Paginated active rows
+  const rows = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return allActiveRows.slice(startIndex, endIndex);
+  }, [allActiveRows, currentPage, pageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(allActiveRows.length / pageSize));
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [allActiveRows.length, currentPage, pageSize]);
 
   // Inactive user rows
   const inactiveRows = useMemo(() => (
@@ -583,6 +601,21 @@ const UserManagement = () => {
                 })}
               </TableBody>
             </Table>
+            {allActiveRows.length > pageSize && (
+              <Pagination
+                backwardText="Previous page"
+                forwardText="Next page"
+                itemsPerPageText="Items per page:"
+                page={currentPage}
+                pageSize={pageSize}
+                pageSizes={[10, 20, 30, 50]}
+                totalItems={allActiveRows.length}
+                onChange={({ page, pageSize: newPageSize }) => {
+                  setCurrentPage(page);
+                  setPageSize(newPageSize);
+                }}
+              />
+            )}
           </TableContainer>
           )}
         </DataTable>

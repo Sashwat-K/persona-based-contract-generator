@@ -727,9 +727,6 @@ registerIpcHandler('auditor:generateEncryptedEnv', async (event, {
     const signingKeyBase64 = Buffer.from(signingCertContent).toString('base64');
     const envWithCert = plainEnv.trimEnd() + '\nsigningKey: ' + signingKeyBase64 + '\n';
     send('stdout', 'Injected signingKey into env section.');
-    send('stdout', '--- env YAML (debug) ---');
-    envWithCert.split('\n').forEach(l => send('stdout', l));
-    send('stdout', '--- end env YAML ---');
 
     // 4) Encrypt env via contract-cli
     await fs.writeFile(certPath, certContent, 'utf8');
@@ -847,9 +844,6 @@ registerIpcHandler('auditor:encryptEnvAndAttestation', async (event, {
     const signingKeyBase64 = Buffer.from(signingCertContent).toString('base64');
     const envWithCert = plainEnv.trimEnd() + '\nsigningKey: ' + signingKeyBase64 + '\n';
     send('stdout', 'Injected signingKey into env section.');
-    send('stdout', '--- env YAML (debug) ---');
-    envWithCert.split('\n').forEach(l => send('stdout', l));
-    send('stdout', '--- end env YAML ---');
 
     // 4. Encrypt env + attestation pubkey via contract-cli using stdin (--in -)
     const certPath = tmp('hpcr.pem');
