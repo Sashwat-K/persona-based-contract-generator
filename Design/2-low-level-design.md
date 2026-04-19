@@ -1,7 +1,7 @@
 # IBM Confidential Computing Contract Generator - Low-Level Design (LLD)
 
-> **Version:** 0.3  
-> **Date:** 2026-04-12  
+> **Version:** 0.4  
+> **Date:** 2026-04-18  
 > **Status:** Draft  
 > **Parent Document:** [1-high-level-design.md](./1-high-level-design.md)
 
@@ -28,6 +28,13 @@ backend/
   internal/
     config/config.go
     crypto/{hash.go,signature.go}
+    contract/
+      engine.go              # Engine interface
+      contractgo/engine.go   # Go-native RSA-OAEP + AES-GCM implementation
+    keymgmt/
+      provider.go            # KeyProvider interface
+      vault/provider.go      # HashiCorp Vault Transit implementation
+      mock/provider.go       # In-memory mock for dev/test
     middleware/
       auth.go
       context.go
@@ -51,10 +58,15 @@ backend/
       rotation_handler.go
       system_log_handler.go
       swagger_handler.go
+      key_handler.go              # V2: signing/attestation key management
+      contract_v2_handler.go      # V2: backend-native section submit + finalize
+      attestation_handler.go      # V2: evidence upload + verification
       response.go
+      system_log_helpers.go
     model/
       user.go
       build.go
+      key.go                      # BuildKeyType, BuildKeyMode, BuildKeyStatus, AttestationVerdict
       audit.go
       errors.go
     repository/
@@ -73,7 +85,10 @@ backend/
       export_service.go
       rotation_service.go
       system_log_service.go
-  migrations/*.sql
+      key_service.go              # V2: build-scoped key lifecycle (Vault/mock)
+      contract_service.go         # V2: section encryption + finalization
+      attestation_service.go      # V2: evidence upload + cryptographic verification
+  migrations/*.sql                # 001..016
 ```
 
 ### 2.2 Desktop App
@@ -84,7 +99,7 @@ app/
     index.js
     preload.js
     crypto/
-      contractCli.js
+      contractCli.js         # DEPRECATED: will be removed in v2 switchover
       encryptor.js
       keyManager.js
       keyStorage.js
@@ -133,6 +148,9 @@ app/
       systemLogService.js
       tokenService.js
       cryptoService.js
+      keyService.js              # TO ADD: v2 key management API calls
+      contractV2Service.js       # TO ADD: v2 section + finalize API calls
+      attestationService.js      # TO ADD: v2 attestation evidence API calls
     store/
       authStore.js
       buildStore.js
@@ -244,33 +262,37 @@ Implemented by:
 
 ## 5.1 Migrations
 
-Current migration chain (001..015) defines users, roles, tokens, builds, sections, assignments, audit events, system logs, and downloaded terminal status.
+Current migration chain (001..016) defines users, roles, tokens, builds, sections, assignments, audit events, system logs, downloaded terminal status, build keys, and attestation tables.
 
 ## 5.2 Enumerations
 
-`build_status`:
+`build_status` (v2 workflow order):
 
 - `CREATED`
+- `SIGNING_KEY_REGISTERED`
 - `WORKLOAD_SUBMITTED`
 - `ENVIRONMENT_STAGED`
-- `AUDITOR_KEYS_REGISTERED`
-- `CONTRACT_ASSEMBLED`
+- `ATTESTATION_KEY_REGISTERED`
 - `FINALIZED`
 - `CANCELLED`
-- `CONTRACT_DOWNLOADED` (added in migration 015)
+- `CONTRACT_DOWNLOADED`
+
+> **Deprecated states (v1):** `AUDITOR_KEYS_REGISTERED`, `CONTRACT_ASSEMBLED` — retained in enum for backward compatibility but not used by v2 workflow.
 
 `persona_role` enum is still used by `user_roles.role`.
 
 `audit_event_type` includes:
 
 - `BUILD_CREATED`
+- `SIGNING_KEY_CREATED`
 - `WORKLOAD_SUBMITTED`
 - `ENVIRONMENT_STAGED`
-- `AUDITOR_KEYS_REGISTERED`
-- `CONTRACT_ASSEMBLED`
+- `ATTESTATION_KEY_REGISTERED`
 - `BUILD_FINALIZED`
 - `BUILD_CANCELLED`
 - `CONTRACT_DOWNLOADED`
+- `ATTESTATION_EVIDENCE_UPLOADED`
+- `ATTESTATION_VERIFIED`
 - plus system/user/token events
 
 ## 5.3 Core Tables
@@ -305,6 +327,7 @@ Reference table used by build assignments and build sections (`role_id`).
 
 - lifecycle state + final artifact fields
 - `contract_yaml`, `contract_hash`, `is_immutable`, `finalized_at`
+- `attestation_state`, `attestation_verified_at`, `attestation_verified_by` (v2)
 
 ### build_assignments
 
@@ -317,9 +340,38 @@ Encrypted persona submissions with:
 - `persona_role`
 - `role_id`
 - `encrypted_payload`
-- `wrapped_symmetric_key` (data owner flow)
+- `wrapped_symmetric_key` (legacy v1 data-owner flow; nullable in v2)
 - `section_hash`
 - `signature`
+
+### build_keys (v2)
+
+Build-scoped signing/attestation keys:
+
+- `key_type` (`SIGNING`, `ATTESTATION`)
+- `mode` (`generate`, `upload_public`)
+- `status` (`ACTIVE`, `REVOKED`)
+- `vault_ref` (Vault key reference/path, nullable)
+- `public_key`, `public_key_fingerprint`
+- `created_by`
+
+### attestation_evidence (v2)
+
+Evidence uploaded by DO/EO:
+
+- `records_file_name`, `records_content` (bytea)
+- `signature_file_name`, `signature_content` (bytea)
+- `metadata` (JSONB)
+- `uploaded_by`, `uploader_role`
+
+### attestation_verifications (v2)
+
+Auditor verification results:
+
+- `evidence_id` (unique FK)
+- `verified_by`
+- `verdict` (`VERIFIED`, `REJECTED`)
+- `details` (JSONB)
 
 ### audit_events
 
@@ -342,13 +394,13 @@ Operational log feed for admin/auditor views.
 
 ## 6. Build State Machine
 
-Linear transitions:
+Linear transitions (v2 workflow):
 
-- `CREATED -> WORKLOAD_SUBMITTED`
+- `CREATED -> SIGNING_KEY_REGISTERED`
+- `SIGNING_KEY_REGISTERED -> WORKLOAD_SUBMITTED`
 - `WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED`
-- `ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED`
-- `AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED`
-- `CONTRACT_ASSEMBLED -> FINALIZED`
+- `ENVIRONMENT_STAGED -> ATTESTATION_KEY_REGISTERED`
+- `ATTESTATION_KEY_REGISTERED -> FINALIZED`
 - `FINALIZED -> CONTRACT_DOWNLOADED`
 
 Cancellation:
@@ -363,12 +415,19 @@ Terminal statuses:
 
 Role + assignment required per transition:
 
+- `SIGNING_KEY_REGISTERED`: `AUDITOR`
 - `WORKLOAD_SUBMITTED`: `SOLUTION_PROVIDER`
 - `ENVIRONMENT_STAGED`: `DATA_OWNER`
-- `AUDITOR_KEYS_REGISTERED`: `AUDITOR`
-- `CONTRACT_ASSEMBLED`: `AUDITOR`
+- `ATTESTATION_KEY_REGISTERED`: `AUDITOR`
 - `FINALIZED`: `AUDITOR`
 - `CONTRACT_DOWNLOADED`: `ENV_OPERATOR` (only via acknowledge-download flow)
+
+Post-finalization attestation lifecycle (tracked by `attestation_state`, not build status):
+
+- `PENDING_UPLOAD -> UPLOADED` (DO/EO uploads evidence)
+- `UPLOADED -> VERIFIED` (Auditor verifies)
+- `UPLOADED -> REJECTED` (Auditor rejects)
+- `REJECTED -> UPLOADED` (DO/EO re-uploads)
 
 Additional rules:
 
@@ -408,7 +467,8 @@ Additional rules:
 
 - role resolution by `role_id` (or fallback `persona_role`)
 - validates assignment + required current state
-- data owner requires wrapped symmetric key
+- on legacy `POST /builds/{id}/sections`, data owner requires wrapped symmetric key
+- on v2 flow, environment encryption is backend-native via `ContractService`
 - blocks duplicate section submissions by role
 - auto-transitions build status after successful submit
 
@@ -430,12 +490,15 @@ Additional rules:
 
 Signed-stage expectation in verification:
 
+- `BUILD_CREATED`
+- `SIGNING_KEY_CREATED`
 - `WORKLOAD_SUBMITTED`
 - `ENVIRONMENT_STAGED`
-- `AUDITOR_KEYS_REGISTERED`
-- `CONTRACT_ASSEMBLED`
+- `ATTESTATION_KEY_REGISTERED`
 - `BUILD_FINALIZED`
 - `CONTRACT_DOWNLOADED`
+- `ATTESTATION_EVIDENCE_UPLOADED` (post-finalization)
+- `ATTESTATION_VERIFIED` (post-finalization)
 
 ### 7.7 ExportService
 
@@ -444,7 +507,29 @@ Signed-stage expectation in verification:
 - writes `CONTRACT_DOWNLOADED` audit event
 - moves build to `CONTRACT_DOWNLOADED`
 
-### 7.8 RotationService
+### 7.8 KeyService (V2)
+
+- build-scoped signing and attestation key lifecycle
+- delegates key generation/storage to `KeyProvider` interface (Vault or Mock)
+- signing keys: Vault-governed RSA-4096. For HPCR-required operations, private key material is retrieved just-in-time into backend memory and zeroized after use.
+- attestation keys: mode `generate` (Vault) or `upload_public` (external PEM)
+- emits `SIGNING_KEY_CREATED` and `ATTESTATION_KEY_REGISTERED` audit events
+
+### 7.9 ContractService (V2)
+
+- backend-native section encryption via `contract-go` engine (RSA-OAEP + AES-256-GCM)
+- accepts plaintext + HPCR certificate PEM; returns encrypted payload + hash
+- finalization: loads encrypted sections, resolves signing key material via `KeyProvider`, signs via `HpcrContractSign(...)`, assembles deterministic YAML
+- emits `BUILD_FINALIZED` audit event
+
+### 7.10 AttestationService (V2)
+
+- accepts multipart evidence upload (records + signature files)
+- verification: resolves attestation key material via `KeyProvider`, decrypts records via `HpcrGetAttestationRecords(...)`, verifies signature via `HpcrVerifySignatureAttestationRecords(...)`
+- returns verdict (`VERIFIED` or `REJECTED`)
+- emits `ATTESTATION_EVIDENCE_UPLOADED` and `ATTESTATION_VERIFIED` audit events
+
+### 7.11 RotationService
 
 - expired credential reporting
 - admin force-password-change
@@ -525,6 +610,24 @@ All `/builds/{id}/...` routes enforce BuildAccess middleware:
 - `GET /builds/{id}/verify`
 - `GET /builds/{id}/verify-contract`
 
+### V2: Key Management
+
+- `POST /builds/{id}/keys/signing` - AUDITOR, Sig
+- `POST /builds/{id}/keys/attestation` - AUDITOR, Sig
+- `GET /builds/{id}/keys/signing/public`
+
+### V2: Contract Operations
+
+- `POST /builds/{id}/v2/sections/workload` (Sig)
+- `POST /builds/{id}/v2/sections/environment` (Sig)
+- `POST /builds/{id}/v2/finalize` - AUDITOR, Sig
+
+### V2: Attestation Evidence
+
+- `POST /builds/{id}/attestation/evidence` (Sig, multipart)
+- `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` - AUDITOR, Sig
+- `GET /builds/{id}/attestation/status`
+
 Export/userdata/acknowledge still enforce assigned ENV_OPERATOR at service level.
 
 ### 8.5 Rotation
@@ -562,12 +665,13 @@ Export/userdata/acknowledge still enforce assigned ENV_OPERATOR at service level
 
 ## 9.4 Local Crypto Boundary
 
-Sensitive cryptographic operations stay local in Electron main process through preload IPC bridges:
+Identity cryptographic operations stay local in Electron main process through preload IPC bridges:
 
-- key generation/storage
-- hashing/signing
-- contract-cli encryption/signing orchestration
+- key generation/storage (identity RSA-4096 key pairs)
+- hashing/signing (request signatures, audit event signatures)
 - local file save/read for export flows
+
+> **Deprecated (v2):** `contractCli.js` encryption/signing orchestration. In the v2 flow, contract cryptography is performed by the backend via API calls.
 
 ---
 
@@ -599,6 +703,22 @@ From `internal/config/config.go`:
 - `TRUST_PROXY_HEADERS` (default `false`)
 - `REQUEST_TIMEOUT` (default `30s`)
 
+### V2: Key Provider Configuration
+
+- `KEY_PROVIDER` (default `mock`; set to `vault` for production)
+
+### V2: Vault Configuration (required when `KEY_PROVIDER=vault`)
+
+- `VAULT_ADDR` (required)
+- `VAULT_NAMESPACE` (optional)
+- `VAULT_AUTH_METHOD` (default `approle`)
+- `VAULT_ROLE_ID` (required for approle)
+- `VAULT_SECRET_ID` (required for approle)
+- `VAULT_TOKEN` (alternative to approle)
+- `VAULT_TRANSIT_MOUNT` (default `transit`)
+- `VAULT_KV_MOUNT` (default `secret`)
+- `VAULT_REQUEST_TIMEOUT` (default `10s`)
+
 Server startup seeding env vars:
 
 - `ADMIN_EMAIL`
@@ -612,7 +732,9 @@ Server startup seeding env vars:
 - Build listing for non-admin users currently performs assignment-first filtering then build fetches (functional but not the most query-efficient shape).
 - Roles are modeled in both `persona_role` enum (`user_roles`) and `roles` table (`build_assignments`, `build_sections`) for backward compatibility and staged migration.
 - OpenAPI endpoint is static and can lag runtime behavior.
+- V1 build states (`AUDITOR_KEYS_REGISTERED`, `CONTRACT_ASSEMBLED`) are retained in the enum for backward compatibility but are not used by the v2 workflow.
+- Electron app v2 service files (`keyService.js`, `contractV2Service.js`, `attestationService.js`) are pending implementation.
 
 ---
 
-> End of LLD v0.3
+> End of LLD v0.4

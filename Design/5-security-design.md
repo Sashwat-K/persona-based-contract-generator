@@ -1,7 +1,7 @@
 # IBM Confidential Computing Contract Generator - Security Design
 
-> **Version:** 1.0  
-> **Date:** 2026-04-12  
+> **Version:** 1.1  
+> **Date:** 2026-04-18  
 > **Status:** Implementation-aligned security reference  
 > **Source of Truth:** `backend/internal/*`, `backend/cmd/server/main.go`, `app/main/index.js`, `app/index.html`, compose/nginx configs
 
@@ -35,24 +35,32 @@ The platform is designed to:
 
 ### 3.1 Trust Boundaries
 
-1. **Desktop (trusted for private key operations):**
-   - keys generated/stored locally
-   - cryptographic operations run in Electron main process
-2. **Backend (untrusted for plaintext secrets):**
+1. **Desktop (trusted for identity key operations):**
+   - identity keys (RSA-4096) generated/stored locally
+   - request signing runs in Electron main process
+2. **Backend (trusted for contract cryptography, untrusted for plaintext secrets):**
    - orchestrates workflow
+   - performs section encryption via `contract-go` engine
    - validates signatures
    - stores encrypted payloads, hashes, and audit events
-3. **Network:**
+3. **HashiCorp Vault (trusted for build key material):**
+   - manages signing/attestation RSA-4096 keys and key access policy
+   - backend retrieves private key material only just-in-time for HPCR functions that require PEM keys (`HpcrContractSign`, `HpcrGetAttestationRecords`)
+   - private key material is short-lived in backend memory and is never persisted to DB/files/logs or returned to clients
+   - backend authenticates via AppRole (production) or dev root token
+4. **Network:**
    - traffic intended through nginx reverse proxy
    - TLS termination at proxy in production mode
-4. **Database:**
+   - Vault on internal `app_net` network (not internet-exposed)
+5. **Database:**
    - stores user/auth/audit/build metadata and encrypted artifacts
+   - stores build key public keys and Vault references (not private keys)
 
 ### 3.2 Out-of-Scope Risks
 
 - endpoint hardening of external identity providers (not used)
 - host OS compromise on client or server
-- enterprise KMS/HSM integration (not implemented)
+- Vault unsealing and disaster recovery (operator responsibility)
 
 ---
 
@@ -163,9 +171,13 @@ These exemptions enable account setup and logout flows before full key state is 
 
 ### 7.1 Controlled Lifecycle
 
-Current state progression:
+V2 state progression:
 
-`CREATED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED -> FINALIZED -> CONTRACT_DOWNLOADED`
+`CREATED -> SIGNING_KEY_REGISTERED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> ATTESTATION_KEY_REGISTERED -> FINALIZED -> CONTRACT_DOWNLOADED`
+
+Post-finalization attestation lifecycle (tracked by `attestation_state`):
+
+`PENDING_UPLOAD -> UPLOADED -> VERIFIED|REJECTED`
 
 Cancellation:
 
@@ -201,16 +213,26 @@ After acknowledgment:
 
 ### 8.2 Key Ownership
 
-- private keys remain client-side
-- backend stores public keys + fingerprints + expiry metadata
-- backend verification always uses registered keys, never caller-supplied verification keys
+- **Identity private keys** remain client-side (Electron). Never transmitted.
+- **Build signing/attestation private keys** are governed by HashiCorp Vault and may be retrieved only by backend workers at runtime for HPCR-required operations. They are never persisted outside Vault-managed custody.
+- Backend stores identity public keys + fingerprints + expiry metadata.
+- Backend stores build key public keys + Vault Transit key references.
+- Backend verification always uses registered keys, never caller-supplied verification keys.
 
-### 8.3 Data Classification (Stored)
+### 8.3 Build Key Security (Vault-Managed)
+
+- Signing keys: RSA-4096. Final contract signatures are produced through `HpcrContractSign(...)` using key material retrieved just-in-time from Vault.
+- Attestation keys: RSA-4096, generated in Vault or uploaded (public key only). Decryption paths that call `HpcrGetAttestationRecords(...)` require backend access to the corresponding private key material.
+- Key naming convention: `build-signing-<build_id>`, `build-attestation-<build_id>`.
+- Backend authenticates to Vault via AppRole (production) or dev root token (development).
+- Vault policy follows least privilege for build-scoped key refs only. Client-facing APIs never expose private keys, and backend key material handling is memory-only with post-operation zeroization.
+
+### 8.4 Data Classification (Stored)
 
 Backend stores:
 
 - encrypted section payloads
-- wrapped symmetric keys
+- wrapped symmetric keys (legacy v1 rows only; nullable/absent in v2-first submissions)
 - section hashes/signatures
 - contract hash and finalized contract YAML (which contains encrypted contract data)
 - audit events and hash chain metadata
@@ -229,12 +251,15 @@ Backend stores:
 
 Signed event types expected by verification logic:
 
+- `BUILD_CREATED`
+- `SIGNING_KEY_CREATED`
 - `WORKLOAD_SUBMITTED`
 - `ENVIRONMENT_STAGED`
-- `AUDITOR_KEYS_REGISTERED`
-- `CONTRACT_ASSEMBLED`
+- `ATTESTATION_KEY_REGISTERED`
 - `BUILD_FINALIZED`
 - `CONTRACT_DOWNLOADED`
+- `ATTESTATION_EVIDENCE_UPLOADED`
+- `ATTESTATION_VERIFIED`
 
 ### 9.3 Verification Endpoints
 
@@ -384,6 +409,9 @@ Before go-live:
 - set restrictive `CORS_ALLOWED_ORIGINS`; keep `CORS_ALLOW_ALL=false`
 - ensure `TRUST_PROXY_HEADERS=true` only behind trusted proxy
 - verify DB connectivity and migration success before exposing proxy
+- **configure `KEY_PROVIDER=vault`** with production Vault cluster
+- **verify Vault AppRole** credentials and Transit key policies
+- **ensure Vault is on internal network** (not internet-exposed)
 - validate first-login setup flow for all seeded/provisioned users
 - verify signature enforcement on mutating endpoints
 - verify audit + contract integrity checks on a full test build
@@ -395,9 +423,11 @@ Before go-live:
 
 Current known areas to improve:
 
-- private key at-rest protection currently uses app-local machine-derived strategy; OS keychain/HSM integration would strengthen client key protection
+- private key at-rest protection currently uses app-local machine-derived strategy; OS keychain integration would strengthen client key protection
 - static embedded OpenAPI may lag implementation details
 - no mTLS between reverse proxy and backend by default
+- no mTLS between backend and Vault (recommended for production)
+- Vault unsealing and HA configuration is operator responsibility
 - additional automated security tests (negative-path and replay-focused) should be expanded
 
 ---

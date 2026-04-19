@@ -1,7 +1,7 @@
 # IBM Confidential Computing Contract Generator — High-Level Design (HLD)
 
-> **Version:** 0.5  
-> **Date:** 2026-04-12  
+> **Version:** 0.6  
+> **Date:** 2026-04-18  
 > **Status:** Draft
 
 ---
@@ -14,12 +14,15 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
 
 ### Architectural Principles
 
-- All cryptographic operations are executed locally on the **Electron desktop application** (React + IBM Carbon UI).
-- The backend **never** performs encryption, signing, or contract assembly.
-- The backend only orchestrates workflow, verifies signatures against **registered public keys**, stores encrypted artifacts, and maintains an audit hash chain.
-- Every user registers a public key; the corresponding private key **never** leaves the user's machine.
+- **Contract cryptography** (section encryption, contract assembly, signing) is performed by the **Go backend** using the native `contract-go` engine.
+- **Identity cryptography** (user key generation, request signing) remains client-side on the **Electron desktop application** (React + IBM Carbon UI).
+- Build-scoped signing and attestation keys are managed by **HashiCorp Vault**. For HPCR operations that require private keys, the backend performs just-in-time key retrieval into process memory and zeroizes memory after use; private keys are never persisted outside Vault.
+- The backend orchestrates workflow, verifies signatures against **registered public keys**, stores encrypted artifacts, and maintains an audit hash chain.
+- Every user registers a public key; the corresponding identity private key **never** leaves the user's machine.
 - Build participation requires explicit assignment — having the correct role alone is insufficient.
 - The final artifact is a signed and encrypted YAML contract file.
+
+> **Note:** The v1 workflow (client-side encryption via `contract-cli`) is deprecated. V2 endpoints perform all contract cryptography server-side. V1 endpoints remain available for backward compatibility.
 
 ---
 
@@ -31,7 +34,7 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
 - Bind cryptographic identity to user accounts via public key registration
 - Ensure strict linear state progression
 - Maintain cryptographic audit trail with identity-bound signatures
-- Keep private keys client-side only
+- Keep identity private keys client-side while keeping build private keys under Vault-governed backend custody
 - Protect sensitive data at every stage with cryptographic guarantees (not just RBAC)
 - Produce immutable final YAML contract
 - Support LAN and internet deployments
@@ -40,7 +43,6 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
 ### Non-Goals
 
 - Multi-tenant SaaS
-- Centralized key management
 - Real-time collaboration
 - HPCR orchestration
 
@@ -55,9 +57,9 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
                                               |
                                               v
                                         [ Go Backend ]
-                                              |
-                                              v
-                                        [ PostgreSQL ]
+                                           /      \
+                                          v        v
+                                   [ PostgreSQL ] [ HashiCorp Vault ]
 ```
 
 ### Deployment Target
@@ -70,10 +72,11 @@ The system enforces a strict, linear, multi-persona workflow with cryptographic 
 
 - nginx is **mandatory** for TLS termination.
 - Backend is never directly internet-exposed.
-- All crypto operations occur locally.
+- **Contract cryptography** (section encryption, assembly, signing) is performed server-side via `contract-go`.
+- **Identity cryptography** (user key generation, request signing) remains client-side.
+- Build-scoped signing and attestation keys are managed in **HashiCorp Vault**. HPCR-required private key usage happens only as short-lived in-memory material inside backend workers.
 - Backend stores only encrypted or hashed data.
 - Backend verifies signatures against registered public keys — never against request-supplied keys.
-- Contract CLI (using Contract Go) is invoked via Node.js child_process in the Electron main process.
 
 ### Desktop Application Architecture
 
@@ -82,11 +85,12 @@ The Electron desktop application is the primary client interface for all users. 
 **Key Features:**
 
 1. **Security-First Design**
-   - All cryptographic operations execute in the Electron main process (Node.js)
+   - Identity cryptographic operations (key generation, request signing) execute in the Electron main process (Node.js)
+   - Contract cryptography (encryption, assembly, signing) delegated to backend via v2 API
    - Renderer process (React UI) has no direct access to crypto APIs
    - Context isolation and sandbox mode enabled
    - Secure IPC communication via preload script
-   - Private keys never leave the user's machine
+   - Identity private keys never leave the user's machine
 
 2. **User Interface**
    - IBM Carbon Design System for consistent, professional UI
@@ -112,14 +116,11 @@ The Electron desktop application is the primary client interface for all users. 
    - **Account Settings**: Profile, password, and key management
    - **Login**: Split-screen with server configuration and remember email
 
-5. **Cryptographic Operations**
-   - RSA-4096 key pair generation (identity and attestation)
-   - AES-256-GCM symmetric encryption
-   - RSA-OAEP key wrapping/unwrapping
+5. **Cryptographic Operations (Client-Side)**
+   - RSA-4096 key pair generation (identity keys)
    - SHA-256 hashing
-   - RSA-PSS signing and verification
+   - RSA-PSS signing (request signing, audit signatures)
    - Secure key storage per user ID
-   - Integration with contract-cli via child_process
 
 6. **Production Distribution**
    - Cross-platform builds (macOS, Windows, Linux)
@@ -127,6 +128,7 @@ The Electron desktop application is the primary client interface for all users. 
    - Signed installer/distribution artifacts with manual update rollout
    - Installer and portable versions
    - Comprehensive build documentation
+   - No external CLI dependencies required (contract-cli removed)
 
 
 ---
@@ -159,7 +161,7 @@ Public keys currently expire after **90 days**. When a key expires:
 This enables:
 
 - **Identity-bound signature verification** — the backend verifies all signatures against the user's registered public key, not a request-supplied key.
-- **Secure key wrapping** — personas can encrypt data so only a specific other persona can decrypt it (e.g., Data Owner wraps the symmetric key for the Auditor).
+- **Non-repudiation for mutating actions** — each actor signs requests with their identity private key, and backend verifies against registered public keys.
 - **Key rotation** — expired keys force users to generate fresh key pairs, limiting the impact of a compromised private key.
 
 ---
@@ -186,16 +188,28 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 
 ---
 
+### Auditor — Phase 1: Signing Key Registration
+
+> Occurs **before** SP and DO submit their sections. The signing key is needed for later contract signing.
+
+| | |
+|---|---|
+| **Provides** | Signing key (generated in Vault or uploaded) |
+| **V2 Actions** | Register signing key via `POST /builds/{id}/keys/signing`. Vault manages the RSA-4096 key pair and returns public key + key ID. Private key material is retrievable only by backend at runtime for HPCR operations and is never persisted to DB/files/logs. |
+
+---
+
 ### Solution Provider
 
 | | |
 |---|---|
 | **Provides** | Workload section payload |
-| **Local Actions** | Encrypt workload using `contract-cli` (via `contract-go`), Compute SHA256 hash of encrypted workload, Sign hash with private key |
-| **Uploads** | `role_id`, `encrypted_payload`, `section_hash`, `signature` (via `POST /builds/{id}/sections`) |
+| **V2 Actions** | Submit plaintext workload + HPCR encryption certificate to backend via `POST /builds/{id}/v2/sections/workload`. Backend encrypts using `contract-go`. |
+| **V1 Actions (deprecated)** | Encrypt workload using `contract-cli` locally, compute SHA256 hash, sign hash with private key, upload via `POST /builds/{id}/sections` |
 
 **Notes:**
 
+- In the v2 flow, the backend handles encryption and hash computation.
 - Section `signature`/`section_hash` are persisted with the section row.
 - Mutating request signature headers (`X-Signature*`) are verified against the actor's registered public key.
 
@@ -205,54 +219,58 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 
 | | |
 |---|---|
-| **Provides** | Environment configuration (logging credentials, secrets, env vars) |
+| **Provides** | Environment section payload (logging credentials, secrets, env vars) |
+| **V2 Actions** | Submit plaintext environment + HPCR encryption certificate via `POST /builds/{id}/v2/sections/environment`. Backend encrypts using `contract-go` and stores encrypted payload + section hash. |
+| **V1 Actions (deprecated)** | Encrypt environment locally, wrap symmetric key, and submit via `POST /builds/{id}/sections`. |
 
-**Local Actions:**
+**Notes:**
 
-1. Retrieve the assigned Auditor's registered public key from the backend.
-2. Generate the environment section (plaintext locally).
-3. Generate a random AES-256 symmetric key.
-4. Encrypt environment section using the symmetric key (AES-256-GCM).
-5. Wrap (encrypt) the symmetric key with the Auditor's RSA public key (RSA-OAEP).
-6. Compute SHA256 hash of the encrypted env payload.
-7. Sign hash with private key.
-
-**Uploads:** `role_id`, `encrypted_payload`, `encrypted_symmetric_key`, `section_hash`, `signature` (via `POST /builds/{id}/sections`)
-
-**Result:** Environment section is securely staged. **Only the assigned Auditor** can unwrap the symmetric key and read the environment — the backend cannot.
+- Signing key setup is already completed earlier (`SIGNING_KEY_REGISTERED`) by the Auditor.
+- In v2, Data Owner no longer performs local env encryption/wrapping/signing for contract payloads.
+- Mutating request signature headers (`X-Signature*`) are still required and verified against the Data Owner's registered identity public key.
 
 ---
 
-### Auditor (Sign & Add Attestation)
+### Auditor — Phase 2: Attestation Key Registration
+
+> Occurs **after** SP and DO have submitted their sections, **before** finalization.
 
 | | |
 |---|---|
-| **Provides** | Attestation public key, Signing key/cert, Final assembled contract |
+| **Provides** | Attestation public key |
+| **V2 Actions** | Register attestation key via `POST /builds/{id}/keys/attestation` — mode `generate` (Vault-managed RSA-4096 key pair, enabling backend-side HPCR attestation decryption/verification) or `upload_public` (Auditor provides externally generated public key). |
 
-**Local Actions (Sign & Add Attestation tab + Finalise Contract tab):**
+---
 
-1. Generate signing key/cert locally.
-2. Generate attestation key pair locally.
-3. Download: `workload.enc`, `encrypted_env_payload`, `wrapped_symmetric_key` (returned as `wrapped_symmetric_key` in section data).
-4. Unwrap symmetric key using own RSA private key (RSA-OAEP decrypt).
-5. Decrypt environment section using symmetric key (AES-256-GCM decrypt).
-6. Inject signing certificate/public key into environment section.
-7. Generate encrypted environment preview and encrypt attestation public key using HPCR encryption certificate via `contract-cli`.
-8. Confirm readiness with backend via `POST /builds/{id}/attestation` (idempotent state confirmation; no key material uploaded).
-9. Assemble final YAML contract:
-   - Encrypted workload
-   - Encrypted environment (with signing key/cert embedded)
-   - Encrypted Attestation public key
-10. Compute: `contract_hash = SHA256(contract.yaml)`
-11. Sign `contract_hash` with the Auditor's **registered identity private key** (RSA-PSS with SHA-256). This is the same key pair registered during account setup, ensuring the backend can verify the signature against the Auditor's registered public key.
-12. Upload: `contract_yaml`, `contract_hash`, `signature`, `public_key`
+### Auditor — Phase 3: Contract Finalization
 
-**Backend Actions:**
+| | |
+|---|---|
+| **Provides** | Final assembled contract (backend-driven) |
+
+**V2 Actions (Backend-Native):**
+
+1. Trigger finalization via `POST /builds/{id}/v2/finalize` with `signing_key_id`, optional `attestation_key_id`, and optional `attestation_cert_pem`.
+2. Backend loads encrypted sections, resolves keys from Vault, computes `envWorkloadSignature` and `contract_hash` signatures using `HpcrContractSign(...)`, assembles deterministic YAML, and transitions build to FINALIZED.
+
+**V1 Actions (Deprecated — Local contract-cli):**
+
+1. Generate keys locally, download sections, unwrap/decrypt, inject signing cert.
+2. Encrypt via `contract-cli`, assemble contract, compute hash, sign, upload.
+
+**Backend Actions (V2):**
 
 - Verifies the Auditor is the assigned user for this build.
+- Encrypts attestation public key using HPCR certificate (if provided).
+- Signs `envWorkloadSignature` and `contractHash` using `HpcrContractSign(...)` with Vault-fetched private key material loaded transiently into backend memory.
+- Assembles deterministic YAML contract.
+- Stores `contract_yaml` and marks build as **FINALIZED** with `is_immutable = true`.
+- Emits audit event.
+
+**Backend Actions (V1 — deprecated):**
+
 - Verifies signature against the Auditor's **registered public key**.
-- Stores `contract_yaml` (raw YAML in current flow; backward compatible with older base64-stored rows during verification/export).
-- Marks build as **FINALIZED** with `is_immutable = true`.
+- Stores `contract_yaml`, marks build as FINALIZED.
 - Emits audit event.
 
 ---
@@ -279,6 +297,26 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 - Emits `CONTRACT_DOWNLOADED` audit event with signature.
 
 > This creates a cryptographic proof-of-receipt: the audit chain records that the assigned Env Operator downloaded and verified the correct contract.
+
+---
+
+### Post-Finalization: Attestation Evidence Upload
+
+| | |
+|---|---|
+| **Who** | Data Owner or Env Operator (assigned) |
+| **Provides** | Encrypted attestation records file + signature file |
+| **Actions** | Upload evidence via `POST /builds/{id}/attestation/evidence` (multipart). Backend stores evidence blobs and updates `attestation_state` to `UPLOADED`. |
+
+---
+
+### Post-Finalization: Attestation Verification
+
+| | |
+|---|---|
+| **Who** | Auditor (assigned) |
+| **Provides** | Verification verdict |
+| **Actions** | Trigger verification via `POST /builds/{id}/attestation/evidence/{evidence_id}/verify`. Backend retrieves attestation private key material from Vault at runtime, decrypts records via `HpcrGetAttestationRecords(...)`, then verifies signature via `HpcrVerifySignatureAttestationRecords(...)`. Returns verdict (`VERIFIED` or `REJECTED`). |
 
 ---
 
@@ -321,30 +359,43 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED
-    CREATED --> WORKLOAD_SUBMITTED
+    CREATED --> SIGNING_KEY_REGISTERED
+    SIGNING_KEY_REGISTERED --> WORKLOAD_SUBMITTED
     WORKLOAD_SUBMITTED --> ENVIRONMENT_STAGED
-    ENVIRONMENT_STAGED --> AUDITOR_KEYS_REGISTERED
-    AUDITOR_KEYS_REGISTERED --> CONTRACT_ASSEMBLED
-    CONTRACT_ASSEMBLED --> FINALIZED
+    ENVIRONMENT_STAGED --> ATTESTATION_KEY_REGISTERED
+    ATTESTATION_KEY_REGISTERED --> FINALIZED
     FINALIZED --> CONTRACT_DOWNLOADED
     CREATED --> CANCELLED : Admin only
+    SIGNING_KEY_REGISTERED --> CANCELLED : Admin only
     WORKLOAD_SUBMITTED --> CANCELLED : Admin only
     ENVIRONMENT_STAGED --> CANCELLED : Admin only
-    AUDITOR_KEYS_REGISTERED --> CANCELLED : Admin only
-    CONTRACT_ASSEMBLED --> CANCELLED : Admin only
+    ATTESTATION_KEY_REGISTERED --> CANCELLED : Admin only
+```
+
+**Post-finalization attestation lifecycle** (tracked by `attestation_state`, not the build state machine):
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING_UPLOAD
+    PENDING_UPLOAD --> UPLOADED : DO/EO uploads evidence
+    UPLOADED --> VERIFIED : Auditor verifies
+    UPLOADED --> REJECTED : Auditor rejects
+    REJECTED --> UPLOADED : DO/EO re-uploads
 ```
 
 ### Invariants
 
-- Strict linear progression.
-- Each persona contributes exactly once.
+- Strict linear progression for the build state machine.
+- Auditor registers signing key **before** SP/DO submit sections.
+- Auditor registers attestation key **after** sections, **before** finalization.
 - Build participation requires both correct role **and** explicit assignment.
 - No concurrent edits.
 - **FINALIZED**, **CONTRACT_DOWNLOADED**, and **CANCELLED** are immutable end states for workflow mutations.
 - The only allowed post-finalization state change is the download acknowledgment path (`FINALIZED -> CONTRACT_DOWNLOADED`).
-- Backend performs no contract assembly.
+- Attestation evidence upload and verification are post-finalization operations tracked by `attestation_state`.
+- In the v2 flow, contract assembly is performed by the backend using the `contract-go` engine.
 - Signatures are verified against registered public keys, never request-supplied keys.
-- The backend never has access to the symmetric key protecting the environment section.
+- In v2, backend encrypts environment payload server-side; plaintext is processed in-request and only encrypted artifacts are persisted.
 
 ---
 
@@ -352,7 +403,7 @@ stateDiagram-v2
 
 ### How the Tables Connect
 
-The domain model consists of 8 entities. Here's how they relate:
+The domain model consists of 11 entities. Here's how they relate:
 
 ```mermaid
 erDiagram
@@ -365,9 +416,16 @@ erDiagram
     USER ||--o{ BUILD_ASSIGNMENT : "assigned to"
     USER ||--o{ BUILD_SECTION : "submits"
     USER ||--o{ AUDIT_EVENT : "triggers"
+    USER ||--o{ BUILD_KEY : "creates"
+    USER ||--o{ ATTESTATION_EVIDENCE : "uploads"
+    USER ||--o{ ATTESTATION_VERIFICATION : "verifies"
     BUILD ||--o{ BUILD_ASSIGNMENT : "has assignments"
     BUILD ||--o{ BUILD_SECTION : "contains"
     BUILD ||--o{ AUDIT_EVENT : "tracked by"
+    BUILD ||--o{ BUILD_KEY : "has keys"
+    BUILD ||--o{ ATTESTATION_EVIDENCE : "has evidence"
+    BUILD ||--o{ ATTESTATION_VERIFICATION : "has verifications"
+    ATTESTATION_EVIDENCE ||--|| ATTESTATION_VERIFICATION : "verified by"
 ```
 
 **Reading the model:**
@@ -378,6 +436,9 @@ erDiagram
 - **Build** — A contract being collaboratively constructed. Tracks current lifecycle status and eventually holds the final contract YAML/hash (raw YAML in current flow; legacy rows may be base64). `encryption_certificate` exists as an optional compatibility field.
 - **Build Assignment** — "For Build B, role Y is performed by User X." This is how the Admin binds specific users to specific builds. One user per role per build.
 - **Build Section** — Encrypted data submitted by a persona during the build. Current flow stores up to 3 role sections (Solution Provider, Data Owner, Auditor), each with encrypted payload, hash, and signature metadata.
+- **Build Key** — Build-scoped signing or attestation key. Managed in Vault (or uploaded). Public key + vault reference are stored; private key material is only retrieved transiently by backend for HPCR-required operations.
+- **Attestation Evidence** — Records + signature files uploaded by Data Owner or Env Operator for post-finalization attestation verification.
+- **Attestation Verification** — Auditor-triggered verification result (VERIFIED or REJECTED) with details.
 - **Audit Event** — A tamper-evident log entry. Each event hashes its data together with the previous event's hash, forming an unbreakable chain. Signed by the actor's registered key.
 - **API Token** — Bearer tokens for authentication. Stored as SHA-256 hashes (never plaintext), revocable, and evaluated against configured token TTL from creation time.
 
@@ -435,6 +496,9 @@ erDiagram
 | `contract_hash` | string |
 | `contract_yaml` | text (raw YAML in current flow; backward compatible with legacy base64 rows) |
 | `is_immutable` | bool |
+| `attestation_state` | ENUM (`PENDING_UPLOAD`, `UPLOADED`, `VERIFIED`, `REJECTED`) |
+| `attestation_verified_at` | timestamp (nullable) |
+| `attestation_verified_by` | reference → User (nullable) |
 
 ### Build Assignment
 
@@ -493,6 +557,48 @@ erDiagram
 
 > Token validity is derived at runtime from `created_at + TOKEN_EXPIRY`; there is no persisted `expires_at` column.
 
+### Build Key
+
+| Field | Type |
+|---|---|
+| `id` | UUID |
+| `build_id` | reference → Build |
+| `key_type` | ENUM (`SIGNING`, `ATTESTATION`) |
+| `mode` | ENUM (`generate`, `upload_public`) |
+| `status` | ENUM (`ACTIVE`, `REVOKED`) |
+| `vault_ref` | string (nullable — Vault key reference/path) |
+| `public_key` | text |
+| `public_key_fingerprint` | string |
+| `created_by` | reference → User |
+| `created_at` | timestamp |
+
+### Attestation Evidence
+
+| Field | Type |
+|---|---|
+| `id` | UUID |
+| `build_id` | reference → Build |
+| `uploaded_by` | reference → User |
+| `uploader_role` | persona_role |
+| `records_file_name` | string |
+| `records_content` | bytea |
+| `signature_file_name` | string |
+| `signature_content` | bytea |
+| `metadata` | JSONB |
+| `created_at` | timestamp |
+
+### Attestation Verification
+
+| Field | Type |
+|---|---|
+| `id` | UUID |
+| `build_id` | reference → Build |
+| `evidence_id` | reference → Attestation Evidence (unique) |
+| `verified_by` | reference → User |
+| `verdict` | ENUM (`VERIFIED`, `REJECTED`) |
+| `details` | JSONB |
+| `created_at` | timestamp |
+
 ---
 
 ## 7. Cryptographic Standards
@@ -507,6 +613,8 @@ erDiagram
 | **Encoding** | Base64 (standard, with padding) for all binary payloads |
 | **Certificates** | X.509v3 PEM |
 | **Canonical JSON** | RFC 8785 (JSON Canonicalization Scheme) |
+| **Contract-go Envelope** | `contract-go.v1.<base64-json>` (algorithm, wrapped_key, nonce, ciphertext) |
+| **Key Management** | HashiCorp Vault-managed build keys (RSA-4096) with just-in-time backend memory retrieval for HPCR sign/decrypt operations |
 
 ---
 
@@ -521,14 +629,17 @@ Every significant action in the system (build creation, section submission, fina
 The current implementation validates signatures in three ways:
 
 1. **Signed stage events in audit chain (required):**
-| Event | Persona |
-|---|---|
-| `WORKLOAD_SUBMITTED` | Solution Provider |
-| `ENVIRONMENT_STAGED` | Data Owner |
-| `AUDITOR_KEYS_REGISTERED` | Auditor |
-| `CONTRACT_ASSEMBLED` | Auditor |
-| `BUILD_FINALIZED` | Auditor |
-| `CONTRACT_DOWNLOADED` | Env Operator |
+| Event | Persona | Step |
+|---|---|---|
+| `BUILD_CREATED` | Admin | 0 |
+| `SIGNING_KEY_REGISTERED` | Auditor | 1 |
+| `WORKLOAD_SUBMITTED` | Solution Provider | 2 |
+| `ENVIRONMENT_STAGED` | Data Owner | 3 |
+| `ATTESTATION_KEY_REGISTERED` | Auditor | 4 |
+| `BUILD_FINALIZED` | Auditor | 5 |
+| `CONTRACT_DOWNLOADED` | Env Operator | 6 |
+| `ATTESTATION_EVIDENCE_UPLOADED` | Data Owner / Env Operator | 7 (post-finalization) |
+| `ATTESTATION_VERIFIED` | Auditor | 8 (post-finalization) |
 
 2. **Request-signature metadata captured on mutating calls (when applicable):**
 | Event | Source |
@@ -547,12 +658,14 @@ The current implementation validates signatures in three ways:
 flowchart LR
     S["Seed: SHA256('IBM_CC:' + build_id)"] --> E0
     E0["Event 0: BUILD_CREATED\nhash = SHA256(data + seed)"] --> E1
-    E1["Event 1: WORKLOAD_SUBMITTED\nhash = SHA256(data + E0.hash)"] --> E2
-    E2["Event 2: ENVIRONMENT_STAGED\nhash = SHA256(data + E1.hash)"] --> E3
-    E3["Event 3: AUDITOR_KEYS_REGISTERED\nhash = SHA256(data + E2.hash)"] --> E4
-    E4["Event 4: CONTRACT_ASSEMBLED\nhash = SHA256(data + E3.hash)"] --> E5
+    E1["Event 1: SIGNING_KEY_REGISTERED\nhash = SHA256(data + E0.hash)"] --> E2
+    E2["Event 2: WORKLOAD_SUBMITTED\nhash = SHA256(data + E1.hash)"] --> E3
+    E3["Event 3: ENVIRONMENT_STAGED\nhash = SHA256(data + E2.hash)"] --> E4
+    E4["Event 4: ATTESTATION_KEY_REGISTERED\nhash = SHA256(data + E3.hash)"] --> E5
     E5["Event 5: BUILD_FINALIZED\nhash = SHA256(data + E4.hash)"] --> E6
-    E6["Event 6: CONTRACT_DOWNLOADED\nhash = SHA256(data + E5.hash)"]
+    E6["Event 6: CONTRACT_DOWNLOADED\nhash = SHA256(data + E5.hash)"] --> E7
+    E7["Event 7: ATTESTATION_EVIDENCE_UPLOADED\nhash = SHA256(data + E6.hash)"] --> E8
+    E8["Event 8: ATTESTATION_VERIFIED\nhash = SHA256(data + E7.hash)"]
 ```
 
 ### Step-by-Step Example
@@ -586,10 +699,17 @@ signature  = RSA-PSS-Sign(event_hash, admin_private_key)
 **Step 3 — Subsequent Events:**  
 Each subsequent event uses the previous event's hash as its `previous_event_hash`, creating the chain:
 ```
-Event 1 (WORKLOAD_SUBMITTED):
+Event 1 (SIGNING_KEY_REGISTERED):
     previous_event_hash = "e5f6g7h8..."  (Event 0's hash)
     event_hash = SHA256(canonical_json(event_data) + "e5f6g7h8...")
+    signature  = RSA-PSS-Sign(event_hash, auditor_private_key)
+
+Event 2 (WORKLOAD_SUBMITTED):
+    previous_event_hash = "i9j0k1l2..."  (Event 1's hash)
+    event_hash = SHA256(canonical_json(event_data) + "i9j0k1l2...")
     signature  = RSA-PSS-Sign(event_hash, sp_private_key)
+
+  ... and so on through Events 3–8
 ```
 
 ### Why This Matters
@@ -597,7 +717,8 @@ Event 1 (WORKLOAD_SUBMITTED):
 - **Tamper detection:** If anyone modifies an event's data, its hash changes, which breaks the chain from that point forward.
 - **Non-repudiation:** Each event is signed by the actor's registered private key. The actor cannot deny performing the action.
 - **Accountability:** Every persona's contribution is cryptographically bound to their identity.
-- **No loose ends:** Admin signs mutating requests (captured on `BUILD_CREATED`/`ROLE_ASSIGNED`), SP/DO sign section payloads, Auditor signs finalization, and Env Operator signs download acknowledgment.
+- **No loose ends:** Admin signs build creation, Auditor signs key registration + finalization + attestation verification, SP/DO sign section payloads, Env Operator signs download acknowledgment, DO/EO signs attestation evidence upload.
+- **Post-finalization integrity:** Attestation upload and verification events extend the chain beyond finalization, ensuring the attestation lifecycle is tamper-evident.
 
 ### Verification
 
@@ -666,6 +787,30 @@ The `GET /builds/{id}/verify` endpoint:
 | `POST` | `/builds/{id}/assignments` |
 | `DELETE` | `/builds/{id}/assignments` |
 
+### V2: Backend-Native Key Management
+
+| Method | Endpoint |
+|---|---|
+| `POST` | `/builds/{id}/keys/signing` |
+| `POST` | `/builds/{id}/keys/attestation` |
+| `GET` | `/builds/{id}/keys/signing/public` |
+
+### V2: Backend-Native Contract Operations
+
+| Method | Endpoint |
+|---|---|
+| `POST` | `/builds/{id}/v2/sections/workload` |
+| `POST` | `/builds/{id}/v2/sections/environment` |
+| `POST` | `/builds/{id}/v2/finalize` |
+
+### V2: Attestation Evidence
+
+| Method | Endpoint |
+|---|---|
+| `POST` | `/builds/{id}/attestation/evidence` |
+| `POST` | `/builds/{id}/attestation/evidence/{evidence_id}/verify` |
+| `GET` | `/builds/{id}/attestation/status` |
+
 ### Audit, Verification, and Export
 
 | Method | Endpoint |
@@ -707,11 +852,22 @@ The `GET /builds/{id}/verify` endpoint:
 
 - HTTP Layer
 - `BuildService` (state machine enforcement + assignment checks)
+- `ContractService` (v2 section encryption + finalization via `contract-go`)
+- `KeyService` (build-scoped key lifecycle via `KeyProvider`)
+- `AttestationService` (evidence upload + cryptographic verification)
 - `AuditService`
 - `VerificationService`
 - `ExportService`
 - `UserService`
+- `KeyProvider` interface (Vault or Mock implementations)
+- `contract.Engine` interface (`contractgo.Engine` implementation)
 - Repository Layer (`sqlc` + `pgx`)
+
+### HashiCorp Vault
+
+- **Vault key custody** — manages RSA-4096 signing/attestation keys and governs backend access. For HPCR APIs that require PEM private keys, backend retrieves key material just-in-time and immediately zeroizes it after use.
+- **Authentication** — AppRole (production) or dev root token (development).
+- **Access control** — Backend service account has least-privilege access only to build-scoped key references required for key lifecycle and runtime HPCR operations. Keys are never returned in public APIs and must not be written to disk or logs.
 
 ### Database
 
@@ -728,13 +884,14 @@ The `GET /builds/{id}/verify` endpoint:
 | **Authorization** | Strict server-side RBAC + per-build assignment checks |
 | **Mutating Request Signing** | All authenticated mutating endpoints require `X-Signature`, `X-Signature-Hash`, `X-Timestamp` (+ optional `X-Key-Fingerprint`) except setup/logout exemptions; backend verifies against registered user public key |
 | **Cryptographic Identity** | All users register RSA-4096 public keys; signatures verified against registered keys; keys expire after 90 days |
-| **Private Key Isolation** | All private keys generated and stored locally; never transmitted |
+| **Identity Private Key Isolation** | Identity private keys generated and stored locally on user machines; never transmitted |
+| **Build Key Isolation** | Signing and attestation private keys are Vault-governed and only materialized transiently in backend memory during HPCR operations |
 | **Credential Rotation** | Passwords and public keys rotate every 90 days. Backend forces setup flow on expiry |
 | **First-Login Enforcement** | All new users (including seeded admin) must change password and register public key before accessing any functionality |
-| **Environment Staging Protection** | Encrypted with AES-256-GCM locally; symmetric key wrapped with Auditor's RSA public key (RSA-OAEP). Backend never has access to the unwrapped symmetric key |
-| **Final Contract Integrity** | SHA256 hash + signature; immutable after FINALIZED |
+| **Environment Staging Protection** | In v2, environment payload is submitted over TLS and encrypted server-side via `contract-go`; only encrypted artifacts are stored. Legacy local wrapping flow remains v1-only compatibility. |
+| **Final Contract Integrity** | SHA256 hash + backend HPCR signature using Vault-governed key material; immutable after FINALIZED |
 | **Audit Integrity** | Deterministic hash chain (RFC 8785 canonical JSON); signature verification per event using registered keys |
-| **Data at Rest** | Only encrypted payloads stored; disk-level encryption recommended |
+| **Data at Rest** | Only encrypted payloads stored; disk-level encryption recommended. Vault provides sealed storage for key material |
 
 ---
 
@@ -749,31 +906,36 @@ The `GET /builds/{id}/verify` endpoint:
        |
        v
 [ Go Backend ]
-       |
-       v
-[ PostgreSQL ]
+      / \
+     v   v
+[ PostgreSQL ]  [ HashiCorp Vault ]
 ```
 
 - Single binary backend.
 - Docker Compose or bare metal deployment supported.
+- Vault runs on internal `app_net` network (not directly internet-exposed).
+- Backend connects to Vault via `VAULT_ADDR` (default: `http://vault:8200`).
+- `KEY_PROVIDER` env var controls key management: `mock` (development) or `vault` (production).
 
 ---
 
-## 13. Summary of v0.5 Changes
+## 13. Summary of v0.6 Changes
+
+- **Architecture evolution:** Moved contract cryptography (section encryption, assembly, signing) from client-side `contract-cli` to backend-native `contract-go` engine.
+- **HashiCorp Vault integration:** Build-scoped signing and attestation keys are Vault-governed. Backend performs just-in-time in-memory key retrieval for HPCR sign/decrypt paths and never persists private keys outside Vault.
+- **New v2 API endpoints:** 9 new endpoints for key management (`/keys/signing`, `/keys/attestation`, `/keys/signing/public`), backend-native contract operations (`/v2/sections/workload`, `/v2/sections/environment`, `/v2/finalize`), and attestation evidence (`/attestation/evidence`, `/attestation/evidence/{id}/verify`, `/attestation/status`).
+- **New domain entities:** `build_keys`, `attestation_evidence`, `attestation_verifications` tables. Extended `builds` table with `attestation_state`, `attestation_verified_at`, `attestation_verified_by`.
+- **Updated persona workflows:** Solution Provider submits plaintext (backend encrypts). Auditor triggers key registration and finalization via API (no local contract-cli needed).
+- **Deployment topology:** Added Vault container to Docker Compose stack.
+- **Backward compatibility:** V1 endpoints preserved alongside v2. Existing builds and audit chains remain valid.
+
+### Previous Changes (v0.5)
 
 - Corrected lifecycle to include `FINALIZED -> CONTRACT_DOWNLOADED`.
-- Documented signed-event expectations across all signed stages (`WORKLOAD_SUBMITTED` through `CONTRACT_DOWNLOADED`).
-- Updated token model: no persisted `expires_at` column in `api_tokens`; TTL enforced from `created_at + TOKEN_EXPIRY`.
-- Aligned API surface with current routes (`/health`, swagger/openapi, `/builds/{id}/audit-trail`, `/builds/{id}/verify-contract`, rotation endpoints, system logs).
-- Documented current build access model:
-  - non-admin build list is assignment-filtered
-  - `/builds/{id}` tree requires admin or build assignment
-- Updated assignment constraints:
-  - assignable workflow roles are SP/DO/AUD/EO
-  - assignee must hold target global role
-- Updated `/users/{id}/assignments` access model to owner-or-admin only.
-- Clarified credential-rotation behavior as current 90-day implementation.
+- Documented signed-event expectations across all signed stages.
+- Updated token model, API surface, build access model, assignment constraints.
+- Clarified credential-rotation behavior.
 
 ---
 
-> *End of IBM Confidential Computing Contract Generator HLD v0.5*
+> *End of IBM Confidential Computing Contract Generator HLD v0.6*

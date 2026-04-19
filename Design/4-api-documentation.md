@@ -1,7 +1,7 @@
 # IBM Confidential Computing Contract Generator - API Documentation
 
-> **Version:** 1.2 (implementation-aligned)  
-> **Date:** 2026-04-12  
+> **Version:** 1.3 (implementation-aligned)  
+> **Date:** 2026-04-18  
 > **Status:** Production backend reference  
 > **Source of Truth:** `backend/cmd/server/main.go` and `backend/internal/*`
 
@@ -310,23 +310,25 @@ Even valid authenticated users are blocked by `SetupGuard` until password/public
 ### 6.1 Status Values
 
 - `CREATED`
+- `SIGNING_KEY_REGISTERED`
 - `WORKLOAD_SUBMITTED`
 - `ENVIRONMENT_STAGED`
-- `AUDITOR_KEYS_REGISTERED`
-- `CONTRACT_ASSEMBLED`
+- `ATTESTATION_KEY_REGISTERED`
 - `FINALIZED`
 - `CONTRACT_DOWNLOADED`
 - `CANCELLED`
+
+> **Deprecated (v1):** `AUDITOR_KEYS_REGISTERED`, `CONTRACT_ASSEMBLED` — retained for backward compatibility.
 
 ### 6.2 Transition Rules
 
 Normal forward transitions:
 
-- `CREATED -> WORKLOAD_SUBMITTED`
+- `CREATED -> SIGNING_KEY_REGISTERED`
+- `SIGNING_KEY_REGISTERED -> WORKLOAD_SUBMITTED`
 - `WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED`
-- `ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED`
-- `AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED`
-- `CONTRACT_ASSEMBLED -> FINALIZED`
+- `ENVIRONMENT_STAGED -> ATTESTATION_KEY_REGISTERED`
+- `ATTESTATION_KEY_REGISTERED -> FINALIZED`
 - `FINALIZED -> CONTRACT_DOWNLOADED`
 
 Cancellation:
@@ -346,10 +348,10 @@ Note:
 
 ### 6.3 Role Required per Transition
 
+- `SIGNING_KEY_REGISTERED`: `AUDITOR`
 - `WORKLOAD_SUBMITTED`: `SOLUTION_PROVIDER`
 - `ENVIRONMENT_STAGED`: `DATA_OWNER`
-- `AUDITOR_KEYS_REGISTERED`: `AUDITOR`
-- `CONTRACT_ASSEMBLED`: `AUDITOR`
+- `ATTESTATION_KEY_REGISTERED`: `AUDITOR`
 - `FINALIZED`: `AUDITOR`
 - `CONTRACT_DOWNLOADED`: `ENV_OPERATOR` (via acknowledge-download flow)
 
@@ -362,10 +364,10 @@ Note:
 ### 6.5 Audit Event Types
 
 - `BUILD_CREATED`
+- `SIGNING_KEY_CREATED`
 - `WORKLOAD_SUBMITTED`
 - `ENVIRONMENT_STAGED`
-- `AUDITOR_KEYS_REGISTERED`
-- `CONTRACT_ASSEMBLED`
+- `ATTESTATION_KEY_REGISTERED`
 - `BUILD_FINALIZED`
 - `CONTRACT_DOWNLOADED`
 - `BUILD_CANCELLED`
@@ -373,17 +375,22 @@ Note:
 - `USER_CREATED`
 - `TOKEN_CREATED`
 - `TOKEN_REVOKED`
+- `ATTESTATION_EVIDENCE_UPLOADED`
+- `ATTESTATION_VERIFIED`
 
 ### 6.6 Signature Expectations in Verification
 
 Audit verification expects signatures for:
 
+- `BUILD_CREATED`
+- `SIGNING_KEY_CREATED`
 - `WORKLOAD_SUBMITTED`
 - `ENVIRONMENT_STAGED`
-- `AUDITOR_KEYS_REGISTERED`
-- `CONTRACT_ASSEMBLED`
+- `ATTESTATION_KEY_REGISTERED`
 - `BUILD_FINALIZED`
 - `CONTRACT_DOWNLOADED`
+- `ATTESTATION_EVIDENCE_UPLOADED`
+- `ATTESTATION_VERIFIED`
 
 ---
 
@@ -856,8 +863,10 @@ All `/builds/{id}/...` endpoints below inherit the same `RequireBuildAccess` mid
 - Auth: required
 - Role: `AUDITOR`
 - Signature headers: required
-- Purpose: transition to `AUDITOR_KEYS_REGISTERED`.
+- Purpose: transition to `AUDITOR_KEYS_REGISTERED` (v1 flow).
 - Idempotent success when already at/after that stage.
+
+> **Note:** In the v2 workflow, this endpoint is replaced by `POST /builds/{id}/keys/signing` and `POST /builds/{id}/keys/attestation`.
 
 Possible response when already progressed:
 
@@ -896,6 +905,8 @@ Standard response:
 {"status":"FINALIZED"}
 ```
 
+> **Note:** In the v2 workflow, use `POST /builds/{id}/v2/finalize` instead, which accepts `signing_key_id` and optional `attestation_key_id`.
+
 #### POST /builds/{id}/cancel
 
 - Auth: required
@@ -909,7 +920,9 @@ Standard response:
 
 ---
 
-### 7.7 Build Sections
+### 7.7 Build Sections (Legacy Compatibility)
+
+> **Note:** This endpoint set exists for v1 compatibility. New workflow submissions should use `POST /builds/{id}/v2/sections/workload` and `POST /builds/{id}/v2/sections/environment`.
 
 #### GET /builds/{id}/sections
 
@@ -958,10 +971,10 @@ Rules:
 - Either `role_id` or `persona_role` is required.
 - Submission allowed only for assigned user and matching global role.
 - Allowed build state by role:
-  - `SOLUTION_PROVIDER`: `CREATED`
+  - `SOLUTION_PROVIDER`: `SIGNING_KEY_REGISTERED` (v2) or `CREATED` (v1)
   - `DATA_OWNER`: `WORKLOAD_SUBMITTED`
   - `AUDITOR`: `ENVIRONMENT_STAGED`
-- `DATA_OWNER` requires `encrypted_symmetric_key`.
+- `DATA_OWNER` requires `encrypted_symmetric_key` only on legacy v1 section submissions.
 - One section per persona role per build.
 - Successful submit auto-transitions build status for that role.
 
@@ -1228,6 +1241,222 @@ All rotation endpoints require `ADMIN` and request signature headers.
 
 ---
 
+### 7.12 V2: Key Management
+
+All key management endpoints require `BuildAccess` middleware and are nested under `/builds/{id}/keys/...`.
+
+For `contract-go` HPCR operations that require private keys, backend workers retrieve build private key material from Vault just-in-time, use it in-memory, and zeroize memory after cryptographic operations. Private keys are never returned by API responses.
+
+#### POST /builds/{id}/keys/signing
+
+- Auth: required
+- Role: `AUDITOR`
+- Signature headers: required
+- Request:
+
+```json
+{
+  "mode": "generate"
+}
+```
+
+- Response `201`:
+
+```json
+{
+  "key_id": "uuid",
+  "key_type": "SIGNING",
+  "mode": "generate",
+  "public_key": "-----BEGIN PUBLIC KEY-----...-----END PUBLIC KEY-----",
+  "public_key_fingerprint": "sha256-hex",
+  "vault_ref": "build-signing-<build_id>",
+  "created_at": "..."
+}
+```
+
+- Transitions build to `SIGNING_KEY_REGISTERED`.
+
+#### POST /builds/{id}/keys/attestation
+
+- Auth: required
+- Role: `AUDITOR`
+- Signature headers: required
+- Request (generate mode):
+
+```json
+{
+  "mode": "generate"
+}
+```
+
+- Request (upload mode):
+
+```json
+{
+  "mode": "upload_public",
+  "public_key": "-----BEGIN PUBLIC KEY-----...-----END PUBLIC KEY-----"
+}
+```
+
+- Response `201`: key object (same shape as signing key response).
+- Transitions build to `ATTESTATION_KEY_REGISTERED`.
+
+#### GET /builds/{id}/keys/signing/public
+
+- Auth: required
+- Response `200`:
+
+```json
+{
+  "key_id": "uuid",
+  "public_key": "-----BEGIN PUBLIC KEY-----...-----END PUBLIC KEY-----",
+  "public_key_fingerprint": "sha256-hex"
+}
+```
+
+---
+
+### 7.13 V2: Backend-Native Contract Operations
+
+All v2 contract endpoints require `BuildAccess` middleware and are nested under `/builds/{id}/v2/...`.
+
+#### POST /builds/{id}/v2/sections/workload
+
+- Auth: required
+- Signature headers: required
+- Uses large body parser (up to 50MB).
+- Request:
+
+```json
+{
+  "plaintext": "workload section YAML content",
+  "certificate_pem": "-----BEGIN CERTIFICATE-----...-----END CERTIFICATE-----"
+}
+```
+
+- Response `201`: section object with `encrypted_payload`, `section_hash`.
+- Backend encrypts plaintext using `contract-go` engine with the provided HPCR certificate.
+- Transitions build to `WORKLOAD_SUBMITTED`.
+
+#### POST /builds/{id}/v2/sections/environment
+
+- Auth: required
+- Signature headers: required
+- Uses large body parser (up to 50MB).
+- Request:
+
+```json
+{
+  "plaintext": "environment section YAML content",
+  "certificate_pem": "-----BEGIN CERTIFICATE-----...-----END CERTIFICATE-----"
+}
+```
+
+- Response `201`: section object.
+- Transitions build to `ENVIRONMENT_STAGED`.
+
+#### POST /builds/{id}/v2/finalize
+
+- Auth: required
+- Role: `AUDITOR`
+- Signature headers: required
+- Request:
+
+```json
+{
+  "signing_key_id": "uuid",
+  "attestation_key_id": "uuid-or-null",
+  "attestation_cert_pem": "PEM-or-empty"
+}
+```
+
+- Response `200`:
+
+```json
+{
+  "status": "FINALIZED",
+  "contract_hash": "sha256-hex",
+  "contract_yaml_length": 12345
+}
+```
+
+- Backend loads encrypted sections, resolves keys from `build_keys` + Vault refs, signs via `HpcrContractSign(...)`, assembles YAML.
+- Transitions build to `FINALIZED`.
+
+---
+
+### 7.14 V2: Attestation Evidence
+
+All attestation endpoints require `BuildAccess` middleware and are nested under `/builds/{id}/attestation/...`.
+
+#### POST /builds/{id}/attestation/evidence
+
+- Auth: required
+- Signature headers: required
+- Content-Type: `multipart/form-data` (max 10MB total)
+- Form fields:
+  - `records_file` (required): attestation records file
+  - `signature_file` (required): signature file
+  - Additional metadata fields (optional)
+
+- Response `201`:
+
+```json
+{
+  "evidence_id": "uuid",
+  "build_id": "uuid",
+  "uploaded_by": "uuid",
+  "records_file_name": "se-checksums.txt",
+  "signature_file_name": "se-checksums.txt.sig",
+  "created_at": "..."
+}
+```
+
+- Updates `attestation_state` to `UPLOADED`.
+
+#### POST /builds/{id}/attestation/evidence/{evidence_id}/verify
+
+- Auth: required
+- Role: `AUDITOR`
+- Signature headers: required
+- Request: no body required (verification uses stored evidence + attestation key material resolved from `build_keys` + Vault refs).
+
+- Response `200`:
+
+```json
+{
+  "evidence_id": "uuid",
+  "verdict": "VERIFIED",
+  "details": {
+    "records_decrypted": true,
+    "records_hash": "sha256-hex",
+    "signature_valid": true,
+    "key_fingerprint": "sha256-hex"
+  },
+  "verified_at": "..."
+}
+```
+
+- Verification flow: `HpcrGetAttestationRecords(...)` decrypts uploaded attestation records, then `HpcrVerifySignatureAttestationRecords(...)` validates signature/certificate.
+- Updates `attestation_state` to `VERIFIED` or `REJECTED`.
+
+#### GET /builds/{id}/attestation/status
+
+- Auth: required
+- Response `200`:
+
+```json
+{
+  "build_id": "uuid",
+  "attestation_state": "VERIFIED",
+  "evidence_count": 1,
+  "latest_verdict": "VERIFIED",
+  "verified_at": "..."
+}
+```
+
+---
+
 ## 8. Error Model
 
 ### 8.1 Standard Error Envelope
@@ -1313,6 +1542,21 @@ Additional startup seeding variables (read in `backend/cmd/server/main.go` durin
 | `ADMIN_EMAIL` | `admin@hpcr-builder.local` | seeded admin email if DB has no users |
 | `ADMIN_PASSWORD` | `admin123` | seeded admin password fallback (development only) |
 | `ADMIN_NAME` | `System Admin` | seeded admin display name |
+
+### V2: Key Provider and Vault Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `KEY_PROVIDER` | `mock` | Key management provider: `mock` (dev) or `vault` (production) |
+| `VAULT_ADDR` | (required when vault) | Vault server address |
+| `VAULT_NAMESPACE` | | Vault namespace (optional) |
+| `VAULT_AUTH_METHOD` | `approle` | Auth method: `approle` or `token` |
+| `VAULT_ROLE_ID` | (required for approle) | AppRole role ID |
+| `VAULT_SECRET_ID` | (required for approle) | AppRole secret ID |
+| `VAULT_TOKEN` | | Dev root token (alternative to AppRole) |
+| `VAULT_TRANSIT_MOUNT` | `transit` | Transit secrets engine mount path |
+| `VAULT_KV_MOUNT` | `secret` | KV secrets engine mount path |
+| `VAULT_REQUEST_TIMEOUT` | `10s` | Vault API request timeout |
 
 ---
 

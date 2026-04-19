@@ -8,7 +8,7 @@
 | Repository | persona-based-contract-generator |
 | Area | Electron desktop application (`app/`) |
 | Audience | Engineering, Security, Product, QA |
-| Last Updated | 2026-04-12 |
+| Last Updated | 2026-04-19 |
 | Source of Truth | Current implementation in `app/main`, `app/src`, and `app/electron-builder.json` |
 
 ---
@@ -86,7 +86,7 @@ The desktop app uses a three-layer Electron model:
    - window creation
    - security policy enforcement
    - IPC request validation
-   - privileged operations (file dialogs, shell, cryptography, contract-cli subprocesses)
+   - privileged operations (file dialogs, shell, identity cryptography, compatibility utilities)
 
 2. **Preload bridge** (`app/main/preload.js`)
    - exposes a minimal `window.electron` API via `contextBridge`
@@ -118,7 +118,7 @@ app/
       encryptor.js
       signer.js
       keyStorage.js
-      contractCli.js
+      contractCli.js          # legacy compatibility module (v1 flow)
   src/
     App.jsx
     main.jsx
@@ -230,9 +230,9 @@ This is the key guardrail preventing arbitrary renderer-origin IPC abuse.
 Preload exposes only explicit functions grouped by capability:
 
 - `electron.shell.openExternal`
-- `electron.crypto.*` (keygen, hash, sign/verify, AES/RSA ops, key storage)
-- `electron.contractCli.*` (encrypt, stream terminal output, assemble)
-- `electron.auditor.*` (auditor key/cert/env/attestation/sign operations)
+- `electron.crypto.*` (identity keygen, hash, sign/verify, key storage)
+- `electron.contractCli.*` (legacy compatibility path for v1 flow)
+- `electron.auditor.*` (legacy compatibility + helper utilities)
 - `electron.appInfo.getClientToolInfo`
 - `electron.file.*` (select/save/read)
 - `electron.selectDirectory`
@@ -245,6 +245,8 @@ Renderer code has no direct access to Node built-ins or unrestricted IPC primiti
 ## 8. IPC Channels (Implemented)
 
 ## 8.1 Crypto
+
+Identity-key operations are primary in v2. Symmetric/wrapping channels below remain for legacy compatibility flows and controlled utilities.
 
 - `crypto:generateIdentityKeyPair`
 - `crypto:generateAttestationKeyPair`
@@ -263,17 +265,17 @@ Renderer code has no direct access to Node built-ins or unrestricted IPC primiti
 - `crypto:deletePrivateKey`
 - `crypto:hasPrivateKey`
 
-## 8.2 contract-cli and Auditor
+## 8.2 Legacy Compatibility and Auditor Utilities
 
-- `contractCli:encryptSection`
-- `contractCli:encryptSectionStream`
-- `contractCli:assembleContract`
+- `contractCli:encryptSection` (legacy v1)
+- `contractCli:encryptSectionStream` (legacy v1)
+- `contractCli:assembleContract` (legacy v1)
 - `auditor:generateSigningKey`
 - `auditor:generateSigningCert`
 - `auditor:generateAttestationKey`
 - `auditor:generateEncryptedEnv`
 - `auditor:encryptAttestationPublicKey`
-- `auditor:encryptEnvAndAttestation` (compat path)
+- `auditor:encryptEnvAndAttestation` (legacy compatibility path)
 - `auditor:signContract`
 
 ## 8.3 App, Window, File, Shell
@@ -290,7 +292,7 @@ Renderer code has no direct access to Node built-ins or unrestricted IPC primiti
 
 ## 8.4 Streaming Event Channels
 
-- `contractCli:terminalLine`
+- `contractCli:terminalLine` (legacy v1)
 - `auditor:terminalLine`
 
 ---
@@ -346,7 +348,7 @@ Role switch menu uses server-provided `user_roles`; current role only can be sel
 About dialog fetches local client runtime/tool metadata:
 
 - app version + Electron/Chromium/Node/platform
-- `contract-cli` install/version
+- backend API capability/version (when exposed by server metadata)
 - `OpenSSL` install/version
 
 ---
@@ -370,16 +372,18 @@ This ensures each persona only sees relevant stage surfaces while preserving aud
 
 ## 11. Build Lifecycle and Stage UX
 
-Current build states:
+Current build states (v2-first):
 
 1. `CREATED`
-2. `WORKLOAD_SUBMITTED`
-3. `ENVIRONMENT_STAGED`
-4. `AUDITOR_KEYS_REGISTERED`
-5. `CONTRACT_ASSEMBLED`
+2. `SIGNING_KEY_REGISTERED`
+3. `WORKLOAD_SUBMITTED`
+4. `ENVIRONMENT_STAGED`
+5. `ATTESTATION_KEY_REGISTERED`
 6. `FINALIZED`
 7. `CONTRACT_DOWNLOADED`
 8. `CANCELLED`
+
+Legacy v1 states (`AUDITOR_KEYS_REGISTERED`, `CONTRACT_ASSEMBLED`) may appear on older builds and are treated as compatibility statuses.
 
 Downloaded and cancelled builds are treated as terminal/completed in list and home summaries.
 
@@ -417,21 +421,21 @@ Downloaded and cancelled builds are treated as terminal/completed in list and ho
 
 Flow differences:
 
-- **Solution Provider**: contract-cli encryption with HPCR cert
-- **Data Owner**: local AES-256-GCM encryption + RSA-OAEP key wrapping using assigned auditor public key
+- **Solution Provider (v2)**: submit plaintext + HPCR cert to backend `POST /builds/{id}/v2/sections/workload`; backend performs encryption.
+- **Data Owner (v2)**: submit plaintext + HPCR cert to backend `POST /builds/{id}/v2/sections/environment`; backend performs encryption.
 
-Both flows hash and sign payload before backend submit.
+Request signatures are still required for mutating API calls and are produced using the actor's identity private key.
 
 ## 11.4 Auditor Stage
 
-`AuditorSection.jsx` is a 4-step guided flow:
+`AuditorSection.jsx` is a v2-guided flow:
 
-1. generate signing key/certificate
-2. generate attestation key
-3. generate encrypted environment preview
-4. confirm sign + add attestation (backend transition)
+1. register/generate signing key (`POST /builds/{id}/keys/signing`)
+2. register attestation key (`POST /builds/{id}/keys/attestation`)
+3. review finalization inputs (`signing_key_id`, optional attestation info)
+4. trigger backend finalization (`POST /builds/{id}/v2/finalize`)
 
-It supports built-in/custom cert selection and streams command-style output in-terminal.
+Legacy helper actions remain available only for compatibility/debug scenarios.
 
 Session-scoped context is stored in `sessionStorage` and reused by finalization.
 
@@ -439,12 +443,8 @@ Session-scoped context is stored in `sessionStorage` and reused by finalization.
 
 `FinaliseContract.jsx`:
 
-- assembles workload + environment
-- signs via `contract-cli sign-contract`
-- injects `attestationPublicKey`
-- computes contract hash
-- signs hash with auditor identity key
-- submits finalize payload to backend
+- submits finalize request to backend (`/builds/{id}/v2/finalize`) with selected key ids/certs
+- backend performs contract assembly, HPCR signing, hash generation, and persistence
 - updates status to `FINALIZED`
 
 ## 11.6 Export Contract Stage
