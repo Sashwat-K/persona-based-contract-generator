@@ -1,7 +1,7 @@
 # IBM Confidential Computing Contract Generator - Deployment Guide
 
-> **Version:** 1.0  
-> **Date:** 2026-04-12  
+> **Version:** 1.1  
+> **Date:** 2026-04-18  
 > **Status:** Implementation-aligned runbook  
 > **Source of Truth:** `docker-compose.yaml`, `docker-compose.prod.yaml`, `config/nginx/*.conf`, `backend/cmd/server/main.go`, `app/BUILD.md`
 
@@ -25,15 +25,19 @@ Default container topology:
 - `reverse_proxy` (nginx, public entrypoint)
 - `backend` (Go API)
 - `postgres` (PostgreSQL 16)
+- `vault` (HashiCorp Vault, Transit secrets engine)
 - `migrate` (one-shot schema migration job)
 
 Traffic flow:
 
-`Client -> reverse_proxy -> backend -> postgres`
+```
+Client -> reverse_proxy -> backend -> postgres
+                             |-> vault (key management)
+```
 
 Network layout:
 
-- `app_net`: reverse proxy <-> backend
+- `app_net`: reverse proxy <-> backend <-> vault
 - `db_net` (`internal: true`): backend/migrate <-> postgres
 
 ---
@@ -79,6 +83,21 @@ Important backend runtime controls:
 - `REQUEST_TIMEOUT`
 - `TRUST_PROXY_HEADERS` (keep `true` only behind trusted reverse proxy)
 
+### V2: Key Provider and Vault Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `KEY_PROVIDER` | `mock` | Set to `vault` for production |
+| `VAULT_ADDR` | `http://vault:8200` | Vault server address |
+| `VAULT_AUTH_METHOD` | `approle` | `approle` (production) or `token` (dev) |
+| `VAULT_ROLE_ID` | | Required for AppRole auth |
+| `VAULT_SECRET_ID` | | Required for AppRole auth |
+| `VAULT_TOKEN` | | Dev root token (alternative to AppRole) |
+| `VAULT_TRANSIT_MOUNT` | `transit` | Transit engine mount path |
+| `VAULT_REQUEST_TIMEOUT` | `10s` | API timeout |
+
+For local/dev mode, `KEY_PROVIDER=mock` bypasses Vault entirely.
+
 ---
 
 ## 5. Local/Dev Deployment (HTTP)
@@ -119,6 +138,12 @@ Expected health response:
 {"status":"ok"}
 ```
 
+Vault health (dev mode):
+
+```bash
+curl -sS http://localhost:8200/v1/sys/health
+```
+
 ### 5.4 Stop stack
 
 ```bash
@@ -143,6 +168,8 @@ Required production updates:
 - valid `TLS_CERT_PATH` and `TLS_KEY_PATH`
 - restrictive `CORS_ALLOWED_ORIGINS`
 - `CORS_ALLOW_ALL=false`
+- `KEY_PROVIDER=vault`
+- production Vault address, AppRole credentials, and Transit mount
 
 ### 6.2 Start stack with production overlay
 
@@ -215,10 +242,12 @@ After deployment, validate:
 3. login works for admin
 4. setup-guard behavior works for setup-incomplete users
 5. mutating endpoint calls fail without signature headers
-6. one full build lifecycle succeeds through `CONTRACT_DOWNLOADED`
+6. one full build lifecycle succeeds through `CONTRACT_DOWNLOADED`:
+   - v2 flow: signing key → workload → env → attestation key → finalize → download acknowledge
 7. verify endpoints pass for completed build:
    - `/builds/{id}/verify`
    - `/builds/{id}/verify-contract`
+8. If `KEY_PROVIDER=vault`: verify Vault health (`/v1/sys/health`) and Transit key creation works
 
 ---
 
@@ -230,6 +259,7 @@ After deployment, validate:
 docker compose logs -f reverse_proxy
 docker compose logs -f backend
 docker compose logs -f postgres
+docker compose logs -f vault
 ```
 
 ### 10.2 Health and status
@@ -237,11 +267,27 @@ docker compose logs -f postgres
 ```bash
 docker compose ps
 curl -sS http://localhost:8080/health
+curl -sS http://localhost:8200/v1/sys/health  # Vault
 ```
 
 (Use `https://...:8443/health` in TLS mode.)
 
-### 10.3 Restart services
+### 10.3 Vault Operations
+
+Check Transit engine:
+
+```bash
+# List Transit keys (dev token)
+curl -sS -H "X-Vault-Token: dev-root-token" \
+  http://localhost:8200/v1/transit/keys?list=true
+```
+
+Vault dev mode notes:
+
+- Dev server uses in-memory storage (data lost on restart).
+- For production, use a proper Vault cluster with persistent storage and auto-unseal.
+
+### 10.4 Restart services
 
 ```bash
 docker compose restart backend
@@ -287,6 +333,7 @@ Minimum coverage:
 - PostgreSQL data directory (`POSTGRES_DATA_DIR`) or logical DB dumps
 - `.env` (securely stored)
 - TLS cert/key source of truth
+- Vault data/storage (production Vault cluster snapshots)
 
 Recommended:
 
@@ -314,6 +361,10 @@ Before go-live:
 - `CORS_ALLOW_ALL=false`
 - restricted `CORS_ALLOWED_ORIGINS`
 - `TRUST_PROXY_HEADERS` aligned with actual proxy topology
+- `KEY_PROVIDER=vault` with production Vault cluster
+- Vault AppRole credentials configured (not dev root token)
+- Vault key policies configured for least-privilege, build-scoped runtime retrieval by backend only
+- Vault on internal network only
 - infrastructure-level firewall rules in place
 - system logs and audit verification tested
 

@@ -1,13 +1,16 @@
-// Build Status Constants
+// Build Status Constants (v2 workflow)
 export const BUILD_STATUS = {
   CREATED: 'CREATED',
+  SIGNING_KEY_REGISTERED: 'SIGNING_KEY_REGISTERED',
   WORKLOAD_SUBMITTED: 'WORKLOAD_SUBMITTED',
   ENVIRONMENT_STAGED: 'ENVIRONMENT_STAGED',
-  AUDITOR_KEYS_REGISTERED: 'AUDITOR_KEYS_REGISTERED',
-  CONTRACT_ASSEMBLED: 'CONTRACT_ASSEMBLED',
+  ATTESTATION_KEY_REGISTERED: 'ATTESTATION_KEY_REGISTERED',
   FINALIZED: 'FINALIZED',
   CONTRACT_DOWNLOADED: 'CONTRACT_DOWNLOADED',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  // Deprecated v1 statuses (kept for backward compatibility with existing builds)
+  AUDITOR_KEYS_REGISTERED: 'AUDITOR_KEYS_REGISTERED',
+  CONTRACT_ASSEMBLED: 'CONTRACT_ASSEMBLED'
 };
 
 // Build Status Display Configuration
@@ -15,7 +18,12 @@ export const BUILD_STATUS_CONFIG = {
   [BUILD_STATUS.CREATED]: {
     label: 'Created',
     kind: 'gray',
-    description: 'Build created, awaiting workload submission'
+    description: 'Build created, awaiting signing key registration'
+  },
+  [BUILD_STATUS.SIGNING_KEY_REGISTERED]: {
+    label: 'Signing Key Registered',
+    kind: 'purple',
+    description: 'Signing key registered, awaiting workload submission'
   },
   [BUILD_STATUS.WORKLOAD_SUBMITTED]: {
     label: 'Workload Submitted',
@@ -25,17 +33,12 @@ export const BUILD_STATUS_CONFIG = {
   [BUILD_STATUS.ENVIRONMENT_STAGED]: {
     label: 'Environment Staged',
     kind: 'cyan',
-    description: 'Environment staged, awaiting auditor keys'
+    description: 'Environment staged, awaiting attestation key'
   },
-  [BUILD_STATUS.AUDITOR_KEYS_REGISTERED]: {
-    label: 'Keys Registered',
+  [BUILD_STATUS.ATTESTATION_KEY_REGISTERED]: {
+    label: 'Attestation Key Registered',
     kind: 'teal',
-    description: 'Auditor keys registered, ready for finalization'
-  },
-  [BUILD_STATUS.CONTRACT_ASSEMBLED]: {
-    label: 'Contract Assembled',
-    kind: 'cyan',
-    description: 'Contract assembled, awaiting finalization signature'
+    description: 'Attestation key registered, ready for finalization'
   },
   [BUILD_STATUS.FINALIZED]: {
     label: 'Finalized',
@@ -51,15 +54,26 @@ export const BUILD_STATUS_CONFIG = {
     label: 'Cancelled',
     kind: 'red',
     description: 'Build cancelled by administrator'
+  },
+  // Deprecated v1 display config (for existing builds)
+  [BUILD_STATUS.AUDITOR_KEYS_REGISTERED]: {
+    label: 'Keys Registered (v1)',
+    kind: 'teal',
+    description: 'Auditor keys registered (legacy workflow)'
+  },
+  [BUILD_STATUS.CONTRACT_ASSEMBLED]: {
+    label: 'Contract Assembled (v1)',
+    kind: 'cyan',
+    description: 'Contract assembled (legacy workflow)'
   }
 };
 
 // Persona/Role Constants
 export const ROLES = {
   ADMIN: 'ADMIN',
+  AUDITOR: 'AUDITOR',
   SOLUTION_PROVIDER: 'SOLUTION_PROVIDER',
   DATA_OWNER: 'DATA_OWNER',
-  AUDITOR: 'AUDITOR',
   ENV_OPERATOR: 'ENV_OPERATOR',
   VIEWER: 'VIEWER'
 };
@@ -67,26 +81,32 @@ export const ROLES = {
 // Role Display Names
 export const ROLE_NAMES = {
   [ROLES.ADMIN]: 'Administrator',
+  [ROLES.AUDITOR]: 'Auditor',
   [ROLES.SOLUTION_PROVIDER]: 'Solution Provider',
   [ROLES.DATA_OWNER]: 'Data Owner',
-  [ROLES.AUDITOR]: 'Auditor',
   [ROLES.ENV_OPERATOR]: 'Environment Operator',
   [ROLES.VIEWER]: 'Viewer'
 };
 
-// Audit Event Types
+// Audit Event Types (v2 workflow)
 export const AUDIT_EVENT_TYPES = {
   BUILD_CREATED: 'BUILD_CREATED',
+  SIGNING_KEY_CREATED: 'SIGNING_KEY_CREATED',
   WORKLOAD_SUBMITTED: 'WORKLOAD_SUBMITTED',
   ENVIRONMENT_STAGED: 'ENVIRONMENT_STAGED',
-  AUDITOR_KEYS_REGISTERED: 'AUDITOR_KEYS_REGISTERED',
+  ATTESTATION_KEY_REGISTERED: 'ATTESTATION_KEY_REGISTERED',
   BUILD_FINALIZED: 'BUILD_FINALIZED',
   CONTRACT_DOWNLOADED: 'CONTRACT_DOWNLOADED',
+  ATTESTATION_EVIDENCE_UPLOADED: 'ATTESTATION_EVIDENCE_UPLOADED',
+  ATTESTATION_VERIFIED: 'ATTESTATION_VERIFIED',
   BUILD_CANCELLED: 'BUILD_CANCELLED',
   USER_CREATED: 'USER_CREATED',
   USER_ROLE_ASSIGNED: 'USER_ROLE_ASSIGNED',
   PASSWORD_CHANGED: 'PASSWORD_CHANGED',
-  PUBLIC_KEY_REGISTERED: 'PUBLIC_KEY_REGISTERED'
+  PUBLIC_KEY_REGISTERED: 'PUBLIC_KEY_REGISTERED',
+  // Deprecated v1 event types
+  AUDITOR_KEYS_REGISTERED: 'AUDITOR_KEYS_REGISTERED',
+  CONTRACT_ASSEMBLED: 'CONTRACT_ASSEMBLED'
 };
 
 // File Size Limits (in bytes)
@@ -172,12 +192,17 @@ export const THEME = {
   LIGHT: 'white'
 };
 
-// Build Progress Steps
+// Build Progress Steps (v2 workflow)
 export const BUILD_PROGRESS_STEPS = [
   {
     label: 'Created',
     status: BUILD_STATUS.CREATED,
     role: ROLES.ADMIN
+  },
+  {
+    label: 'Signing Key',
+    status: BUILD_STATUS.SIGNING_KEY_REGISTERED,
+    role: ROLES.AUDITOR
   },
   {
     label: 'Workload',
@@ -190,8 +215,8 @@ export const BUILD_PROGRESS_STEPS = [
     role: ROLES.DATA_OWNER
   },
   {
-    label: 'Attestation',
-    status: BUILD_STATUS.AUDITOR_KEYS_REGISTERED,
+    label: 'Attestation Key',
+    status: BUILD_STATUS.ATTESTATION_KEY_REGISTERED,
     role: ROLES.AUDITOR
   },
   {
@@ -233,4 +258,3 @@ export const SUCCESS_MESSAGES = {
   USER_CREATED: 'User created successfully',
   SETTINGS_SAVED: 'Settings saved successfully'
 };
-

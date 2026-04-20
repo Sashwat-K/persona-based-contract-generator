@@ -296,20 +296,20 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Idempotent behavior:
-	// If attestation is already registered (or build already progressed beyond it),
+	// If attestation keys are already registered (or build already progressed beyond it),
 	// return success instead of failing transition validation.
 	build, err := h.buildService.GetBuild(r.Context(), buildID)
 	if err == nil {
 		current := model.BuildStatus(build.Status)
-		if current == model.StatusAuditorKeysRegistered ||
-			current == model.StatusContractAssembled ||
+		if current == model.StatusSigningKeyRegistered ||
+			current == model.StatusAttestationKeyRegistered ||
 			current == model.StatusFinalized ||
 			current == model.StatusContractDownloaded {
 			logSystemEvent(
 				h.systemLogService,
 				r,
 				"unknown",
-				"AUDITOR_KEYS_REGISTERED",
+				"ATTESTATION_KEY_REGISTERED",
 				"Build: "+buildID.String(),
 				"SUCCESS",
 				"Attestation already registered; request treated as idempotent",
@@ -325,7 +325,7 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 	err = h.buildService.TransitionStatus(
 		r.Context(),
 		buildID,
-		model.StatusAuditorKeysRegistered,
+		model.StatusAttestationKeyRegistered,
 		actorID,
 		ip,
 		roles,
@@ -337,7 +337,7 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 			h.systemLogService,
 			r,
 			"unknown",
-			"AUDITOR_KEYS_REGISTERED",
+			"ATTESTATION_KEY_REGISTERED",
 			"Build: "+buildID.String(),
 			"FAILED",
 			"Failed to register attestation: "+err.Error(),
@@ -354,16 +354,16 @@ func (h *BuildHandler) RegisterAttestation(w http.ResponseWriter, r *http.Reques
 		h.systemLogService,
 		r,
 		"unknown",
-		"AUDITOR_KEYS_REGISTERED",
+		"ATTESTATION_KEY_REGISTERED",
 		"Build: "+buildID.String(),
 		"SUCCESS",
 		"Registered attestation / auditor keys",
 	)
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "AUDITOR_KEYS_REGISTERED"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ATTESTATION_KEY_REGISTERED"})
 }
 
-// CancelBuild handles POST /builds/{id}/cancel. ADMIN only.
+// CancelBuild handles POST /builds/{id}/cancel. ADMIN or AUDITOR.
 func (h *BuildHandler) CancelBuild(w http.ResponseWriter, r *http.Request) {
 	buildID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {

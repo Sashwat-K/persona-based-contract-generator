@@ -212,14 +212,17 @@ func (s *VerificationService) VerifyBuildAuditChain(ctx context.Context, buildID
 
 // requiresSignature determines if an event type should have a signature.
 func requiresSignature(eventType string) bool {
-	// Events that should always be signed by the actor
+	// Events that should always be signed by the actor (v2 workflow)
 	signedEvents := map[string]bool{
-		"WORKLOAD_SUBMITTED":      true,
-		"ENVIRONMENT_STAGED":      true,
-		"AUDITOR_KEYS_REGISTERED": true,
-		"CONTRACT_ASSEMBLED":      true,
-		"BUILD_FINALIZED":         true,
-		"CONTRACT_DOWNLOADED":     true,
+		"BUILD_CREATED":                 true,
+		"SIGNING_KEY_CREATED":           true,
+		"WORKLOAD_SUBMITTED":            true,
+		"ENVIRONMENT_STAGED":            true,
+		"ATTESTATION_KEY_REGISTERED":    true,
+		"BUILD_FINALIZED":               true,
+		"CONTRACT_DOWNLOADED":           true,
+		"ATTESTATION_EVIDENCE_UPLOADED": true,
+		"ATTESTATION_VERIFIED":          true,
 	}
 	return signedEvents[eventType]
 }

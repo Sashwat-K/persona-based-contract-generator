@@ -31,8 +31,14 @@ const TERMINAL_BUILD_STATUSES = new Set(['CONTRACT_DOWNLOADED', 'CANCELLED']);
 
 const BUILD_ACTION_RULES = [
   {
-    role: 'SOLUTION_PROVIDER',
+    role: 'AUDITOR',
     status: 'CREATED',
+    title: 'Register Signing Key',
+    description: 'Generate or upload a signing key to begin the build workflow.'
+  },
+  {
+    role: 'SOLUTION_PROVIDER',
+    status: 'SIGNING_KEY_REGISTERED',
     title: 'Upload Workload & Certificate',
     description: 'Upload workload definition and encryption certificate to proceed.'
   },
@@ -45,12 +51,12 @@ const BUILD_ACTION_RULES = [
   {
     role: 'AUDITOR',
     status: 'ENVIRONMENT_STAGED',
-    title: 'Sign & Add Attestation',
-    description: 'Generate signing and attestation artifacts, then confirm attestation readiness.'
+    title: 'Register Attestation Key',
+    description: 'Generate or upload attestation key and confirm readiness.'
   },
   {
     role: 'AUDITOR',
-    status: 'AUDITOR_KEYS_REGISTERED',
+    status: 'ATTESTATION_KEY_REGISTERED',
     title: 'Finalize Contract',
     description: 'Assemble final contract and sign with your keys.'
   },

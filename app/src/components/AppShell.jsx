@@ -30,7 +30,7 @@ import {
   DocumentTasks
 } from '@carbon/icons-react';
 import DesktopTitleBar from './DesktopTitleBar';
-import { getRoleLabel } from '../utils/roles';
+import { getRoleLabel, sortRolesByPriority } from '../utils/roles';
 
 const AppShell = ({
   activeNav,
@@ -55,7 +55,9 @@ const AppShell = ({
   };
   
   // Define which navigation items each role can see
-  const availableRoles = Array.from(new Set((userRoles.length > 0 ? userRoles : [userRole]).filter(Boolean)));
+  const availableRoles = sortRolesByPriority(
+    Array.from(new Set((userRoles.length > 0 ? userRoles : [userRole]).filter(Boolean)))
+  );
   const activeRole = userRole;
   const isAdmin = activeRole === 'ADMIN';
   const isAuditor = activeRole === 'AUDITOR';

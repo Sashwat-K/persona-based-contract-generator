@@ -3,20 +3,19 @@
 
 export const PERSONAS = {
   ADMIN: 'Admin',
+  AUDITOR: 'Auditor',
   SOLUTION_PROVIDER: 'Solution Provider',
   DATA_OWNER: 'Data Owner',
-  AUDITOR: 'Auditor',
   ENV_OPERATOR: 'Env Operator',
   VIEWER: 'Viewer'
 };
 
 export const BUILD_STATES = [
   'CREATED',
+  'SIGNING_KEY_REGISTERED',
   'WORKLOAD_SUBMITTED',
   'ENVIRONMENT_STAGED',
-  'AUDITOR_KEYS_REGISTERED',
-  'CONTRACT_ASSEMBLED',
+  'ATTESTATION_KEY_REGISTERED',
   'FINALIZED',
   'CONTRACT_DOWNLOADED'
 ];
-

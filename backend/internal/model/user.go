@@ -28,12 +28,12 @@ func (r PersonaRole) IsValid() bool {
 }
 
 // RequiredRoleForTransition maps each build status transition to the persona role
-// that is allowed to perform it.
+// that is allowed to perform it (v2 workflow).
 var RequiredRoleForTransition = map[BuildStatus]PersonaRole{
-	StatusWorkloadSubmitted:     RoleSolutionProvider,
-	StatusEnvironmentStaged:     RoleDataOwner,
-	StatusAuditorKeysRegistered: RoleAuditor,
-	StatusContractAssembled:     RoleAuditor,
-	StatusFinalized:             RoleAuditor,
-	StatusContractDownloaded:    RoleEnvOperator,
+	StatusSigningKeyRegistered:     RoleAuditor,
+	StatusWorkloadSubmitted:        RoleSolutionProvider,
+	StatusEnvironmentStaged:        RoleDataOwner,
+	StatusAttestationKeyRegistered: RoleAuditor,
+	StatusFinalized:                RoleAuditor,
+	StatusContractDownloaded:       RoleEnvOperator,
 }

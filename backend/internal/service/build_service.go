@@ -217,20 +217,25 @@ func (s *BuildService) ListBuildsForUser(ctx context.Context, userID uuid.UUID, 
 // mapStatusToEvent helper matches build status with its corresponding audit event
 func mapStatusToEvent(status model.BuildStatus) model.AuditEventType {
 	switch status {
+	case model.StatusSigningKeyRegistered:
+		return model.EventSigningKeyCreated
 	case model.StatusWorkloadSubmitted:
 		return model.EventWorkloadSubmitted
 	case model.StatusEnvironmentStaged:
 		return model.EventEnvironmentStaged
-	case model.StatusAuditorKeysRegistered:
-		return model.EventAuditorKeysRegistered
-	case model.StatusContractAssembled:
-		return model.EventContractAssembled
+	case model.StatusAttestationKeyRegistered:
+		return model.EventAttestationKeyCreated
 	case model.StatusFinalized:
 		return model.EventBuildFinalized
 	case model.StatusContractDownloaded:
 		return model.EventContractDownloaded
 	case model.StatusCancelled:
 		return model.EventBuildCancelled
+	// Deprecated v1 states (kept for backward compatibility)
+	case model.StatusAuditorKeysRegistered:
+		return model.EventAuditorKeysRegistered
+	case model.StatusContractAssembled:
+		return model.EventContractAssembled
 	default:
 		return ""
 	}
@@ -238,10 +243,10 @@ func mapStatusToEvent(status model.BuildStatus) model.AuditEventType {
 
 func statusEventRequiresRequestSignature(eventType model.AuditEventType) bool {
 	switch eventType {
-	case model.EventWorkloadSubmitted,
+	case model.EventSigningKeyCreated,
+		model.EventWorkloadSubmitted,
 		model.EventEnvironmentStaged,
-		model.EventAuditorKeysRegistered,
-		model.EventContractAssembled:
+		model.EventAttestationKeyCreated:
 		return true
 	default:
 		return false
@@ -363,7 +368,7 @@ func (s *BuildService) FinalizeBuild(ctx context.Context, buildID uuid.UUID, con
 
 	currentStatus := model.BuildStatus(row.Status)
 	if !currentStatus.CanTransitionTo(model.StatusFinalized) {
-		return model.ErrInvalidStateTransition(currentStatus.String(), model.StatusContractAssembled.String())
+		return model.ErrInvalidStateTransition(currentStatus.String(), model.StatusAttestationKeyRegistered.String())
 	}
 
 	assigned, err := s.isUserAssignedToRoleForBuild(ctx, buildID, actorID, model.RoleAuditor.String())

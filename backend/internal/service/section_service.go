@@ -32,7 +32,6 @@ func NewSectionService(queries repository.Querier, assignmentService *Assignment
 var roleToNextStatus = map[model.PersonaRole]model.BuildStatus{
 	model.RoleSolutionProvider: model.StatusWorkloadSubmitted,
 	model.RoleDataOwner:        model.StatusEnvironmentStaged,
-	model.RoleAuditor:          model.StatusAuditorKeysRegistered,
 }
 
 // SubmitSectionInput contains the data for a new build section.
@@ -52,9 +51,9 @@ type SubmitSectionInput struct {
 	RequestSignatureHash *string
 }
 
-// requiredBuildStatusForRole maps each submitting role to the build status that must be current.
+// requiredBuildStatusForRole maps each submitting role to the build status that must be current (v2 workflow).
 var requiredBuildStatusForRole = map[model.PersonaRole]model.BuildStatus{
-	model.RoleSolutionProvider: model.StatusCreated,
+	model.RoleSolutionProvider: model.StatusSigningKeyRegistered,
 	model.RoleDataOwner:        model.StatusWorkloadSubmitted,
 	model.RoleAuditor:          model.StatusEnvironmentStaged,
 }
@@ -102,12 +101,8 @@ func (s *SectionService) SubmitSection(ctx context.Context, input SubmitSectionI
 		}
 	}
 
-	// 3. DATA_OWNER must supply a wrapped symmetric key (AES key wrapped with Auditor's RSA public key)
-	if resolvedRole == model.RoleDataOwner {
-		if input.EncryptedSymmetricKey == nil || *input.EncryptedSymmetricKey == "" {
-			return nil, model.ErrInvalidRequest("DATA_OWNER submission requires encrypted_symmetric_key (AES key wrapped with Auditor's RSA public key)")
-		}
-	}
+	// 3. DATA_OWNER wrapped symmetric key is optional in backend-native crypto flow.
+	// Legacy clients may still provide it; new flow does not require it.
 
 	// 4. Verify a section for this role doesn't already exist for this build
 	_, err = s.queries.GetBuildSectionByRole(ctx, repository.GetBuildSectionByRoleParams{

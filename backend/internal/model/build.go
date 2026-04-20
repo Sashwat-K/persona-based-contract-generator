@@ -5,23 +5,42 @@ type BuildStatus string
 
 const (
 	StatusCreated               BuildStatus = "CREATED"
+	StatusSigningKeyRegistered  BuildStatus = "SIGNING_KEY_REGISTERED"
 	StatusWorkloadSubmitted     BuildStatus = "WORKLOAD_SUBMITTED"
 	StatusEnvironmentStaged     BuildStatus = "ENVIRONMENT_STAGED"
-	StatusAuditorKeysRegistered BuildStatus = "AUDITOR_KEYS_REGISTERED"
-	StatusContractAssembled     BuildStatus = "CONTRACT_ASSEMBLED"
+	StatusAttestationKeyRegistered BuildStatus = "ATTESTATION_KEY_REGISTERED"
 	StatusFinalized             BuildStatus = "FINALIZED"
 	StatusContractDownloaded    BuildStatus = "CONTRACT_DOWNLOADED"
 	StatusCancelled             BuildStatus = "CANCELLED"
+
+	// Deprecated v1 states — retained for backward compatibility with existing DB rows.
+	StatusAuditorKeysRegistered BuildStatus = "AUDITOR_KEYS_REGISTERED"
+	StatusContractAssembled     BuildStatus = "CONTRACT_ASSEMBLED"
 )
 
-// ValidTransitions defines the legal forward state transitions.
+// AttestationState tracks post-finalization attestation evidence lifecycle.
+type AttestationState string
+
+const (
+	AttestationStatePendingUpload AttestationState = "PENDING_UPLOAD"
+	AttestationStateUploaded      AttestationState = "UPLOADED"
+	AttestationStateVerified      AttestationState = "VERIFIED"
+	AttestationStateRejected      AttestationState = "REJECTED"
+)
+
+// String returns the string representation of attestation state.
+func (s AttestationState) String() string {
+	return string(s)
+}
+
+// ValidTransitions defines the legal forward state transitions (v2 workflow).
 var ValidTransitions = map[BuildStatus]BuildStatus{
-	StatusCreated:               StatusWorkloadSubmitted,
-	StatusWorkloadSubmitted:     StatusEnvironmentStaged,
-	StatusEnvironmentStaged:     StatusAuditorKeysRegistered,
-	StatusAuditorKeysRegistered: StatusContractAssembled,
-	StatusContractAssembled:     StatusFinalized,
-	StatusFinalized:             StatusContractDownloaded,
+	StatusCreated:                  StatusSigningKeyRegistered,
+	StatusSigningKeyRegistered:     StatusWorkloadSubmitted,
+	StatusWorkloadSubmitted:        StatusEnvironmentStaged,
+	StatusEnvironmentStaged:        StatusAttestationKeyRegistered,
+	StatusAttestationKeyRegistered: StatusFinalized,
+	StatusFinalized:                StatusContractDownloaded,
 }
 
 // CanTransitionTo checks if a transition from the current status to the next is valid.

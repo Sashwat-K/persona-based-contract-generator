@@ -109,6 +109,8 @@ For detailed controls, see [Security Design](./Design/5-security-design.md).
 Notes:
 - Postgres data persists at `${POSTGRES_DATA_DIR:-./data/postgres}`.
 - Initial admin seed (`ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`) runs only on empty DB.
+- pgAdmin is available at `http://localhost:${PGADMIN_PORT:-5050}` (login with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD`).
+- Vault UI is available at `http://localhost:${VAULT_UI_PORT:-8000}` (use `VAULT_TOKEN`, default dev token: `dev-root-token`).
 
 ### Option 2: Production-Style Deployment (TLS)
 

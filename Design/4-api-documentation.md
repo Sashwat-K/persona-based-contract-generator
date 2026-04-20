@@ -1318,7 +1318,32 @@ For `contract-go` HPCR operations that require private keys, backend workers ret
 
 ### 7.13 V2: Backend-Native Contract Operations
 
-All v2 contract endpoints require `BuildAccess` middleware and are nested under `/builds/{id}/v2/...`.
+Template retrieval is global (not build-scoped). Section submission and finalization remain build-scoped.
+
+#### POST /v2/contract-template
+
+- Auth: required
+- Signature headers: required
+- Request:
+
+```json
+{
+  "type": "workload"
+}
+```
+
+`type` must be either `workload` or `env`.
+
+- Response `200`:
+
+```json
+{
+  "template_type": "workload",
+  "content": "..."
+}
+```
+
+- Templates are common for all builds.
 
 #### POST /builds/{id}/v2/sections/workload
 

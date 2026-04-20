@@ -26,14 +26,19 @@ import { formatDate } from '../utils/formatters';
 
 const EVENT_META = {
   BUILD_CREATED: { tagType: 'blue', tagLabel: 'Created', title: 'Build Created' },
+  SIGNING_KEY_CREATED: { tagType: 'purple', tagLabel: 'Signing Key', title: 'Signing Key Created' },
   WORKLOAD_SUBMITTED: { tagType: 'green', tagLabel: 'Workload', title: 'Workload Submitted' },
   ENVIRONMENT_STAGED: { tagType: 'teal', tagLabel: 'Environment', title: 'Environment Staged' },
-  AUDITOR_KEYS_REGISTERED: { tagType: 'purple', tagLabel: 'Attestation', title: 'Auditor Keys Registered' },
-  CONTRACT_ASSEMBLED: { tagType: 'cyan', tagLabel: 'Assembly', title: 'Contract Assembled' },
+  ATTESTATION_KEY_REGISTERED: { tagType: 'purple', tagLabel: 'Attestation', title: 'Attestation Key Registered' },
   BUILD_FINALIZED: { tagType: 'magenta', tagLabel: 'Finalized', title: 'Build Finalized' },
   CONTRACT_DOWNLOADED: { tagType: 'gray', tagLabel: 'Downloaded', title: 'Contract Downloaded' },
+  ATTESTATION_EVIDENCE_UPLOADED: { tagType: 'cyan', tagLabel: 'Evidence', title: 'Attestation Evidence Uploaded' },
+  ATTESTATION_VERIFIED: { tagType: 'green', tagLabel: 'Verified', title: 'Attestation Verified' },
   BUILD_CANCELLED: { tagType: 'red', tagLabel: 'Cancelled', title: 'Build Cancelled' },
   ROLE_ASSIGNED: { tagType: 'cyan', tagLabel: 'Assignment', title: 'Role Assigned' },
+  // Deprecated v1 event types (for backward compat with existing builds)
+  AUDITOR_KEYS_REGISTERED: { tagType: 'purple', tagLabel: 'Attestation (v1)', title: 'Auditor Keys Registered' },
+  CONTRACT_ASSEMBLED: { tagType: 'cyan', tagLabel: 'Assembly (v1)', title: 'Contract Assembled' },
 };
 
 const ASSIGNMENT_ROLE_LABELS = {
@@ -46,24 +51,37 @@ const ASSIGNMENT_ROLE_LABELS = {
 };
 
 const EVENT_TYPES_REQUIRING_SIGNATURE = new Set([
+  'BUILD_CREATED',
+  'SIGNING_KEY_CREATED',
   'WORKLOAD_SUBMITTED',
   'ENVIRONMENT_STAGED',
-  'AUDITOR_KEYS_REGISTERED',
-  'CONTRACT_ASSEMBLED',
+  'ATTESTATION_KEY_REGISTERED',
   'BUILD_FINALIZED',
   'CONTRACT_DOWNLOADED',
+  'ATTESTATION_EVIDENCE_UPLOADED',
+  'ATTESTATION_VERIFIED',
 ]);
 
 const VERIFIABLE_EVENT_TYPES = new Set([
+  'BUILD_CREATED',
+  'SIGNING_KEY_CREATED',
   'WORKLOAD_SUBMITTED',
   'ENVIRONMENT_STAGED',
-  'AUDITOR_KEYS_REGISTERED',
-  'CONTRACT_ASSEMBLED',
+  'ATTESTATION_KEY_REGISTERED',
   'BUILD_FINALIZED',
-  'CONTRACT_DOWNLOADED'
+  'CONTRACT_DOWNLOADED',
+  'ATTESTATION_EVIDENCE_UPLOADED',
+  'ATTESTATION_VERIFIED',
 ]);
 
 const STAGE_VERIFY_CONFIG = [
+  {
+    eventType: 'SIGNING_KEY_CREATED',
+    title: 'Signing Key Created',
+    description: 'Confirms the signing key registration event is linked correctly in the audit chain.',
+    requiresSignature: true,
+    personaRole: 'AUDITOR'
+  },
   {
     eventType: 'WORKLOAD_SUBMITTED',
     title: 'Workload Submitted',
@@ -79,16 +97,9 @@ const STAGE_VERIFY_CONFIG = [
     personaRole: 'DATA_OWNER'
   },
   {
-    eventType: 'AUDITOR_KEYS_REGISTERED',
-    title: 'Attestation Keys Registered',
+    eventType: 'ATTESTATION_KEY_REGISTERED',
+    title: 'Attestation Key Registered',
     description: 'Confirms attestation key registration is linked correctly in the audit chain.',
-    requiresSignature: true,
-    personaRole: 'AUDITOR'
-  },
-  {
-    eventType: 'CONTRACT_ASSEMBLED',
-    title: 'Contract Assembled',
-    description: 'Confirms contract assembly is linked correctly in the audit chain and signature validation succeeds.',
     requiresSignature: true,
     personaRole: 'AUDITOR'
   },

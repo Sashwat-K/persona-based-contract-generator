@@ -35,6 +35,20 @@ type Config struct {
 
 	// Request lifecycle
 	RequestTimeout time.Duration
+
+	// Key management
+	KeyProvider string
+
+	// Vault (required for key management)
+	VaultAddr           string
+	VaultNamespace      string
+	VaultAuthMethod     string
+	VaultRoleID         string
+	VaultSecretID       string
+	VaultToken          string
+	VaultTransitMount   string
+	VaultKVMount        string
+	VaultRequestTimeout time.Duration
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -52,13 +66,38 @@ func Load() (*Config, error) {
 			"CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,null",
 		)),
-		CORSAllowAll:      getEnvBool("CORS_ALLOW_ALL", false),
-		TrustProxyHeaders: getEnvBool("TRUST_PROXY_HEADERS", false),
-		RequestTimeout:    getEnvDuration("REQUEST_TIMEOUT", 30*time.Second),
+		CORSAllowAll:        getEnvBool("CORS_ALLOW_ALL", false),
+		TrustProxyHeaders:   getEnvBool("TRUST_PROXY_HEADERS", false),
+		RequestTimeout:      getEnvDuration("REQUEST_TIMEOUT", 30*time.Second),
+		KeyProvider:         strings.ToLower(getEnv("KEY_PROVIDER", "vault")),
+		VaultAddr:           getEnv("VAULT_ADDR", ""),
+		VaultNamespace:      getEnv("VAULT_NAMESPACE", ""),
+		VaultAuthMethod:     strings.ToLower(getEnv("VAULT_AUTH_METHOD", "approle")),
+		VaultRoleID:         getEnv("VAULT_ROLE_ID", ""),
+		VaultSecretID:       getEnv("VAULT_SECRET_ID", ""),
+		VaultToken:          getEnv("VAULT_TOKEN", ""),
+		VaultTransitMount:   getEnv("VAULT_TRANSIT_MOUNT", "transit"),
+		VaultKVMount:        getEnv("VAULT_KV_MOUNT", "secret"),
+		VaultRequestTimeout: getEnvDuration("VAULT_REQUEST_TIMEOUT", 10*time.Second),
 	}
 
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL environment variable is required")
+	}
+	if cfg.KeyProvider != "vault" {
+		return nil, fmt.Errorf("KEY_PROVIDER must be 'vault'")
+	}
+
+	if strings.TrimSpace(cfg.VaultAddr) == "" {
+		return nil, fmt.Errorf("VAULT_ADDR is required")
+	}
+	if strings.TrimSpace(cfg.VaultToken) == "" {
+		if cfg.VaultAuthMethod != "approle" {
+			return nil, fmt.Errorf("VAULT_AUTH_METHOD must be 'approle' when VAULT_TOKEN is not provided")
+		}
+		if strings.TrimSpace(cfg.VaultRoleID) == "" || strings.TrimSpace(cfg.VaultSecretID) == "" {
+			return nil, fmt.Errorf("VAULT_ROLE_ID and VAULT_SECRET_ID are required for approle auth")
+		}
 	}
 
 	return cfg, nil

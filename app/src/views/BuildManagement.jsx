@@ -40,9 +40,9 @@ const TABLE_HEADERS = [
 ];
 
 const BUILD_ASSIGNMENT_FIELDS = [
+  { role: ROLES.AUDITOR,           id: 'auditor',           label: 'Auditor' },
   { role: ROLES.SOLUTION_PROVIDER, id: 'solution-provider', label: 'Solution Provider' },
   { role: ROLES.DATA_OWNER,        id: 'data-owner',        label: 'Data Owner' },
-  { role: ROLES.AUDITOR,           id: 'auditor',           label: 'Auditor' },
   { role: ROLES.ENV_OPERATOR,      id: 'env-operator',      label: 'Environment Operator' }
 ];
 
@@ -71,6 +71,7 @@ const userHasRole = (user, roleName) => {
 
 const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) => {
   const isAdmin = userRole === 'ADMIN';
+  const canManageBuilds = isAdmin || userRole === 'AUDITOR';
   const isSetupRequired = useAuthStore((state) => state.isSetupRequired());
   const setupPending = useAuthStore((state) => state.getSetupPending());
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -87,6 +88,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
   const [completedPageSize, setCompletedPageSize] = useState(TABLE_PAGE_SIZES[0]);
 
   const loadUsers = useCallback(async () => {
+    if (!canManageBuilds) return;
     try {
       setLoadingUsers(true);
       const usersData = await userService.listUsers();
@@ -97,14 +99,14 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
     } finally {
       setLoadingUsers(false);
     }
-  }, []);
+  }, [canManageBuilds]);
 
   // Load users when modal opens
   useEffect(() => {
-    if (createModalOpen && users.length === 0) {
+    if (canManageBuilds && createModalOpen && users.length === 0) {
       loadUsers();
     }
-  }, [createModalOpen, users.length, loadUsers]);
+  }, [canManageBuilds, createModalOpen, users.length, loadUsers]);
 
   const getBuildStatusMeta = useCallback((build) => {
     const statusKey = (build.status || '').toUpperCase();
@@ -204,26 +206,28 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
       const build = await buildService.createBuild(buildName);
 
       // Step 2: Create assignments for each role
-      const roleAssignments = [
-        { role: ROLES.SOLUTION_PROVIDER, userId: assignments[ROLES.SOLUTION_PROVIDER] },
-        { role: ROLES.DATA_OWNER,        userId: assignments[ROLES.DATA_OWNER] },
-        { role: ROLES.AUDITOR,           userId: assignments[ROLES.AUDITOR] },
-        { role: ROLES.ENV_OPERATOR,      userId: assignments[ROLES.ENV_OPERATOR] }
-      ].filter(a => a.userId);
+      if (canManageBuilds) {
+        const roleAssignments = [
+          { role: ROLES.AUDITOR,           userId: assignments[ROLES.AUDITOR] },
+          { role: ROLES.SOLUTION_PROVIDER, userId: assignments[ROLES.SOLUTION_PROVIDER] },
+          { role: ROLES.DATA_OWNER,        userId: assignments[ROLES.DATA_OWNER] },
+          { role: ROLES.ENV_OPERATOR,      userId: assignments[ROLES.ENV_OPERATOR] }
+        ].filter(a => a.userId);
 
-      for (const assignment of roleAssignments) {
-        const selectedUser = users.find((user) => user.id === assignment.userId);
-        const roleLabel = ROLE_LABEL_BY_KEY[assignment.role] || assignment.role;
-        if (!selectedUser) {
-          throw new Error(`Selected user not found for ${roleLabel}.`);
-        }
-        if (!userHasRole(selectedUser, assignment.role)) {
-          throw new Error(`${selectedUser.name} does not have ${roleLabel} role.`);
-        }
-        try {
-          await assignmentService.createAssignment(build.id, assignment.userId, assignment.role);
-        } catch (err) {
-          throw new Error(`Failed to assign ${roleLabel}: ${err.message}`);
+        for (const assignment of roleAssignments) {
+          const selectedUser = users.find((user) => user.id === assignment.userId);
+          const roleLabel = ROLE_LABEL_BY_KEY[assignment.role] || assignment.role;
+          if (!selectedUser) {
+            throw new Error(`Selected user not found for ${roleLabel}.`);
+          }
+          if (!userHasRole(selectedUser, assignment.role)) {
+            throw new Error(`${selectedUser.name} does not have ${roleLabel} role.`);
+          }
+          try {
+            await assignmentService.createAssignment(build.id, assignment.userId, assignment.role);
+          } catch (err) {
+            throw new Error(`Failed to assign ${roleLabel}: ${err.message}`);
+          }
         }
       }
 
@@ -248,14 +252,16 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
     } finally {
       setCreating(false);
     }
-  }, [assignments, buildName, creating, isSetupRequired, onBuildCreated, setupPending, users]);
+  }, [assignments, buildName, canManageBuilds, creating, isSetupRequired, onBuildCreated, setupPending, users]);
 
   const isFormValid = useMemo(() => {
-    return Boolean(buildName.trim() &&
-           assignments[ROLES.SOLUTION_PROVIDER] &&
-           assignments[ROLES.DATA_OWNER] &&
-           assignments[ROLES.AUDITOR] &&
-           assignments[ROLES.ENV_OPERATOR]);
+    return Boolean(
+      buildName.trim() &&
+      assignments[ROLES.SOLUTION_PROVIDER] &&
+      assignments[ROLES.DATA_OWNER] &&
+      assignments[ROLES.AUDITOR] &&
+      assignments[ROLES.ENV_OPERATOR]
+    );
   }, [assignments, buildName]);
 
   const handleRefresh = useCallback(async () => {
@@ -294,7 +300,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
           >
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
-          {isAdmin && (
+          {canManageBuilds && (
             <Button
               renderIcon={Add}
               disabled={isSetupRequired || creating}
@@ -318,10 +324,12 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
           description={
             isAdmin
               ? 'Get started by creating your first build.'
+              : canManageBuilds
+              ? 'Get started by creating your first build.'
               : 'No builds have been created yet. Contact your administrator.'
           }
           action={
-            isAdmin ? (
+            canManageBuilds ? (
               <Button
                 renderIcon={Add}
                 disabled={isSetupRequired || creating}
@@ -469,60 +477,62 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
             disabled={creating}
           />
 
-          <div className="build-management-modal-section">
-            <h4 className="build-management-modal-title">Assign Users to Roles</h4>
-            <p className="build-management-modal-description">
-              Each role must be assigned to a user. The same user can be assigned to multiple roles. Only users who have completed their initial login and registered a public key are eligible.
-            </p>
+          {canManageBuilds ? (
+            <div className="build-management-modal-section">
+              <h4 className="build-management-modal-title">Assign Users to Roles</h4>
+              <p className="build-management-modal-description">
+                Each role must be assigned to a user. The same user can be assigned to multiple roles. Only users who have completed their initial login and registered a public key are eligible.
+              </p>
 
-            {loadingUsers ? (
-              <div className="build-management-users-loading">
-                <InlineLoader size="sm" message="Loading users..." />
-              </div>
-            ) : users.length === 0 ? (
-              <div className="build-management-users-error">
-                <div className="build-management-users-error__content">
-                  <WarningAlt size={20} className="build-management-users-error__icon" />
-                  <span>Failed to load users. Please try again.</span>
+              {loadingUsers ? (
+                <div className="build-management-users-loading">
+                  <InlineLoader size="sm" message="Loading users..." />
                 </div>
-              </div>
-            ) : (
-              <Stack gap={5}>
-              {BUILD_ASSIGNMENT_FIELDS.map(({ role, id, label }) => {
-                const roleEligibleUsers = eligibleUsersByRole[role] || [];
-                const helperText = (notReadyCount > 0 || roleEligibleUsers.length === 0)
-                  ? [
-                    notReadyCount > 0
-                      ? `${notReadyCount} user(s) excluded — pending initial login, password reset, or public key registration`
-                      : null,
-                    roleEligibleUsers.length === 0
-                      ? `No eligible users with ${label} role`
-                      : null
-                  ].filter(Boolean).join('; ')
-                  : readyUsers.length === 0
-                  ? 'No eligible users. Users must complete initial setup.'
-                  : undefined;
+              ) : users.length === 0 ? (
+                <div className="build-management-users-error">
+                  <div className="build-management-users-error__content">
+                    <WarningAlt size={20} className="build-management-users-error__icon" />
+                    <span>Failed to load users. Please try again.</span>
+                  </div>
+                </div>
+              ) : (
+                <Stack gap={5}>
+                  {BUILD_ASSIGNMENT_FIELDS.map(({ role, id, label }) => {
+                    const roleEligibleUsers = eligibleUsersByRole[role] || [];
+                    const helperText = (notReadyCount > 0 || roleEligibleUsers.length === 0)
+                      ? [
+                        notReadyCount > 0
+                          ? `${notReadyCount} user(s) excluded — pending initial login, password reset, or public key registration`
+                          : null,
+                        roleEligibleUsers.length === 0
+                          ? `No eligible users with ${label} role`
+                          : null
+                      ].filter(Boolean).join('; ')
+                      : readyUsers.length === 0
+                      ? 'No eligible users. Users must complete initial setup.'
+                      : undefined;
 
-                return (
-                  <Select
-                    key={role}
-                    id={id}
-                    labelText={label}
-                    value={assignments[role]}
-                    helperText={helperText}
-                    onChange={(e) => setAssignments(prev => ({ ...prev, [role]: e.target.value }))}
-                    disabled={creating || loadingUsers}
-                  >
-                    <SelectItem value="" text="Select a user" />
-                    {roleEligibleUsers.map(user => (
-                      <SelectItem key={user.id} value={user.id} text={user.name} />
-                    ))}
-                  </Select>
-                );
-              })}
-              </Stack>
-            )}
-          </div>
+                    return (
+                      <Select
+                        key={role}
+                        id={id}
+                        labelText={label}
+                        value={assignments[role]}
+                        helperText={helperText}
+                        onChange={(e) => setAssignments(prev => ({ ...prev, [role]: e.target.value }))}
+                        disabled={creating || loadingUsers}
+                      >
+                        <SelectItem value="" text="Select a user" />
+                        {roleEligibleUsers.map(user => (
+                          <SelectItem key={user.id} value={user.id} text={user.name} />
+                        ))}
+                      </Select>
+                    );
+                  })}
+                </Stack>
+              )}
+            </div>
+          ) : null}
         </Stack>
       </Modal>
     </div>

@@ -15,7 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/config"
+	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/contract/contractgo"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/handler"
+	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt"
+	vaultprovider "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt/vault"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/middleware"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
@@ -68,6 +71,22 @@ func main() {
 	middleware.SetSystemLogHook(systemLogService.LogEvent)
 	systemLogService.LogEvent(ctx, "system", "SERVER_STARTED", "Backend Server", cfg.ServerHost, "SUCCESS", "Server boot sequence completed")
 
+	// Initialize v2 key provider (Vault)
+	keyProvider, err := initKeyProvider(cfg)
+	if err != nil {
+		slog.Error("failed to initialize key provider", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("key provider initialized", "provider", cfg.KeyProvider)
+
+	// Initialize v2 contract engine (Go-native replacement for contract-cli)
+	contractEngine := contractgo.New()
+
+	// Initialize v2 services
+	keyService := service.NewKeyService(queries, pool, buildService, assignmentService, auditService, keyProvider)
+	contractService := service.NewContractService(queries, pool, sectionService, buildService, assignmentService, keyService, keyProvider, contractEngine)
+	attestationService := service.NewAttestationService(queries, pool, assignmentService, auditService, keyProvider, contractEngine)
+
 	// Initialize handlers
 	auditHandler := handler.NewAuditHandler(auditService)
 	assignmentHandler := handler.NewAssignmentHandler(assignmentService, systemLogService)
@@ -81,8 +100,13 @@ func main() {
 	swaggerHandler := handler.NewSwaggerHandler()
 	systemLogHandler := handler.NewSystemLogHandler(systemLogService)
 
+	// Initialize v2 handlers
+	keyHandler := handler.NewKeyHandler(keyService, systemLogService)
+	contractV2Handler := handler.NewContractV2Handler(contractService, systemLogService)
+	attestationHandler := handler.NewAttestationHandler(attestationService, systemLogService)
+
 	// Build router
-	r := buildRouter(cfg, queries, authHandler, userHandler, roleHandler, buildHandler, sectionHandler, auditHandler, assignmentHandler, exportHandler, rotationHandler, swaggerHandler, systemLogHandler)
+	r := buildRouter(cfg, queries, authHandler, userHandler, roleHandler, buildHandler, sectionHandler, auditHandler, assignmentHandler, exportHandler, rotationHandler, swaggerHandler, systemLogHandler, keyHandler, contractV2Handler, attestationHandler)
 
 	// Start credential rotation monitor (checks every 24 hours)
 	monitorCtx, cancelMonitor := context.WithCancel(ctx)
@@ -150,6 +174,9 @@ func buildRouter(
 	rotationHandler *handler.RotationHandler,
 	swaggerHandler *handler.SwaggerHandler,
 	systemLogHandler *handler.SystemLogHandler,
+	keyHandler *handler.KeyHandler,
+	contractV2Handler *handler.ContractV2Handler,
+	attestationHandler *handler.AttestationHandler,
 ) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -187,10 +214,11 @@ func buildRouter(
 
 		// Roles reference data
 		r.Get("/roles", roleHandler.ListRoles)
+		r.Post("/v2/contract-template", contractV2Handler.GetContractTemplate)
 
-		// User management (ADMIN only)
+		// User management (ADMIN-only mutations; ADMIN/AUDITOR can list)
 		r.Route("/users", func(r chi.Router) {
-			r.With(middleware.RequireRole("ADMIN")).Get("/", userHandler.ListUsers)
+			r.With(middleware.RequireRole("ADMIN", "AUDITOR")).Get("/", userHandler.ListUsers)
 			r.With(middleware.RequireRole("ADMIN")).Post("/", userHandler.CreateUser)
 			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}", userHandler.UpdateUserProfile)
 			r.With(middleware.RequireRole("ADMIN")).Patch("/{id}/roles", userHandler.UpdateRoles)
@@ -227,7 +255,7 @@ func buildRouter(
 		// Builds management
 		r.Route("/builds", func(r chi.Router) {
 			r.Get("/", buildHandler.ListBuilds) // Any authenticated user can list builds
-			r.With(middleware.RequireRole("ADMIN")).Post("/", buildHandler.CreateBuild)
+			r.With(middleware.RequireRole("ADMIN", "AUDITOR")).Post("/", buildHandler.CreateBuild)
 
 			r.Route("/{id}", func(r chi.Router) {
 				r.Use(middleware.RequireBuildAccess(queries, "id"))
@@ -235,7 +263,7 @@ func buildRouter(
 				r.Patch("/status", buildHandler.TransitionStatus) // Role validation done internally in service based on transition state
 				r.With(middleware.RequireRole("AUDITOR")).Post("/attestation", buildHandler.RegisterAttestation)
 				r.With(middleware.RequireRole("AUDITOR")).Post("/finalize", buildHandler.FinalizeBuild)
-				r.With(middleware.RequireRole("ADMIN")).Post("/cancel", buildHandler.CancelBuild)
+				r.With(middleware.RequireRole("ADMIN", "AUDITOR")).Post("/cancel", buildHandler.CancelBuild)
 
 				// Sections
 				r.Get("/sections", sectionHandler.GetSections)
@@ -245,9 +273,9 @@ func buildRouter(
 				r.Get("/audit", auditHandler.GetAuditTrail)
 				r.Get("/audit-trail", auditHandler.GetAuditTrail)
 
-				// Build Assignments (ADMIN only for create/delete, any authenticated for read)
+				// Build Assignments (ADMIN/AUDITOR can create, ADMIN can delete, any authenticated can read)
 				r.Get("/assignments", assignmentHandler.GetBuildAssignments)
-				r.With(middleware.RequireRole("ADMIN")).Post("/assignments", assignmentHandler.CreateAssignment)
+				r.With(middleware.RequireRole("ADMIN", "AUDITOR")).Post("/assignments", assignmentHandler.CreateAssignment)
 				r.With(middleware.RequireRole("ADMIN")).Delete("/assignments", assignmentHandler.DeleteBuildAssignments)
 
 				// Export & Verification
@@ -256,6 +284,27 @@ func buildRouter(
 				r.Get("/userdata", exportHandler.GetUserData)                      // ENV_OPERATOR
 				r.Get("/verify", exportHandler.VerifyAuditChain)                   // Any authenticated
 				r.Get("/verify-contract", exportHandler.VerifyContractIntegrity)   // Any authenticated
+
+				// V2: Backend-native key management
+				r.Route("/keys", func(r chi.Router) {
+					r.With(middleware.RequireRole("AUDITOR")).Post("/signing", keyHandler.RegisterSigningKey)
+					r.With(middleware.RequireRole("AUDITOR")).Post("/attestation", keyHandler.RegisterAttestationKey)
+					r.Get("/signing/public", keyHandler.GetSigningPublicKey)
+				})
+
+				// V2: Backend-native contract operations
+				r.Route("/v2", func(r chi.Router) {
+					r.Post("/sections/workload", contractV2Handler.SubmitWorkload)
+					r.Post("/sections/environment", contractV2Handler.SubmitEnvironment)
+					r.With(middleware.RequireRole("AUDITOR")).Post("/finalize", contractV2Handler.FinalizeContract)
+				})
+
+				// V2: Attestation evidence management
+				r.Route("/attestation", func(r chi.Router) {
+					r.Post("/evidence", attestationHandler.UploadEvidence)
+					r.With(middleware.RequireRole("AUDITOR")).Post("/evidence/{evidence_id}/verify", attestationHandler.VerifyEvidence)
+					r.Get("/status", attestationHandler.GetVerificationStatus)
+				})
 			})
 		})
 
@@ -349,4 +398,22 @@ func seedAdminUser(ctx context.Context, queries repository.Querier, bcryptCost i
 
 	slog.Info("admin user created", "id", admin.ID, "email", admin.Email)
 	return nil
+}
+
+// initKeyProvider creates the Vault key provider.
+func initKeyProvider(cfg *config.Config) (keymgmt.KeyProvider, error) {
+	provider, err := vaultprovider.New(vaultprovider.Config{
+		Addr:           cfg.VaultAddr,
+		Namespace:      cfg.VaultNamespace,
+		AuthMethod:     cfg.VaultAuthMethod,
+		RoleID:         cfg.VaultRoleID,
+		SecretID:       cfg.VaultSecretID,
+		Token:          cfg.VaultToken,
+		TransitMount:   cfg.VaultTransitMount,
+		RequestTimeout: cfg.VaultRequestTimeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return provider, nil
 }

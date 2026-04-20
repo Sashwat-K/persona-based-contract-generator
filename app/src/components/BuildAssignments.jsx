@@ -39,8 +39,9 @@ const BuildAssignments = ({ buildId, buildStatus, userRole, onStatusUpdate }) =>
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
-  const isAdmin = userRole === 'ADMIN';
-  const canCancelBuild = isAdmin && !['FINALIZED', 'CONTRACT_DOWNLOADED', 'CANCELLED'].includes((buildStatus || '').toUpperCase());
+  const canManageBuilds = userRole === 'ADMIN' || userRole === 'AUDITOR';
+  const normalizedBuildStatus = String(buildStatus || '').toUpperCase();
+  const canCancelBuild = canManageBuilds && !['FINALIZED', 'CONTRACT_DOWNLOADED', 'CANCELLED'].includes(normalizedBuildStatus);
 
   useEffect(() => {
     loadAssignments();
@@ -110,11 +111,23 @@ const BuildAssignments = ({ buildId, buildStatus, userRole, onStatusUpdate }) =>
     }
 
     if (role === 'AUDITOR') {
-      const auditorComplete =
-        hasSubmittedSection ||
-        ['AUDITOR_KEYS_REGISTERED', 'CONTRACT_ASSEMBLED', 'FINALIZED', 'CONTRACT_DOWNLOADED'].includes(buildStatus);
-      if (auditorComplete) {
-        return <Tag type="green" renderIcon={CheckmarkFilled}>Completed</Tag>;
+      if (['FINALIZED', 'CONTRACT_DOWNLOADED', 'CONTRACT_ASSEMBLED'].includes(normalizedBuildStatus)) {
+        return <Tag type="green" renderIcon={CheckmarkFilled}>Completed (3/3)</Tag>;
+      }
+      if (['ATTESTATION_KEY_REGISTERED', 'AUDITOR_KEYS_REGISTERED'].includes(normalizedBuildStatus)) {
+        return <Tag type="teal" renderIcon={WarningAlt}>Finalise Contract (2/3)</Tag>;
+      }
+      if (normalizedBuildStatus === 'ENVIRONMENT_STAGED') {
+        return <Tag type="purple" renderIcon={WarningAlt}>Add Attestation Key (1/3)</Tag>;
+      }
+      if (['SIGNING_KEY_REGISTERED', 'WORKLOAD_SUBMITTED'].includes(normalizedBuildStatus)) {
+        return <Tag type="blue">Waiting for Environment (1/3)</Tag>;
+      }
+      if (normalizedBuildStatus === 'CREATED') {
+        return <Tag type="purple" renderIcon={WarningAlt}>Add Signing Key (0/3)</Tag>;
+      }
+      if (normalizedBuildStatus === 'CANCELLED') {
+        return <Tag type="red">Cancelled</Tag>;
       }
       return <Tag type="gray" renderIcon={WarningAlt}>Pending</Tag>;
     }
@@ -158,7 +171,7 @@ const BuildAssignments = ({ buildId, buildStatus, userRole, onStatusUpdate }) =>
     { key: 'assigned_at', header: 'Assigned At' }
   ];
 
-  const roleOrder = ['SOLUTION_PROVIDER', 'DATA_OWNER', 'AUDITOR', 'ENV_OPERATOR'];
+  const roleOrder = ['ADMIN', 'AUDITOR', 'SOLUTION_PROVIDER', 'DATA_OWNER', 'ENV_OPERATOR', 'VIEWER'];
 
   const rows = assignments
     .slice()
@@ -210,16 +223,16 @@ const BuildAssignments = ({ buildId, buildStatus, userRole, onStatusUpdate }) =>
           <span className="build-assignments__summary-value">{assignments.length}</span>
         </div>
         <div className="build-assignments__summary-item">
+          <span className="build-assignments__summary-label">Auditors:</span>
+          <span className="build-assignments__summary-value">{summary.AUDITOR}</span>
+        </div>
+        <div className="build-assignments__summary-item">
           <span className="build-assignments__summary-label">Solution Providers:</span>
           <span className="build-assignments__summary-value">{summary.SOLUTION_PROVIDER}</span>
         </div>
         <div className="build-assignments__summary-item">
           <span className="build-assignments__summary-label">Data Owners:</span>
           <span className="build-assignments__summary-value">{summary.DATA_OWNER}</span>
-        </div>
-        <div className="build-assignments__summary-item">
-          <span className="build-assignments__summary-label">Auditors:</span>
-          <span className="build-assignments__summary-value">{summary.AUDITOR}</span>
         </div>
         <div className="build-assignments__summary-item">
           <span className="build-assignments__summary-label">Env Operators:</span>
@@ -237,7 +250,7 @@ const BuildAssignments = ({ buildId, buildStatus, userRole, onStatusUpdate }) =>
         >
           Refresh
         </Button>
-        {isAdmin && (
+        {canManageBuilds && (
           <Button
             kind="danger--tertiary"
             size="md"
