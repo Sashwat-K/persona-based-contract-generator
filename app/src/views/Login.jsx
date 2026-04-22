@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Form,
   TextInput,
@@ -20,11 +20,18 @@ import apiClient from '../services/apiClient';
 import HyperProtectIcon from '../components/HyperProtectIcon';
 import DesktopTitleBar from '../components/DesktopTitleBar';
 import { getPrimaryRole } from '../utils/roles';
+import { validateEmail } from '../utils/validators';
 
 const Login = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberEmail, setRememberEmail] = useState(false);
+  
+  // Validation state
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showServerConfig, setShowServerConfig] = useState(false);
@@ -182,8 +189,66 @@ const Login = ({ onLogin }) => {
     }
   };
 
+  // Validate email on change/blur
+  const validateEmailField = (value) => {
+    if (!emailTouched) return;
+    const result = validateEmail(value);
+    setEmailError(result.valid ? '' : result.error);
+  };
+
+  // Validate password on change/blur
+  const validatePasswordField = (value) => {
+    if (!passwordTouched) return;
+    if (!value || value.length === 0) {
+      setPasswordError('Password is required');
+    } else {
+      setPasswordError('');
+    }
+  };
+
+  // Handle email change
+  const handleEmailChange = (e) => {
+    const value = e.target.value;
+    setUsername(value);
+    if (emailTouched) {
+      validateEmailField(value);
+    }
+  };
+
+  // Handle password change
+  const handlePasswordChange = (e) => {
+    const value = e.target.value;
+    setPassword(value);
+    if (passwordTouched) {
+      validatePasswordField(value);
+    }
+  };
+
+  // Check if form is valid
+  const isFormValid = useMemo(() => {
+    const emailValid = validateEmail(username).valid;
+    const passwordValid = password.length > 0;
+    return emailValid && passwordValid && !isLoggingIn;
+  }, [username, password, isLoggingIn]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Mark fields as touched
+    setEmailTouched(true);
+    setPasswordTouched(true);
+    
+    // Validate all fields
+    const emailValidation = validateEmail(username);
+    const passwordValid = password.length > 0;
+    
+    setEmailError(emailValidation.valid ? '' : emailValidation.error);
+    setPasswordError(passwordValid ? '' : 'Password is required');
+    
+    if (!emailValidation.valid || !passwordValid) {
+      return;
+    }
+    
     setError('');
     setIsLoggingIn(true);
 
@@ -358,21 +423,37 @@ const Login = ({ onLogin }) => {
                   <div className="login-form-group">
                     <TextInput
                       id="login-username"
-                      labelText="Email"
+                      labelText="Email *"
                       placeholder="username@example.com"
                       value={username}
-                      onChange={(e) => setUsername(e.target.value)}
+                      onChange={handleEmailChange}
+                      onBlur={() => {
+                        setEmailTouched(true);
+                        validateEmailField(username);
+                      }}
+                      invalid={emailTouched && !!emailError}
+                      invalidText={emailError}
+                      helperText={!emailError && !emailTouched ? "Enter your corporate email address" : undefined}
                       required
+                      autoComplete="email"
                     />
                   </div>
 
                   <div className="login-form-group">
                     <PasswordInput
                       id="login-password"
-                      labelText="Password"
+                      labelText="Password *"
+                      placeholder="Enter your password"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={handlePasswordChange}
+                      onBlur={() => {
+                        setPasswordTouched(true);
+                        validatePasswordField(password);
+                      }}
+                      invalid={passwordTouched && !!passwordError}
+                      invalidText={passwordError}
                       required
+                      autoComplete="current-password"
                     />
                   </div>
 
@@ -385,7 +466,12 @@ const Login = ({ onLogin }) => {
                     />
                   </div>
 
-                  <Button type="submit" size="lg" className="login-submit-button">
+                  <Button
+                    type="submit"
+                    size="lg"
+                    className="login-submit-button"
+                    disabled={!isFormValid}
+                  >
                     Continue
                   </Button>
 

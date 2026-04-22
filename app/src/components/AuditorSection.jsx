@@ -5,6 +5,11 @@ import {
   Tag,
   Tile,
   PasswordInput,
+  RadioButtonGroup,
+  RadioButton,
+  Select,
+  SelectItem,
+  FileUploader,
 } from '@carbon/react';
 import {
   Key,
@@ -12,6 +17,7 @@ import {
 } from '@carbon/icons-react';
 import buildService from '../services/buildService';
 import ConfirmDialog from './ConfirmDialog';
+import { PLATFORMS, getCertsByPlatform, getCertById } from '../data/builtinCerts';
 
 const CONTEXT_KEY_PREFIX = 'auditor_v2_';
 const TERMINAL_STATUSES = new Set(['FINALIZED', 'CONTRACT_DOWNLOADED', 'CANCELLED']);
@@ -43,6 +49,13 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate,
   const [attestationResult, setAttestationResult] = useState(null);
   const [signingPassphrase, setSigningPassphrase] = useState('');
   const [attestationPassphrase, setAttestationPassphrase] = useState('');
+  
+  // Certificate source: 'builtin' | 'custom'
+  const [certSource, setCertSource] = useState('custom');
+  const [selectedPlatformId, setSelectedPlatformId] = useState(PLATFORMS[0].id);
+  const [selectedCertId, setSelectedCertId] = useState('');
+  const [customCertContent, setCustomCertContent] = useState('');
+  const [customCertFileName, setCustomCertFileName] = useState('');
 
   const [registeringSigning, setRegisteringSigning] = useState(false);
   const [registeringAttestation, setRegisteringAttestation] = useState(false);
@@ -85,6 +98,21 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate,
       ? 'Register a build-scoped attestation key for this build.'
       : 'Register signing and attestation keys using backend-native v2 endpoints.';
   const attestationStepLabel = showSigningCard ? 'Step 2' : 'Step 1';
+  
+  // Get certificate options based on selected platform
+  const certOptions = getCertsByPlatform(selectedPlatformId);
+  
+  // Get active certificate content
+  const getActiveCertContent = () => {
+    if (certSource === 'custom') return customCertContent;
+    return getCertById(selectedCertId)?.cert || '';
+  };
+
+  // Set default cert when platform changes
+  useEffect(() => {
+    const certs = getCertsByPlatform(selectedPlatformId);
+    setSelectedCertId(certs.length > 0 ? certs[0].id : '');
+  }, [selectedPlatformId]);
 
   const readStoredContext = () => {
     try {
@@ -200,6 +228,15 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate,
     }
   };
 
+  const handleCustomCertUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCustomCertFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setCustomCertContent(ev.target.result);
+    reader.readAsText(file);
+  };
+
   const handleRegisterAttestationKey = () => {
     setError(null);
     setSuccess(null);
@@ -211,6 +248,17 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate,
 
     if (!attestationPassphrase.trim()) {
       setError('Attestation key passphrase is required.');
+      return;
+    }
+
+    const certContent = getActiveCertContent();
+    if (!certContent || certContent.trim() === '') {
+      setError('Please select or upload a valid encryption certificate.');
+      return;
+    }
+    // Check for placeholder/dummy certificates
+    if (certContent.includes('PASTE_') || certContent.includes('qLqL')) {
+      setError('Please upload a real encryption certificate. Built-in certificates are placeholders for demonstration.');
       return;
     }
 
@@ -232,11 +280,23 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate,
       return;
     }
 
+    const certContent = getActiveCertContent();
+    if (!certContent || certContent.trim() === '') {
+      setError('Please select or upload a valid encryption certificate.');
+      return;
+    }
+    // Check for placeholder/dummy certificates
+    if (certContent.includes('PASTE_') || certContent.includes('qLqL')) {
+      setError('Please upload a real encryption certificate. Built-in certificates are placeholders for demonstration.');
+      return;
+    }
+
     setRegisteringAttestation(true);
     try {
       const result = await buildService.registerAttestationKey(buildId, {
         mode: 'generate',
-        passphrase: attestationPassphrase.trim()
+        passphrase: attestationPassphrase.trim(),
+        encryption_cert_pem: certContent
       });
       setAttestationResult(result);
       const nextAttestationKeyID = result?.attestation_key_id || result?.key_id || '';
@@ -247,11 +307,7 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate,
         });
       }
       await refreshBuildStatus();
-      if (result?.passphrase_ignored) {
-        setSuccess('Attestation key registered successfully. Passphrase is saved in this session.');
-      } else {
-        setSuccess('Attestation key registered successfully.');
-      }
+      setSuccess('Attestation key registered successfully. The public key has been encrypted.');
     } catch (err) {
       setError(`Failed to register attestation key: ${err.message}`);
     } finally {
@@ -367,6 +423,82 @@ const AuditorSection = ({ buildId, buildStatus: buildStatusProp, onStatusUpdate,
               autoComplete="new-password"
               disabled={registeringAttestation || !canRegisterAttestation || isTerminal || isAttestationRegistered}
             />
+            
+            <div style={{ marginTop: '1rem' }}>
+              <h5 className="workflow-step-title" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                HPCR Encryption Certificate
+              </h5>
+              <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.75rem' }}>
+                The attestation public key will be encrypted using this certificate before storage.
+              </p>
+              
+              <RadioButtonGroup
+                name="attestation-cert-source"
+                valueSelected={certSource}
+                onChange={(val) => setCertSource(val)}
+                className="workflow-radio-group"
+                disabled={registeringAttestation || !canRegisterAttestation || isTerminal || isAttestationRegistered}
+              >
+                <RadioButton
+                  labelText="Upload custom certificate"
+                  value="custom"
+                  id="attestation-cert-custom"
+                  disabled={registeringAttestation || !canRegisterAttestation || isTerminal || isAttestationRegistered}
+                />
+                <RadioButton
+                  labelText="Use built-in certificate"
+                  value="builtin"
+                  id="attestation-cert-builtin"
+                  disabled={registeringAttestation || !canRegisterAttestation || isTerminal || isAttestationRegistered}
+                />
+              </RadioButtonGroup>
+
+              {certSource === 'builtin' ? (
+                <div className="workflow-form-row" style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                  <Select
+                    id="attestation-cert-platform"
+                    labelText="Platform"
+                    value={selectedPlatformId}
+                    onChange={(e) => setSelectedPlatformId(e.target.value)}
+                    className="workflow-select workflow-select--platform"
+                    disabled={registeringAttestation || !canRegisterAttestation || isTerminal || isAttestationRegistered}
+                  >
+                    {PLATFORMS.map(p => (
+                      <SelectItem key={p.id} value={p.id} text={p.label} />
+                    ))}
+                  </Select>
+
+                  <Select
+                    id="attestation-cert-version"
+                    labelText="Certificate"
+                    value={selectedCertId}
+                    onChange={(e) => setSelectedCertId(e.target.value)}
+                    className="workflow-select workflow-select--version"
+                    disabled={registeringAttestation || !canRegisterAttestation || isTerminal || isAttestationRegistered}
+                  >
+                    {certOptions.map(c => (
+                      <SelectItem key={c.id} value={c.id} text={c.label} />
+                    ))}
+                  </Select>
+                </div>
+              ) : (
+                <div style={{ marginTop: '1rem' }}>
+                  <FileUploader
+                    labelDescription="Upload certificate (.crt / .pem)"
+                    buttonLabel="Choose file"
+                    filenameStatus="edit"
+                    accept={['.crt', '.pem', '.cer']}
+                    onChange={handleCustomCertUpload}
+                    disabled={registeringAttestation || !canRegisterAttestation || isTerminal || isAttestationRegistered}
+                  />
+                  {customCertFileName && (
+                    <p className="workflow-upload-meta" style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: '#525252' }}>
+                      {customCertFileName} loaded
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
             {isAttestationRegistered && !attestationKeyID && (
               <p className="workflow-step-copy">
                 Attestation key is already registered for this build.

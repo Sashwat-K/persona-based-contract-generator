@@ -7,6 +7,7 @@ import {
   InlineNotification
 } from '@carbon/react';
 import authService from '../services/authService';
+import { PasswordStrengthMeter, isPasswordValid } from './PasswordStrengthMeter';
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -30,11 +31,11 @@ const PasswordManager = () => {
       return;
     }
 
-    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    if (!isPasswordValid(newPassword)) {
       setNotification({
         kind: 'error',
         title: 'Validation Error',
-        subtitle: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.`
+        subtitle: 'Password does not meet all security requirements.'
       });
       return;
     }
@@ -97,15 +98,17 @@ const PasswordManager = () => {
             required
             className="password-manager-field"
           />
-          <PasswordInput
-            id="new-password"
-            labelText="New Password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            required
-            helperText={`Must be at least ${MIN_PASSWORD_LENGTH} characters long`}
-            className="password-manager-field"
-          />
+          <div>
+            <PasswordInput
+              id="new-password"
+              labelText="New Password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              className="password-manager-field"
+            />
+            <PasswordStrengthMeter password={newPassword} showCriteria={true} />
+          </div>
           <PasswordInput
             id="confirm-password"
             labelText="Confirm New Password"
@@ -114,9 +117,9 @@ const PasswordManager = () => {
             required
             className="password-manager-field password-manager-field--last"
           />
-          <Button 
-            type="submit" 
-            disabled={isSubmitting || !currentPassword || !newPassword || !confirmPassword}
+          <Button
+            type="submit"
+            disabled={isSubmitting || !currentPassword || !newPassword || !confirmPassword || !isPasswordValid(newPassword)}
           >
             {isSubmitting ? 'Updating...' : 'Update Password'}
           </Button>

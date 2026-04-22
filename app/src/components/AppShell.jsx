@@ -27,9 +27,11 @@ import {
   Catalog,
   ChartLine,
   UserMultiple,
-  DocumentTasks
+  DocumentTasks,
+  Help
 } from '@carbon/icons-react';
 import DesktopTitleBar from './DesktopTitleBar';
+import FeatureHelp from './FeatureHelp';
 import { getRoleLabel, sortRolesByPriority } from '../utils/roles';
 
 const AppShell = ({
@@ -44,6 +46,7 @@ const AppShell = ({
 }) => {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isSideNavExpanded, setIsSideNavExpanded] = useState(true);
+  const [showFeatureHelp, setShowFeatureHelp] = useState(false);
   
   const handleLogoutClick = () => {
     setShowLogoutModal(true);
@@ -209,6 +212,12 @@ const AppShell = ({
                 <SideNavMenuItem onClick={() => setActiveNav('SETTINGS')}>
                   Settings
                 </SideNavMenuItem>
+                <SideNavMenuItem onClick={() => setShowFeatureHelp(true)}>
+                  <div className="app-shell-logout-row">
+                    <Help size={16} />
+                    Feature Help
+                  </div>
+                </SideNavMenuItem>
                 <SideNavMenuItem onClick={handleLogoutClick}>
                   <div className="app-shell-logout-row">
                     <Logout size={16} />
@@ -241,6 +250,11 @@ const AppShell = ({
       >
         <p>Are you sure you want to logout? Any unsaved changes will be lost.</p>
       </Modal>
+
+      <FeatureHelp
+        open={showFeatureHelp}
+        onClose={() => setShowFeatureHelp(false)}
+      />
     </>
   );
 };

@@ -5,11 +5,14 @@ import {
   Tag,
   Tile,
   TextInput,
-  TextArea,
+  Modal,
+  CodeSnippet,
 } from '@carbon/react';
 import {
   CheckmarkFilled,
   Upload,
+  View,
+  Download,
 } from '@carbon/icons-react';
 import buildService from '../services/buildService';
 import { formatDate } from '../utils/formatters';
@@ -22,14 +25,18 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
   const [finalizedAt, setFinalizedAt] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
 
-  const [signingKeyId, setSigningKeyId] = useState('');
-  const [attestationKeyId, setAttestationKeyId] = useState('');
-  const [attestationCertPEM, setAttestationCertPEM] = useState('');
+  const [signingKeyPassphrase, setSigningKeyPassphrase] = useState('');
 
   const [finalizing, setFinalizing] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+
+  const [showContractPreview, setShowContractPreview] = useState(false);
+  const [contractContent, setContractContent] = useState('');
+  const [loadingContract, setLoadingContract] = useState(false);
+
+  const contractEditorLineRef = React.useRef(null);
 
   const contextKey = `${CONTEXT_KEY_PREFIX}${buildId}`;
 
@@ -38,9 +45,7 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
       const raw = sessionStorage.getItem(contextKey);
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      setSigningKeyId(parsed?.signing_key_id || '');
-      setAttestationKeyId(parsed?.attestation_key_id || '');
-      setAttestationCertPEM(parsed?.attestation_cert_pem || '');
+      setSigningKeyPassphrase(parsed?.signing_key_passphrase || '');
     } catch (_) {
       // no-op
     }
@@ -83,21 +88,19 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
     setSuccess(null);
     setResult(null);
 
-    if (!signingKeyId.trim()) {
-      setError('Signing key ID is required. Complete Add Signing Key first.');
+    if (!signingKeyPassphrase.trim()) {
+      setError('Signing key passphrase is required for contract signing.');
       return;
     }
 
     setFinalizing(true);
     try {
       const response = await buildService.finalizeBuildV2(buildId, {
-        signing_key_id: signingKeyId.trim(),
-        attestation_key_id: attestationKeyId.trim() || undefined,
-        attestation_cert_pem: attestationCertPEM.trim() || undefined,
+        signing_key_passphrase: signingKeyPassphrase.trim(),
       });
 
       setResult(response || null);
-      setSuccess('Build finalized successfully.');
+      setSuccess('Build finalized successfully. The contract has been signed.');
 
       try {
         sessionStorage.removeItem(contextKey);
@@ -111,6 +114,41 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
     } finally {
       setFinalizing(false);
     }
+  };
+
+  const handlePreviewContract = async () => {
+    setLoadingContract(true);
+    setError(null);
+    try {
+      const data = await buildService.downloadContract(buildId);
+      // getUserData returns {contract_yaml, contract_hash}
+      let contract = data?.contract_yaml || data?.contract || data?.user_data || '';
+      
+      // Decode if base64 encoded
+      if (contract && typeof contract === 'string') {
+        const trimmed = contract.trim();
+        // Check if it looks like base64 (no newlines, no YAML keywords)
+        if (!trimmed.includes('\n') && !trimmed.includes('workload:') && !trimmed.includes('env:')) {
+          try {
+            contract = atob(trimmed);
+          } catch (_) {
+            // Not base64, use as-is
+          }
+        }
+      }
+      
+      setContractContent(contract);
+      setShowContractPreview(true);
+    } catch (err) {
+      setError(`Failed to load contract: ${err.message}`);
+    } finally {
+      setLoadingContract(false);
+    }
+  };
+
+  const syncContractEditorScroll = (event) => {
+    if (!contractEditorLineRef.current) return;
+    contractEditorLineRef.current.scrollTop = event.target.scrollTop;
   };
 
   const isAvailable = liveStatus === 'ATTESTATION_KEY_REGISTERED' || isFinalized;
@@ -155,6 +193,17 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
                   Finalized at: {formatDate(finalizedAt, { second: '2-digit', timeZoneName: 'short' })}
                 </div>
               )}
+              <div style={{ marginTop: '0.5rem' }}>
+                <Button
+                  kind="ghost"
+                  size="sm"
+                  renderIcon={View}
+                  onClick={handlePreviewContract}
+                  disabled={loadingContract}
+                >
+                  {loadingContract ? 'Loading...' : 'Preview Contract'}
+                </Button>
+              </div>
             </div>
             <Tag type="green" className="workflow-complete-tile__tag">{liveStatus || 'FINALIZED'}</Tag>
           </div>
@@ -173,32 +222,21 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
       )}
 
       <div className={`workflow-body${isAvailable && !isFinalized ? '' : ' workflow-body--disabled'}`}>
-        <TextInput
-          id="finalize-signing-key-id"
-          labelText="Signing Key ID"
-          value={signingKeyId}
-          onChange={(e) => setSigningKeyId(e.target.value)}
-          placeholder="UUID from Add Signing Key tab"
-          disabled={finalizing || isFinalized}
-        />
+        <p className="workflow-step-copy">
+          The backend will automatically use the latest signing and attestation keys registered for this build.
+          You only need to provide the signing key passphrase to decrypt the private key for contract signing.
+        </p>
 
         <TextInput
-          id="finalize-attestation-key-id"
-          labelText="Attestation Key ID (Optional)"
-          value={attestationKeyId}
-          onChange={(e) => setAttestationKeyId(e.target.value)}
-          placeholder="UUID from Add attestation key tab"
+          id="finalize-signing-key-passphrase"
+          labelText="Signing Key Passphrase (Required)"
+          type="password"
+          value={signingKeyPassphrase}
+          onChange={(e) => setSigningKeyPassphrase(e.target.value)}
+          placeholder="Enter the passphrase used during signing key registration"
           disabled={finalizing || isFinalized}
-        />
-
-        <TextArea
-          id="finalize-attestation-cert"
-          labelText="Attestation Certificate PEM (Optional)"
-          value={attestationCertPEM}
-          onChange={(e) => setAttestationCertPEM(e.target.value)}
-          rows={8}
-          disabled={finalizing || isFinalized}
-          placeholder="Paste certificate PEM if attestation key should be encrypted during finalization"
+          autoComplete="off"
+          helperText="This passphrase will be used to decrypt the signing private key for contract signing"
         />
 
         <div className="workflow-inline-actions">
@@ -207,7 +245,7 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
             onClick={loadContextFromSession}
             disabled={finalizing || isFinalized}
           >
-            Load From Key Tabs
+            Load Passphrase from Session
           </Button>
           <Button
             renderIcon={Upload}
@@ -224,6 +262,31 @@ const FinaliseContract = ({ buildId, buildStatus: buildStatusProp, onStatusUpdat
           </p>
         )}
       </div>
+
+      <Modal
+        open={showContractPreview}
+        onRequestClose={() => setShowContractPreview(false)}
+        modalHeading="Final Contract Preview"
+        modalLabel="Signed contract YAML"
+        passiveModal
+        size="lg"
+      >
+        <p className="workflow-modal-copy">
+          This is the final signed contract YAML ready for deployment to IBM Hyper Protect Container Runtime.
+        </p>
+        {contractContent ? (
+          <CodeSnippet
+            type="multi"
+            feedback="Copied to clipboard"
+            wrapText={false}
+            style={{ marginTop: '1rem', maxHeight: '500px', overflow: 'auto' }}
+          >
+            {contractContent}
+          </CodeSnippet>
+        ) : (
+          <p>Loading contract...</p>
+        )}
+      </Modal>
     </div>
   );
 };

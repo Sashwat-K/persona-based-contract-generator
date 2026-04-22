@@ -1,5 +1,11 @@
 import React from 'react';
-import { Loading, InlineLoading } from '@carbon/react';
+import {
+  Loading,
+  InlineLoading,
+  DataTableSkeleton,
+  SkeletonText,
+  SkeletonPlaceholder
+} from '@carbon/react';
 
 /**
  * LoadingSpinner Component
@@ -11,6 +17,56 @@ export const FullPageLoader = ({ description = 'Loading...' }) => {
   return (
     <div className="loading-spinner-full-page">
       <Loading description={description} withOverlay={false} />
+    </div>
+  );
+};
+
+export const DataTableSkeletonLoader = ({
+  rows = 5,
+  columns = 4,
+  showHeader = true,
+  showToolbar = true,
+  compact = false
+}) => {
+  return (
+    <DataTableSkeleton
+      columnCount={columns}
+      rowCount={rows}
+      headers={showHeader}
+      showHeader={showHeader}
+      showToolbar={showToolbar}
+      compact={compact}
+    />
+  );
+};
+
+export const ContentSkeletonLoader = ({
+  lines = 3,
+  heading = false,
+  paragraph = false,
+  width = '100%'
+}) => {
+  return (
+    <div style={{ width }}>
+      {heading && (
+        <SkeletonText heading style={{ marginBottom: '1rem' }} />
+      )}
+      <SkeletonText
+        paragraph={paragraph}
+        lineCount={lines}
+      />
+    </div>
+  );
+};
+
+export const TileSkeletonLoader = ({ count = 1 }) => {
+  return (
+    <div className="tile-skeleton-container">
+      {Array.from({ length: count }).map((_, index) => (
+        <div key={index} className="tile-skeleton-item">
+          <SkeletonPlaceholder style={{ width: '100%', height: '200px' }} />
+        </div>
+      ))}
     </div>
   );
 };
@@ -104,6 +160,9 @@ export default {
   InlineLoader,
   SkeletonLoader,
   TableSkeletonLoader,
-  CardSkeletonLoader
+  CardSkeletonLoader,
+  DataTableSkeletonLoader,
+  ContentSkeletonLoader,
+  TileSkeletonLoader
 };
 

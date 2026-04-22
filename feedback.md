@@ -1,0 +1,7 @@
+- Mail server for OTP - single time login
+- certificate base authentication for first time admin
+- text box for workload & env (x)
+- check schema verification for workload & env
+- pull encryption certificate from solution provider - auditor need not upload (x)
+- Should we make signing & attestation mandatory?
+- Should signing by auditor needed?

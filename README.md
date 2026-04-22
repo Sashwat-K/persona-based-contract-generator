@@ -1,203 +1,306 @@
-# IBM Confidential Computing Contract Generator
+# HPCR Contract Builder - Persona-Based Contract Generator
 
-> Self-hosted, open-source platform to collaboratively build, verify, and deliver encrypted HPCR/HPCR4RHVS/HPCC userdata contracts with persona-based controls and cryptographic auditability.
+A secure, enterprise-grade contract generation system with role-based access control, cryptographic signing, and audit trails.
 
-The system enforces a linear multi-persona workflow with role + per-build assignment controls. All private-key operations happen on the desktop client; backend validates signatures, enforces workflow/state rules, and stores encrypted artifacts and audit metadata.
-
-## Table of Contents
-- [Key Capabilities](#key-capabilities)
-- [Architecture](#architecture)
-- [Workflow and Personas](#workflow-and-personas)
-- [Security Model](#security-model)
-- [Repository Structure](#repository-structure)
-- [Getting Started](#getting-started)
-- [Running the Desktop App](#running-the-desktop-app)
-- [API and Operations Endpoints](#api-and-operations-endpoints)
-- [Documentation](#documentation)
-
-## Key Capabilities
-- Persona-driven contract workflow (`ADMIN`, `SOLUTION_PROVIDER`, `DATA_OWNER`, `AUDITOR`, `ENV_OPERATOR`, `VIEWER`).
-- Strict lifecycle enforcement from build creation through download acknowledgment.
-- Assignment-based access (role alone is not enough to act on a build).
-- Signed mutating API requests (`X-Signature*` headers) with backend verification.
-- Hash-chained audit trail and verification APIs.
-- Electron desktop app with IBM Carbon UI and local cryptographic execution.
-
-## Architecture
-
-```text
-[ Electron Desktop App ]  <----HTTP/HTTPS---->  [ nginx Reverse Proxy ]  --->  [ Go Backend ]  --->  [ PostgreSQL ]
-```
-
-Principles:
-- Client-side crypto: encryption/signing/contract assembly run on desktop client.
-- Backend orchestration: state machine, authorization, signature verification, audit chain.
-- Zero private-key exposure to backend.
-
-## Workflow and Personas
-
-Current build lifecycle:
-
-```text
-CREATED -> WORKLOAD_SUBMITTED -> ENVIRONMENT_STAGED -> AUDITOR_KEYS_REGISTERED -> CONTRACT_ASSEMBLED -> FINALIZED -> CONTRACT_DOWNLOADED
-```
-
-Cancellation is allowed from non-terminal pre-finalized states.
-
-Persona responsibilities:
-1. `SOLUTION_PROVIDER`: encrypts/submits workload section with hash + signature.
-2. `DATA_OWNER`: encrypts environment section, wraps symmetric key for auditor, submits hash + signature.
-3. `AUDITOR`: registers attestation stage readiness and finalizes contract with signature.
-4. `ENV_OPERATOR`: exports finalized contract and submits signed download acknowledgment.
-5. `ADMIN`: manages users/roles, creates builds, assigns build personas, may cancel eligible builds.
-6. `VIEWER`: read-only visibility.
-
-## Security Model
-- Backend verifies mutating request signatures against registered user public keys.
-- Build access uses two layers:
-  - global role checks
-  - explicit build assignment checks
-- Setup guard blocks non-setup endpoints until required password/key setup is complete.
-- Audit integrity is verifiable via hash chain + signature verification.
-- Desktop app hardening includes sandboxed renderer, context isolation, sender-validated IPC, and blocked webviews.
-
-For detailed controls, see [Security Design](./Design/5-security-design.md).
-
-## Repository Structure
-
-- `app/`: Electron + React + IBM Carbon desktop application.
-- `backend/`: Go API server (`chi`, `pgx`, `sqlc`) and business/security logic.
-- `config/nginx/`: reverse-proxy configs (`default.conf`, `tls.conf`).
-- `scripts/`: helper scripts including bring-up bootstrap.
-- `Design/`: architecture, API, security, and deployment documentation.
-
-## Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
-- Docker + Docker Compose v2 (recommended)
-- For local backend-only run: Go `1.25+`, PostgreSQL `16`
-- For desktop app development: Node `>=25.9.0`, npm `>=11.12.1`
 
-### Option 1: Full Stack via Docker Compose (Local HTTP)
+- Docker Engine 20.10+
+- Docker Compose v2.0+
+- 2GB RAM minimum
+- 5GB disk space
 
-1. Prepare environment:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Set required secrets/DB values in `.env`:
-   - `POSTGRES_PASSWORD`
-   - `ADMIN_PASSWORD`
-   - `DATABASE_URL`
-   - `MIGRATE_DATABASE_URL`
-
-3. Start stack:
-   ```bash
-   docker compose -f docker-compose.yaml up -d --build
-   ```
-
-4. Validate:
-   ```bash
-   curl -sS http://localhost:8080/health
-   ```
-
-5. Stop:
-   ```bash
-   docker compose -f docker-compose.yaml down
-   ```
-
-Notes:
-- Postgres data persists at `${POSTGRES_DATA_DIR:-./data/postgres}`.
-- Initial admin seed (`ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`) runs only on empty DB.
-- pgAdmin is available at `http://localhost:${PGADMIN_PORT:-5050}` (login with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD`).
-- Vault UI is available at `http://localhost:${VAULT_UI_PORT:-8000}` (use `VAULT_TOKEN`, default dev token: `dev-root-token`).
-
-### Option 2: Production-Style Deployment (TLS)
-
-1. Prepare `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Update production values:
-   - strong `POSTGRES_PASSWORD` and `ADMIN_PASSWORD`
-   - production `DATABASE_URL` / `MIGRATE_DATABASE_URL`
-   - `NGINX_CONF_PATH=./config/nginx/tls.conf`
-   - valid `TLS_CERT_PATH` and `TLS_KEY_PATH`
-   - restrictive `CORS_ALLOWED_ORIGINS` and `CORS_ALLOW_ALL=false`
-
-3. Start stack:
-   ```bash
-   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build
-   ```
-
-4. Validate:
-   ```bash
-   curl -k https://localhost:8443/health
-   ```
-
-5. Stop:
-   ```bash
-   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml down
-   ```
-
-### Option 3: One-Command Bootstrap Script
+### Start the Application
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Sashwat-K/persona-based-contract-generator/main/scripts/bring_up.sh | bash
+# 1. Clone the repository
+git clone <repository-url>
+cd persona-based-contract-generator
+
+# 2. Environment is already configured with .env file
+# Review and customize passwords if needed:
+nano .env
+
+# 3. Start all services
+docker compose up -d
+
+# 4. Check service health
+docker compose ps
+
+# 5. Access the application
+# Main App: http://localhost:8080
+# PgAdmin: http://localhost:5050
+# Vault UI: http://localhost:8000
 ```
 
-This script clones (if needed), generates strong passwords, writes `.env`, and starts compose.
+### Default Credentials
 
-### Option 4: Run Backend Locally (Without Compose)
+**Admin Login:**
+- Email: `admin@hpcr-builder.local`
+- Password: `SecureAdminPassword123!` (change this!)
 
-From `backend/`:
+**PgAdmin:**
+- Email: `admin@hpcr-builder.dev`
+- Password: `SecurePgAdminPassword123!`
+
+**Vault:**
+- Token: `dev-root-token`
+
+## 📚 Documentation
+
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Complete deployment guide with production setup
+- **[Design/](./Design/)** - Architecture and design documentation
+- **[app/BUILD.md](./app/BUILD.md)** - Desktop application build instructions
+
+## 🏗️ Architecture
+
+### Services
+
+| Service | Description | Port |
+|---------|-------------|------|
+| **reverse_proxy** | Nginx reverse proxy | 8080 (HTTP), 8443 (HTTPS) |
+| **backend** | Go API server | Internal: 8080 |
+| **postgres** | PostgreSQL 16 database | Internal: 5432 |
+| **vault** | HashiCorp Vault for key management | 8200 |
+| **pgadmin** | Database management UI | 5050 |
+| **vault-ui** | Vault web interface | 8000 |
+
+### Technology Stack
+
+- **Backend**: Go 1.26+ with Chi router
+- **Database**: PostgreSQL 16 with SQLC
+- **Key Management**: HashiCorp Vault
+- **Frontend**: React with Vite (Desktop app)
+- **Containerization**: Docker & Docker Compose
+- **Reverse Proxy**: Nginx
+
+## 🔒 Security Features
+
+- **Role-Based Access Control (RBAC)** - Fine-grained permissions
+- **Cryptographic Signing** - Contract integrity verification
+- **Audit Trails** - Complete activity logging
+- **Key Management** - Vault-based encryption key storage
+- **Secure Communication** - TLS/HTTPS support
+- **Password Security** - Bcrypt hashing with configurable cost
+- **Token-Based Auth** - JWT with configurable expiry
+- **Rate Limiting** - Protection against abuse
+- **Security Headers** - CORS, CSP, and hardening middleware
+
+## 📋 Features
+
+### Contract Management
+- Multi-section contract building
+- Role-based section assignments
+- Version control and tracking
+- Contract finalization workflow
+- Export to multiple formats
+
+### User Management
+- User registration and authentication
+- Role assignment and management
+- API token generation
+- Credential rotation
+- Activity monitoring
+
+### Audit & Compliance
+- Comprehensive audit logging
+- System event tracking
+- User activity monitoring
+- Contract lifecycle tracking
+- Export audit reports
+
+### Key Management
+- Vault-based key storage
+- Automatic key rotation
+- Public key management
+- Signature verification
+- Attestation support
+
+## 🛠️ Development
+
+### Project Structure
+
+```
+.
+├── app/                    # Desktop application (Electron + React)
+├── backend/               # Go backend API
+│   ├── cmd/              # Application entrypoints
+│   ├── internal/         # Internal packages
+│   │   ├── handler/     # HTTP handlers
+│   │   ├── service/     # Business logic
+│   │   ├── repository/  # Database layer
+│   │   ├── middleware/  # HTTP middleware
+│   │   └── crypto/      # Cryptographic operations
+│   └── migrations/       # Database migrations
+├── config/               # Configuration files
+│   └── nginx/           # Nginx configuration
+├── Design/              # Architecture documentation
+└── docker-compose.yaml  # Service orchestration
+```
+
+### Local Development
 
 ```bash
-DATABASE_URL="postgres://<user>:<pass>@localhost:5432/<db>?sslmode=disable" go run ./cmd/server/
+# Start services in development mode
+docker compose up -d
+
+# View logs
+docker compose logs -f backend
+
+# Run database migrations
+docker compose restart migrate
+
+# Access database
+docker compose exec postgres psql -U hpcr hpcr_builder
+
+# Rebuild backend after changes
+docker compose up -d --build backend
 ```
 
-(Ensure migrations are applied first.)
+### Running Tests
 
-## Running the Desktop App
+```bash
+# Backend tests
+cd backend
+go test ./...
 
-From `app/`:
+# With coverage
+go test -cover ./...
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+# Integration tests
+go test -tags=integration ./...
+```
 
-2. Start dev mode (Vite + Electron):
-   ```bash
-   npm run dev
-   ```
+## 🔧 Configuration
 
-3. Configure backend server URL in login/server settings.
+### Environment Variables
 
-Useful scripts:
-- `npm run build` (renderer build)
-- `npm run package` (electron-builder package)
-- `npm run package:mac|win|linux` (platform-specific packaging)
+Key configuration options in `.env`:
 
-Detailed packaging guide: [app/BUILD.md](./app/BUILD.md)
+```bash
+# Database
+POSTGRES_PASSWORD=<secure-password>
+DATABASE_URL=postgres://...
 
-## API and Operations Endpoints
+# Admin User
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=<secure-password>
 
-Default local endpoints:
-- Health: `GET /health`
-- Swagger UI: `GET /swagger`
-- OpenAPI JSON: `GET /openapi.json`
+# Security
+TOKEN_EXPIRY=24h
+BCRYPT_COST=12
 
-Build verification:
-- `GET /builds/{id}/verify`
-- `GET /builds/{id}/verify-contract`
+# Vault
+VAULT_TOKEN=<vault-token>
+VAULT_ADDR=http://vault:8200
+```
 
-## Documentation
+See [.env.example](./.env.example) for all available options.
 
-- [High-Level Design](./Design/1-high-level-design.md)
-- [Low-Level Design](./Design/2-low-level-design.md)
-- [Desktop App Design](./Design/3-desktop-app-design.md)
-- [API Documentation](./Design/4-api-documentation.md)
-- [Security Design](./Design/5-security-design.md)
-- [Deployment Guide](./Design/6-deployment-guide.md)
+### Production Deployment
+
+For production deployment:
+
+1. **Update passwords** - Change all default passwords
+2. **Enable TLS** - Configure SSL certificates
+3. **Configure Vault** - Use production Vault setup
+4. **Set CORS** - Update allowed origins
+5. **Enable monitoring** - Set up logging and alerts
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed instructions.
+
+## 📊 Monitoring
+
+### Health Checks
+
+```bash
+# Backend health
+curl http://localhost:8080/health
+
+# Nginx health
+curl http://localhost:8080/nginx-health
+
+# Vault health
+curl http://localhost:8200/v1/sys/health
+
+# All services
+docker compose ps
+```
+
+### Logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f backend
+
+# Last 100 lines
+docker compose logs --tail=100 backend
+```
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Services won't start:**
+```bash
+docker compose down
+docker compose up -d
+docker compose logs
+```
+
+**Database connection errors:**
+```bash
+docker compose exec postgres pg_isready -U hpcr
+docker compose restart backend
+```
+
+**Permission errors:**
+```bash
+sudo chown -R 1000:1000 data/postgres
+```
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for more troubleshooting tips.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests
+5. Submit a pull request
+
+## 📄 License
+
+[Add your license information here]
+
+## 🆘 Support
+
+For issues or questions:
+- Check the [DEPLOYMENT.md](./DEPLOYMENT.md) guide
+- Review existing GitHub issues
+- Create a new issue with details
+- Contact the development team
+
+## 🔄 Version History
+
+- **v1.0.0** - Initial release with core features
+  - Contract management
+  - User authentication
+  - Role-based access control
+  - Vault integration
+  - Audit logging
+
+## 🙏 Acknowledgments
+
+- HashiCorp Vault for key management
+- PostgreSQL for reliable data storage
+- Go community for excellent libraries
+- Docker for containerization
+
+---
+
+**Note**: This is a development setup. For production deployment, follow the security guidelines in [DEPLOYMENT.md](./DEPLOYMENT.md).

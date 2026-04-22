@@ -8,6 +8,15 @@ import {
   TableBody,
   TableCell,
   TableContainer,
+  TableToolbar,
+  TableToolbarContent,
+  TableToolbarSearch,
+  TableToolbarMenu,
+  TableToolbarAction,
+  TableBatchActions,
+  TableBatchAction,
+  TableSelectAll,
+  TableSelectRow,
   Button,
   Modal,
   TextInput,
@@ -16,20 +25,43 @@ import {
   Tag,
   Stack,
   InlineNotification,
-  Pagination
+  Pagination,
+  FilterableMultiSelect,
+  DatePicker,
+  DatePickerInput,
+  Dropdown,
+  InlineLoading
 } from '@carbon/react';
-import { Add, WarningAlt, Renew } from '@carbon/icons-react';
+import { Add, WarningAlt, Renew, Download, Filter, Close, TrashCan, Export } from '@carbon/icons-react';
 import { BUILD_STATUS_CONFIG, ROLES } from '../utils/constants';
 import { formatDate } from '../utils/formatters';
+import { validateBuildName } from '../utils/validators';
 import userService from '../services/userService';
 import buildService from '../services/buildService';
 import assignmentService from '../services/assignmentService';
-import { InlineLoader } from '../components/LoadingSpinner';
+import { InlineLoader, DataTableSkeletonLoader } from '../components/LoadingSpinner';
 import { useAuthStore } from '../store/authStore';
 import { StatePanel } from '../components/StatePanel';
+import FilterPresetManager from '../components/FilterPresetManager';
+import BuildStatistics from '../components/BuildStatistics';
 
 const COMPLETED_BUILD_STATUSES = new Set(['CONTRACT_DOWNLOADED', 'CANCELLED']);
 const TABLE_PAGE_SIZES = [10, 20, 30, 50];
+
+// Filter options for status
+const STATUS_FILTER_OPTIONS = Object.entries(BUILD_STATUS_CONFIG).map(([key, config]) => ({
+  id: key,
+  label: config.label,
+  value: key
+}));
+
+// Date range presets
+const DATE_RANGE_PRESETS = [
+  { id: 'today', label: 'Today' },
+  { id: 'last7days', label: 'Last 7 Days' },
+  { id: 'last30days', label: 'Last 30 Days' },
+  { id: 'custom', label: 'Custom Range' }
+];
 
 const TABLE_HEADERS = [
   { key: 'name', header: 'Build Name' },
@@ -69,7 +101,7 @@ const userHasRole = (user, roleName) => {
   return roles.some((role) => normalizeUserRole(role) === roleName);
 };
 
-const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) => {
+const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated, loading = false }) => {
   const isAdmin = userRole === 'ADMIN';
   const canManageBuilds = isAdmin || userRole === 'AUDITOR';
   const isSetupRequired = useAuthStore((state) => state.isSetupRequired());
@@ -86,9 +118,30 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
   const [activePageSize, setActivePageSize] = useState(TABLE_PAGE_SIZES[0]);
   const [completedPage, setCompletedPage] = useState(1);
   const [completedPageSize, setCompletedPageSize] = useState(TABLE_PAGE_SIZES[0]);
+  
+  // Separate search for each table
+  const [activeSearchValue, setActiveSearchValue] = useState('');
+  const [completedSearchValue, setCompletedSearchValue] = useState('');
+  
+  // Shared filter and sort state
+  const [sortInfo, setSortInfo] = useState({ columnKey: 'createdAt', direction: 'DESC' });
+  const [buildNameTouched, setBuildNameTouched] = useState(false);
+  const [buildNameError, setBuildNameError] = useState('');
+  
+  // Advanced filter state (shared between tables)
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [selectedCreator, setSelectedCreator] = useState('');
+  const [dateRangePreset, setDateRangePreset] = useState('');
+  const [customDateRange, setCustomDateRange] = useState({ start: null, end: null });
+  
+  // Bulk actions state
+  const [selectedBuildIds, setSelectedBuildIds] = useState([]);
+  const [bulkActionInProgress, setBulkActionInProgress] = useState(false);
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
+  const [bulkExportInProgress, setBulkExportInProgress] = useState(false);
 
   const loadUsers = useCallback(async () => {
-    if (!canManageBuilds) return;
     try {
       setLoadingUsers(true);
       const usersData = await userService.listUsers();
@@ -99,14 +152,19 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
     } finally {
       setLoadingUsers(false);
     }
-  }, [canManageBuilds]);
+  }, []);
 
-  // Load users when modal opens
+  // Load users on component mount
   useEffect(() => {
-    if (canManageBuilds && createModalOpen && users.length === 0) {
-      loadUsers();
-    }
-  }, [canManageBuilds, createModalOpen, users.length, loadUsers]);
+    loadUsers();
+  }, [loadUsers]);
+
+  // Helper function to get user name from ID
+  const getUserName = useCallback((userId) => {
+    if (!userId) return 'Unknown';
+    const user = users.find(u => u.id === userId || u.user_id === userId);
+    return user ? (user.name || user.username || user.email || 'Unknown') : userId;
+  }, [users]);
 
   const getBuildStatusMeta = useCallback((build) => {
     const statusKey = (build.status || '').toUpperCase();
@@ -128,18 +186,312 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
         </Tag>
       );
     })(),
-    createdBy: b.created_by || b.createdBy || 'Admin',
+    createdBy: getUserName(b.created_by || b.createdBy),
     createdAt: formatDate(b.created_at || b.createdAt),
+    // Store raw values for sorting
+    _rawStatus: (b.status || '').toUpperCase(),
+    _rawCreatedAt: new Date(b.created_at || b.createdAt).getTime(),
+    _rawCreatedBy: getUserName(b.created_by || b.createdBy),
     action: <Button size="sm" onClick={() => onSelectBuild(b.id)}>View Details</Button>
-  })), [getBuildStatusMeta, onSelectBuild]);
+  })), [getBuildStatusMeta, onSelectBuild, getUserName]);
+
+  // Filter builds based on search
+  const filterBuilds = useCallback((buildList, searchValue) => {
+    if (!searchValue.trim()) return buildList;
+    const searchLower = searchValue.toLowerCase();
+    return buildList.filter((build) =>
+      (build.name || '').toLowerCase().includes(searchLower) ||
+      (build.status || '').toLowerCase().includes(searchLower) ||
+      getUserName(build.created_by || build.createdBy).toLowerCase().includes(searchLower)
+    );
+  }, [getUserName]);
+
+  // Sort builds
+  const sortBuilds = useCallback((buildList) => {
+    if (!sortInfo.columnKey) return buildList;
+    
+    return [...buildList].sort((a, b) => {
+      let aVal, bVal;
+      
+      switch (sortInfo.columnKey) {
+        case 'name':
+          aVal = (a.name || '').toLowerCase();
+          bVal = (b.name || '').toLowerCase();
+          break;
+        case 'status':
+          aVal = (a.status || '').toUpperCase();
+          bVal = (b.status || '').toUpperCase();
+          break;
+        case 'createdBy':
+          aVal = getUserName(a.created_by || a.createdBy).toLowerCase();
+          bVal = getUserName(b.created_by || b.createdBy).toLowerCase();
+          break;
+        case 'createdAt':
+          aVal = new Date(a.created_at || a.createdAt).getTime();
+          bVal = new Date(b.created_at || b.createdAt).getTime();
+          break;
+        default:
+          return 0;
+      }
+      
+      if (aVal < bVal) return sortInfo.direction === 'ASC' ? -1 : 1;
+      if (aVal > bVal) return sortInfo.direction === 'ASC' ? 1 : -1;
+      return 0;
+    });
+  }, [sortInfo]);
+
+  // Advanced filter: Apply status filter
+  const applyStatusFilter = useCallback((buildList) => {
+    if (selectedStatuses.length === 0) return buildList;
+    return buildList.filter((build) =>
+      selectedStatuses.includes((build.status || '').toUpperCase())
+    );
+  }, [selectedStatuses]);
+
+  // Advanced filter: Apply creator filter
+  const applyCreatorFilter = useCallback((buildList) => {
+    if (!selectedCreator) return buildList;
+    return buildList.filter((build) =>
+      getUserName(build.created_by || build.createdBy) === selectedCreator
+    );
+  }, [selectedCreator, getUserName]);
+
+  // Advanced filter: Apply date range filter
+  const applyDateRangeFilter = useCallback((buildList) => {
+    const { start, end } = customDateRange;
+    if (!start && !end) return buildList;
+    
+    return buildList.filter((build) => {
+      const buildDate = new Date(build.created_at || build.createdAt);
+      if (start && buildDate < new Date(start)) return false;
+      if (end) {
+        const endDate = new Date(end);
+        endDate.setHours(23, 59, 59, 999); // Include entire end day
+        if (buildDate > endDate) return false;
+      }
+      return true;
+    });
+  }, [customDateRange]);
+
+  // Get unique creators from builds
+  const creatorOptions = useMemo(() => {
+    const creators = new Set();
+    builds.forEach((build) => {
+      const creator = getUserName(build.created_by || build.createdBy);
+      creators.add(creator);
+    });
+    return Array.from(creators).sort().map((creator) => ({
+      id: creator,
+      label: creator,
+      value: creator
+    }));
+  }, [builds]);
+
+  // Count active filters
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (selectedStatuses.length > 0) count++;
+    if (selectedCreator) count++;
+    if (customDateRange.start || customDateRange.end) count++;
+    return count;
+  }, [selectedStatuses, selectedCreator, customDateRange]);
+  
+  // Bulk action handlers
+  const handleBulkExport = useCallback(async () => {
+    if (selectedBuildIds.length === 0) return;
+    
+    try {
+      setBulkExportInProgress(true);
+      
+      // Get selected builds data
+      const selectedBuilds = builds.filter(b => selectedBuildIds.includes(b.id));
+      
+      // Export as CSV
+      const headers = ['Build Name', 'Status', 'Created By', 'Created At'];
+      const csvContent = [
+        headers.join(','),
+        ...selectedBuilds.map(build => [
+          `"${build.name}"`,
+          `"${(build.status || '').toUpperCase()}"`,
+          `"${build.created_by || build.createdBy || 'Admin'}"`,
+          `"${formatDate(build.created_at || build.createdAt)}"`
+        ].join(','))
+      ].join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `bulk-export-${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setNotification({
+        kind: 'success',
+        title: 'Export Successful',
+        subtitle: `Exported ${selectedBuildIds.length} build(s) to CSV`
+      });
+      
+      // Clear selection
+      setSelectedBuildIds([]);
+    } catch (error) {
+      console.error('Bulk export failed:', error);
+      setNotification({
+        kind: 'error',
+        title: 'Export Failed',
+        subtitle: error.message || 'Failed to export selected builds'
+      });
+    } finally {
+      setBulkExportInProgress(false);
+    }
+  }, [selectedBuildIds, builds]);
+  
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedBuildIds.length === 0) return;
+    
+    try {
+      setBulkActionInProgress(true);
+      
+      // Delete builds one by one
+      const deletePromises = selectedBuildIds.map(buildId =>
+        buildService.cancelBuild(buildId)
+      );
+      
+      await Promise.all(deletePromises);
+      
+      setNotification({
+        kind: 'success',
+        title: 'Builds Cancelled',
+        subtitle: `Successfully cancelled ${selectedBuildIds.length} build(s)`
+      });
+      
+      // Clear selection and refresh
+      setSelectedBuildIds([]);
+      setBulkDeleteModalOpen(false);
+      
+      // Trigger refresh
+      if (onBuildCreated) {
+        onBuildCreated();
+      }
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      setNotification({
+        kind: 'error',
+        title: 'Cancellation Failed',
+        subtitle: error.message || 'Failed to cancel selected builds'
+      });
+    } finally {
+      setBulkActionInProgress(false);
+    }
+  }, [selectedBuildIds, onBuildCreated]);
+  
+  const getSelectedBuildsInfo = useCallback(() => {
+    const selectedBuilds = builds.filter(b => selectedBuildIds.includes(b.id));
+    return {
+      count: selectedBuilds.length,
+      names: selectedBuilds.map(b => b.name).join(', ')
+    };
+  }, [selectedBuildIds, builds]);
+
+  // Clear all filters
+  const clearAllFilters = useCallback(() => {
+    setSelectedStatuses([]);
+    setSelectedCreator('');
+    setDateRangePreset('');
+    setCustomDateRange({ start: null, end: null });
+  }, []);
+
+  // Apply filter preset
+  const handleApplyFilterPreset = useCallback((filters) => {
+    setSelectedStatuses(filters.selectedStatuses || []);
+    setSelectedCreator(filters.selectedCreator || '');
+    setDateRangePreset(filters.dateRangePreset || '');
+    setCustomDateRange(filters.customDateRange || { start: null, end: null });
+    
+    // Show filters panel if not already visible
+    if (!showFilters) {
+      setShowFilters(true);
+    }
+    
+    setNotification({
+      kind: 'success',
+      title: 'Filter Preset Applied',
+      subtitle: 'Your saved filter preset has been applied successfully'
+    });
+  }, [showFilters]);
+
+  // Get current filter state for saving
+  const getCurrentFilters = useCallback(() => ({
+    selectedStatuses,
+    selectedCreator,
+    dateRangePreset,
+    customDateRange
+  }), [selectedStatuses, selectedCreator, dateRangePreset, customDateRange]);
+
+  // Handle date range preset selection
+  const handleDateRangePreset = useCallback((presetId) => {
+    setDateRangePreset(presetId);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    switch (presetId) {
+      case 'today':
+        setCustomDateRange({ start: today.toISOString(), end: today.toISOString() });
+        break;
+      case 'last7days':
+        const last7 = new Date(today);
+        last7.setDate(last7.getDate() - 7);
+        setCustomDateRange({ start: last7.toISOString(), end: today.toISOString() });
+        break;
+      case 'last30days':
+        const last30 = new Date(today);
+        last30.setDate(last30.getDate() - 30);
+        setCustomDateRange({ start: last30.toISOString(), end: today.toISOString() });
+        break;
+      case 'custom':
+        // User will set custom dates
+        break;
+      default:
+        setCustomDateRange({ start: null, end: null });
+    }
+  }, []);
 
   const activeBuilds = useMemo(
-    () => builds.filter((build) => !COMPLETED_BUILD_STATUSES.has((build.status || '').toUpperCase())),
-    [builds]
+    () => {
+      let filtered = builds.filter((build) => !COMPLETED_BUILD_STATUSES.has((build.status || '').toUpperCase()));
+      
+      // Apply advanced filters
+      filtered = applyStatusFilter(filtered);
+      filtered = applyCreatorFilter(filtered);
+      filtered = applyDateRangeFilter(filtered);
+      
+      // Apply search (active table specific)
+      filtered = filterBuilds(filtered, activeSearchValue);
+      
+      // Apply sorting
+      return sortBuilds(filtered);
+    },
+    [builds, applyStatusFilter, applyCreatorFilter, applyDateRangeFilter, filterBuilds, sortBuilds, activeSearchValue]
   );
+  
   const completedBuilds = useMemo(
-    () => builds.filter((build) => COMPLETED_BUILD_STATUSES.has((build.status || '').toUpperCase())),
-    [builds]
+    () => {
+      let filtered = builds.filter((build) => COMPLETED_BUILD_STATUSES.has((build.status || '').toUpperCase()));
+      
+      // Apply advanced filters
+      filtered = applyStatusFilter(filtered);
+      filtered = applyCreatorFilter(filtered);
+      filtered = applyDateRangeFilter(filtered);
+      
+      // Apply search (completed table specific)
+      filtered = filterBuilds(filtered, completedSearchValue);
+      
+      // Apply sorting
+      return sortBuilds(filtered);
+    },
+    [builds, applyStatusFilter, applyCreatorFilter, applyDateRangeFilter, filterBuilds, sortBuilds, completedSearchValue]
   );
 
   const activeRows = useMemo(() => mapBuildRows(activeBuilds), [activeBuilds, mapBuildRows]);
@@ -187,6 +539,34 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
     () => users.filter((u) => u.is_active && !isUserReady(u)).length,
     [users]
   );
+
+  // Validate build name
+  const validateBuildNameField = useCallback((value) => {
+    if (!buildNameTouched) return;
+    const result = validateBuildName(value);
+    setBuildNameError(result.valid ? '' : result.error);
+  }, [buildNameTouched]);
+
+  // Handle build name change
+  const handleBuildNameChange = useCallback((e) => {
+    const value = e.target.value;
+    setBuildName(value);
+    if (buildNameTouched) {
+      const result = validateBuildName(value);
+      setBuildNameError(result.valid ? '' : result.error);
+    }
+  }, [buildNameTouched]);
+
+  const isFormValid = useMemo(() => {
+    const nameValidation = validateBuildName(buildName);
+    return Boolean(
+      nameValidation.valid &&
+      assignments[ROLES.SOLUTION_PROVIDER] &&
+      assignments[ROLES.DATA_OWNER] &&
+      assignments[ROLES.AUDITOR] &&
+      assignments[ROLES.ENV_OPERATOR]
+    );
+  }, [assignments, buildName]);
 
   const handleCreateBuild = useCallback(async () => {
     if (creating) return;
@@ -254,15 +634,6 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
     }
   }, [assignments, buildName, canManageBuilds, creating, isSetupRequired, onBuildCreated, setupPending, users]);
 
-  const isFormValid = useMemo(() => {
-    return Boolean(
-      buildName.trim() &&
-      assignments[ROLES.SOLUTION_PROVIDER] &&
-      assignments[ROLES.DATA_OWNER] &&
-      assignments[ROLES.AUDITOR] &&
-      assignments[ROLES.ENV_OPERATOR]
-    );
-  }, [assignments, buildName]);
 
   const handleRefresh = useCallback(async () => {
     if (!onBuildCreated) return;
@@ -273,6 +644,34 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
       setRefreshing(false);
     }
   }, [onBuildCreated]);
+
+  const handleExportCSV = useCallback((rows, filename) => {
+    const headers = TABLE_HEADERS.filter(h => h.key !== 'action').map(h => h.header);
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row =>
+        TABLE_HEADERS.filter(h => h.key !== 'action')
+          .map(h => {
+            const value = h.key === 'status' ? row._rawStatus : row[h.key];
+            return `"${String(value || '').replace(/"/g, '""')}"`;
+          })
+          .join(',')
+      )
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${filename}-${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  }, []);
+
+  const handleSort = useCallback((headerKey) => {
+    setSortInfo(prev => ({
+      columnKey: headerKey,
+      direction: prev.columnKey === headerKey && prev.direction === 'ASC' ? 'DESC' : 'ASC'
+    }));
+  }, []);
 
   return (
     <div className="app-page">
@@ -318,7 +717,21 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
         </div>
       )}
 
-      {builds.length === 0 ? (
+      {/* Build Statistics */}
+      {!loading && builds.length > 0 && (
+        <BuildStatistics builds={builds} loading={loading} />
+      )}
+
+      {loading ? (
+        <div className="build-management-loading">
+          <DataTableSkeletonLoader
+            rows={5}
+            columns={5}
+            showHeader={true}
+            showToolbar={true}
+          />
+        </div>
+      ) : builds.length === 0 ? (
         <StatePanel
           title="No Builds Found"
           description={
@@ -343,71 +756,378 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
       ) : (
         <div className="build-management-table-stack">
           {activeRows.length > 0 && (
-            <DataTable rows={paginatedActiveRows} headers={TABLE_HEADERS}>
-              {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
-                <TableContainer
-                  title="Active & In-Progress Builds"
-                  description="Builds that are still in progress or awaiting final actions."
-                >
-                  <Table {...getTableProps()}>
-                    <TableHead>
-                      <TableRow>
-                        {headers.map((header) => {
-                          const { key, ...headerProps } = getHeaderProps({ header });
+            <DataTable
+              rows={paginatedActiveRows}
+              headers={TABLE_HEADERS}
+              isSortable
+              radio={false}
+              selectedRows={selectedBuildIds}
+              onSelectionChange={(selectedRows) => {
+                setSelectedBuildIds(selectedRows.map(row => row.id));
+              }}
+              aria-label="Active and in-progress builds table"
+            >
+              {({
+                rows,
+                headers,
+                getTableProps,
+                getHeaderProps,
+                getRowProps,
+                getSelectionProps,
+                getBatchActionProps,
+                selectedRows
+              }) => {
+                const batchActionProps = getBatchActionProps();
+                
+                return (
+                  <TableContainer
+                    title="Active & In-Progress Builds"
+                    description="Builds that are still in progress or awaiting final actions."
+                    aria-label="Active builds container"
+                  >
+                    <TableToolbar>
+                      <TableBatchActions
+                        {...batchActionProps}
+                        onCancel={() => setSelectedBuildIds([])}
+                      >
+                        <TableBatchAction
+                          renderIcon={Export}
+                          iconDescription="Export selected builds"
+                          onClick={handleBulkExport}
+                          disabled={bulkExportInProgress}
+                          aria-label="Export selected builds to CSV"
+                        >
+                          {bulkExportInProgress ? 'Exporting...' : 'Export Selected'}
+                        </TableBatchAction>
+                        {canManageBuilds && (
+                          <TableBatchAction
+                            renderIcon={TrashCan}
+                            iconDescription="Cancel selected builds"
+                            onClick={() => setBulkDeleteModalOpen(true)}
+                            disabled={bulkActionInProgress}
+                            aria-label="Cancel selected builds"
+                          >
+                            Cancel Selected
+                          </TableBatchAction>
+                        )}
+                      </TableBatchActions>
+                      <TableToolbarContent>
+                        <TableToolbarSearch
+                          persistent
+                          placeholder="Search active builds..."
+                          onChange={(e) => setActiveSearchValue(e.target.value)}
+                          value={activeSearchValue}
+                          aria-label="Search active builds"
+                        />
+                        <Button
+                          kind="ghost"
+                          size="sm"
+                          renderIcon={Filter}
+                          iconDescription="Toggle filters"
+                          hasIconOnly={!activeFilterCount}
+                          onClick={() => setShowFilters(!showFilters)}
+                          aria-label={showFilters ? 'Hide filters' : 'Show filters'}
+                          aria-expanded={showFilters}
+                        >
+                          {activeFilterCount > 0 && `Filters (${activeFilterCount})`}
+                        </Button>
+                        {activeFilterCount > 0 && (
+                          <Button
+                            kind="ghost"
+                            size="sm"
+                            renderIcon={Close}
+                            iconDescription="Clear all filters"
+                            onClick={clearAllFilters}
+                            aria-label="Clear all active filters"
+                          >
+                            Clear Filters
+                          </Button>
+                        )}
+                        <TableToolbarMenu>
+                          <TableToolbarAction onClick={() => handleExportCSV(activeRows, 'active-builds')}>
+                            Export as CSV
+                          </TableToolbarAction>
+                        </TableToolbarMenu>
+                        <Button
+                          kind="primary"
+                          size="sm"
+                          renderIcon={Download}
+                          onClick={() => handleExportCSV(activeRows, 'active-builds')}
+                          aria-label="Export active builds to CSV"
+                        >
+                          Export
+                        </Button>
+                      </TableToolbarContent>
+                    </TableToolbar>
+                  
+                  {showFilters && (
+                    <div className="build-management-filters" role="region" aria-label="Build filters">
+                      <FilterPresetManager
+                        currentFilters={getCurrentFilters()}
+                        onApplyPreset={handleApplyFilterPreset}
+                        storageKey="build_management_filter_presets"
+                      />
+                      
+                      <div className="build-management-filters__row">
+                        <FilterableMultiSelect
+                          id="status-filter"
+                          titleText="Status"
+                          label="Filter by status"
+                          items={STATUS_FILTER_OPTIONS}
+                          itemToString={(item) => item ? item.label : ''}
+                          selectedItems={STATUS_FILTER_OPTIONS.filter(opt => selectedStatuses.includes(opt.id))}
+                          onChange={({ selectedItems }) => {
+                            setSelectedStatuses(selectedItems.map(item => item.id));
+                          }}
+                          size="sm"
+                        />
+                        
+                        <Dropdown
+                          id="creator-filter"
+                          titleText="Creator"
+                          label="Filter by creator"
+                          items={[{ id: '', label: 'All Creators', value: '' }, ...creatorOptions]}
+                          itemToString={(item) => item ? item.label : ''}
+                          selectedItem={creatorOptions.find(opt => opt.id === selectedCreator) || { id: '', label: 'All Creators', value: '' }}
+                          onChange={({ selectedItem }) => {
+                            setSelectedCreator(selectedItem?.id || '');
+                          }}
+                          size="sm"
+                        />
+                        
+                        <Select
+                          id="date-preset"
+                          labelText="Date Range"
+                          value={dateRangePreset}
+                          onChange={(e) => handleDateRangePreset(e.target.value)}
+                          size="sm"
+                        >
+                          <SelectItem value="" text="All Dates" />
+                          {DATE_RANGE_PRESETS.map((preset) => (
+                            <SelectItem key={preset.id} value={preset.id} text={preset.label} />
+                          ))}
+                        </Select>
+                        
+                        {dateRangePreset === 'custom' && (
+                          <DatePicker
+                            datePickerType="range"
+                            onChange={(dates) => {
+                              setCustomDateRange({
+                                start: dates[0] ? dates[0].toISOString() : null,
+                                end: dates[1] ? dates[1].toISOString() : null
+                              });
+                            }}
+                          >
+                            <DatePickerInput
+                              id="date-start"
+                              placeholder="mm/dd/yyyy"
+                              labelText="Start Date"
+                              size="sm"
+                            />
+                            <DatePickerInput
+                              id="date-end"
+                              placeholder="mm/dd/yyyy"
+                              labelText="End Date"
+                              size="sm"
+                            />
+                          </DatePicker>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                    <Table {...getTableProps()}>
+                      <TableHead>
+                        <TableRow>
+                          <TableSelectAll {...getSelectionProps()} />
+                          {headers.map((header) => {
+                            const { key, ...headerProps } = getHeaderProps({ header });
+                            const isSortable = header.key !== 'action';
+                            return (
+                              <TableHeader
+                                key={header.key}
+                                {...headerProps}
+                                isSortable={isSortable}
+                                isSortHeader={sortInfo.columnKey === header.key}
+                                sortDirection={sortInfo.columnKey === header.key ? sortInfo.direction : 'NONE'}
+                                onClick={isSortable ? () => handleSort(header.key) : undefined}
+                              >
+                                {header.header}
+                              </TableHeader>
+                            );
+                          })}
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {rows.map((row) => {
+                          const { key, ...rowProps } = getRowProps({ row });
                           return (
-                            <TableHeader key={header.key} {...headerProps}>
-                              {header.header}
-                            </TableHeader>
+                            <TableRow key={row.id} {...rowProps}>
+                              <TableSelectRow {...getSelectionProps({ row })} />
+                              {row.cells.map((cell) => (
+                                <TableCell key={cell.id}>{cell.value}</TableCell>
+                              ))}
+                            </TableRow>
                           );
                         })}
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {rows.map((row) => {
-                        const { key, ...rowProps } = getRowProps({ row });
-                        return (
-                          <TableRow key={row.id} {...rowProps}>
-                            {row.cells.map((cell) => (
-                              <TableCell key={cell.id}>{cell.value}</TableCell>
-                            ))}
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                      </TableBody>
+                    </Table>
 
-                  <div className="build-management-pagination">
-                    <Pagination
-                      page={activePage}
-                      pageSize={activePageSize}
-                      pageSizes={TABLE_PAGE_SIZES}
-                      totalItems={activeRows.length}
-                      size="sm"
-                      onChange={({ page, pageSize }) => {
-                        setActivePage(page);
-                        setActivePageSize(pageSize);
-                      }}
-                    />
-                  </div>
-                </TableContainer>
-              )}
+                    <div className="build-management-pagination">
+                      <Pagination
+                        page={activePage}
+                        pageSize={activePageSize}
+                        pageSizes={TABLE_PAGE_SIZES}
+                        totalItems={activeRows.length}
+                        size="sm"
+                        onChange={({ page, pageSize }) => {
+                          setActivePage(page);
+                          setActivePageSize(pageSize);
+                        }}
+                      />
+                    </div>
+                  </TableContainer>
+                );
+              }}
             </DataTable>
           )}
 
           {completedRows.length > 0 && (
-            <DataTable rows={paginatedCompletedRows} headers={TABLE_HEADERS}>
+            <DataTable rows={paginatedCompletedRows} headers={TABLE_HEADERS} isSortable>
               {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
                 <TableContainer
                   title="Completed Builds"
                   description="Downloaded and cancelled builds."
                 >
+                  <TableToolbar>
+                    <TableToolbarContent>
+                      <TableToolbarSearch
+                        persistent
+                        placeholder="Search completed builds..."
+                        onChange={(e) => setCompletedSearchValue(e.target.value)}
+                        value={completedSearchValue}
+                        aria-label="Search completed builds"
+                      />
+                      <Button
+                        kind="ghost"
+                        size="sm"
+                        renderIcon={Filter}
+                        iconDescription="Toggle filters"
+                        hasIconOnly={!activeFilterCount}
+                        onClick={() => setShowFilters(!showFilters)}
+                      >
+                        {activeFilterCount > 0 && `Filters (${activeFilterCount})`}
+                      </Button>
+                      {activeFilterCount > 0 && (
+                        <Button
+                          kind="ghost"
+                          size="sm"
+                          renderIcon={Close}
+                          iconDescription="Clear all filters"
+                          onClick={clearAllFilters}
+                        >
+                          Clear Filters
+                        </Button>
+                      )}
+                      <TableToolbarMenu>
+                        <TableToolbarAction onClick={() => handleExportCSV(completedRows, 'completed-builds')}>
+                          Export as CSV
+                        </TableToolbarAction>
+                      </TableToolbarMenu>
+                      <Button
+                        kind="primary"
+                        size="sm"
+                        renderIcon={Download}
+                        onClick={() => handleExportCSV(completedRows, 'completed-builds')}
+                      >
+                        Export
+                      </Button>
+                    </TableToolbarContent>
+                  </TableToolbar>
+                  
+                  {showFilters && (
+                    <div className="build-management-filters">
+                      <div className="build-management-filters__row">
+                        <FilterableMultiSelect
+                          id="status-filter-completed"
+                          titleText="Status"
+                          label="Filter by status"
+                          items={STATUS_FILTER_OPTIONS}
+                          itemToString={(item) => item ? item.label : ''}
+                          selectedItems={STATUS_FILTER_OPTIONS.filter(opt => selectedStatuses.includes(opt.id))}
+                          onChange={({ selectedItems }) => {
+                            setSelectedStatuses(selectedItems.map(item => item.id));
+                          }}
+                          size="sm"
+                        />
+                        
+                        <Dropdown
+                          id="creator-filter-completed"
+                          titleText="Creator"
+                          label="Filter by creator"
+                          items={[{ id: '', label: 'All Creators', value: '' }, ...creatorOptions]}
+                          itemToString={(item) => item ? item.label : ''}
+                          selectedItem={creatorOptions.find(opt => opt.id === selectedCreator) || { id: '', label: 'All Creators', value: '' }}
+                          onChange={({ selectedItem }) => {
+                            setSelectedCreator(selectedItem?.id || '');
+                          }}
+                          size="sm"
+                        />
+                        
+                        <Select
+                          id="date-preset-completed"
+                          labelText="Date Range"
+                          value={dateRangePreset}
+                          onChange={(e) => handleDateRangePreset(e.target.value)}
+                          size="sm"
+                        >
+                          <SelectItem value="" text="All Dates" />
+                          {DATE_RANGE_PRESETS.map((preset) => (
+                            <SelectItem key={preset.id} value={preset.id} text={preset.label} />
+                          ))}
+                        </Select>
+                        
+                        {dateRangePreset === 'custom' && (
+                          <DatePicker
+                            datePickerType="range"
+                            onChange={(dates) => {
+                              setCustomDateRange({
+                                start: dates[0] ? dates[0].toISOString() : null,
+                                end: dates[1] ? dates[1].toISOString() : null
+                              });
+                            }}
+                          >
+                            <DatePickerInput
+                              id="date-start-completed"
+                              placeholder="mm/dd/yyyy"
+                              labelText="Start Date"
+                              size="sm"
+                            />
+                            <DatePickerInput
+                              id="date-end-completed"
+                              placeholder="mm/dd/yyyy"
+                              labelText="End Date"
+                              size="sm"
+                            />
+                          </DatePicker>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <Table {...getTableProps()}>
                     <TableHead>
                       <TableRow>
                         {headers.map((header) => {
                           const { key, ...headerProps } = getHeaderProps({ header });
+                          const isSortable = header.key !== 'action';
                           return (
-                            <TableHeader key={header.key} {...headerProps}>
+                            <TableHeader
+                              key={header.key}
+                              {...headerProps}
+                              isSortable={isSortable}
+                              isSortHeader={sortInfo.columnKey === header.key}
+                              sortDirection={sortInfo.columnKey === header.key ? sortInfo.direction : 'NONE'}
+                              onClick={isSortable ? () => handleSort(header.key) : undefined}
+                            >
                               {header.header}
                             </TableHeader>
                           );
@@ -463,18 +1183,24 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
           if (!creating) setCreateModalOpen(false);
         }}
         primaryButtonDisabled={!isFormValid || creating || loadingUsers}
-        preventCloseOnClickOutside
         size="lg"
       >
         <Stack gap={6}>
           <TextInput
             id="build-name"
-            labelText="Build Name"
+            labelText="Build Name *"
             placeholder="e.g., prod-v2.1, staging-test"
             value={buildName}
-            onChange={(e) => setBuildName(e.target.value)}
-            helperText="Enter a unique name for this build"
+            onChange={handleBuildNameChange}
+            onBlur={() => {
+              setBuildNameTouched(true);
+              validateBuildNameField(buildName);
+            }}
+            invalid={buildNameTouched && !!buildNameError}
+            invalidText={buildNameError}
+            helperText={!buildNameError ? "3-100 characters, letters, numbers, spaces, hyphens, and underscores only" : undefined}
             disabled={creating}
+            required
           />
 
           {canManageBuilds ? (
@@ -534,6 +1260,35 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated }) =>
             </div>
           ) : null}
         </Stack>
+      </Modal>
+
+      {/* Bulk Delete Confirmation Modal */}
+      <Modal
+        open={bulkDeleteModalOpen}
+        danger
+        modalHeading="Cancel Selected Builds"
+        modalLabel="Bulk Action"
+        primaryButtonText={bulkActionInProgress ? "Cancelling..." : "Cancel Builds"}
+        secondaryButtonText="Go Back"
+        onRequestSubmit={handleBulkDelete}
+        onRequestClose={() => {
+          if (!bulkActionInProgress) setBulkDeleteModalOpen(false);
+        }}
+        onSecondarySubmit={() => {
+          if (!bulkActionInProgress) setBulkDeleteModalOpen(false);
+        }}
+        primaryButtonDisabled={bulkActionInProgress}
+        size="sm"
+      >
+        <p>
+          Are you sure you want to cancel <strong>{getSelectedBuildsInfo().count}</strong> build(s)?
+        </p>
+        <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#525252' }}>
+          Selected builds: {getSelectedBuildsInfo().names}
+        </p>
+        <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#da1e28' }}>
+          <strong>Warning:</strong> This action cannot be undone. Cancelled builds will be moved to the completed section.
+        </p>
       </Modal>
     </div>
   );

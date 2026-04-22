@@ -62,7 +62,6 @@ const ConfirmDialog = ({
       onRequestClose={handleRequestClose}
       onSecondarySubmit={handleSecondarySubmit}
       danger={type === 'danger'}
-      preventCloseOnClickOutside={loading}
       primaryButtonDisabled={loading}
     >
       <div className="confirm-dialog__content">

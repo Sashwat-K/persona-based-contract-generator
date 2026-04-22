@@ -17,6 +17,7 @@ import buildService from '../services/buildService';
 import CredentialRotation from '../components/CredentialRotation';
 import { FullPageLoader } from '../components/LoadingSpinner';
 import { ErrorStatePanel } from '../components/StatePanel';
+import { BUILD_STATUS_CONFIG } from '../utils/constants';
 
 const CHART_TOOLBAR_CONTROLS = [
   { type: 'Export as CSV' },
@@ -83,35 +84,62 @@ const AdminAnalytics = () => {
     [buildStatusCount]
   );
 
-  const donutOptions = useMemo(() => ({
-    title: 'Build Status Distribution',
-    resizable: true,
-    donut: {
-      center: {
-        label: 'Builds'
+  // Map Carbon color kinds to actual hex colors for consistency with BuildManagement
+  const carbonColorMap = {
+    'gray': '#525252',      // gray-70
+    'purple': '#8a3ffc',    // purple-60
+    'blue': '#0f62fe',      // blue-60
+    'cyan': '#1192e8',      // cyan-50
+    'teal': '#009d9a',      // teal-50
+    'green': '#24a148',     // green-50
+    'red': '#da1e28'        // red-60
+  };
+
+  const donutOptions = useMemo(() => {
+    // Create color scale based on BUILD_STATUS_CONFIG
+    const colorScale = {};
+    Object.entries(buildStatusCount).forEach(([statusName]) => {
+      // Convert display name back to status key (e.g., "SIGNING KEY REGISTERED" -> "SIGNING_KEY_REGISTERED")
+      const statusKey = statusName.replace(/ /g, '_').toUpperCase();
+      const config = BUILD_STATUS_CONFIG[statusKey];
+      if (config && config.kind) {
+        colorScale[statusName] = carbonColorMap[config.kind] || carbonColorMap['gray'];
       }
-    },
-    height: '400px',
-    legend: {
-      enabled: true,
-      truncation: {
-        type: 'none',
-        threshold: 1000,
-        numCharacter: 1000
+    });
+
+    return {
+      title: 'Build Status Distribution',
+      resizable: true,
+      donut: {
+        center: {
+          label: 'Builds'
+        }
+      },
+      height: '400px',
+      legend: {
+        enabled: true,
+        truncation: {
+          type: 'none',
+          threshold: 1000,
+          numCharacter: 1000
+        }
+      },
+      tooltip: {
+        truncation: {
+          type: 'none',
+          threshold: 1000,
+          numCharacter: 1000
+        }
+      },
+      toolbar: {
+        enabled: true,
+        controls: CHART_TOOLBAR_CONTROLS
+      },
+      color: {
+        scale: colorScale
       }
-    },
-    tooltip: {
-      truncation: {
-        type: 'none',
-        threshold: 1000,
-        numCharacter: 1000
-      }
-    },
-    toolbar: {
-      enabled: true,
-      controls: CHART_TOOLBAR_CONTROLS
-    }
-  }), []);
+    };
+  }, [buildStatusCount]);
 
   // Process data for Bar Chart (Users by Role)
   const barData = useMemo(() => {

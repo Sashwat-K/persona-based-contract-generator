@@ -190,24 +190,52 @@ const DesktopTitleBar = ({
   const loadAboutDetails = useCallback(async () => {
     if (aboutLoading) return;
 
-    if (!window.electron?.appInfo?.getClientToolInfo) {
-      setAboutDetails(null);
-      setAboutError('Client tool info API is unavailable. Restart the app to load the latest client bridge.');
-      return;
-    }
-
     try {
       setAboutLoading(true);
       setAboutError('');
-      const details = await window.electron.appInfo.getClientToolInfo();
-      setAboutDetails(details);
+      
+      // Fetch client (Electron) details
+      let clientDetails = null;
+      if (window.electron?.appInfo?.getClientToolInfo) {
+        try {
+          clientDetails = await window.electron.appInfo.getClientToolInfo();
+        } catch (err) {
+          console.warn('Failed to fetch client tool info:', err);
+        }
+      }
+      
+      // Fetch backend details from /about API
+      let backendDetails = null;
+      try {
+        const serverUrl = getServerUrl();
+        const response = await fetch(`${serverUrl}/about`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          mode: 'cors',
+          credentials: 'omit'
+        });
+        
+        if (response.ok) {
+          backendDetails = await response.json();
+        }
+      } catch (err) {
+        console.warn('Failed to fetch backend info:', err);
+      }
+      
+      setAboutDetails({
+        client: clientDetails,
+        backend: backendDetails
+      });
     } catch (error) {
       setAboutDetails(null);
-      setAboutError(error?.message || 'Failed to fetch client tool details.');
+      setAboutError(error?.message || 'Failed to fetch version details.');
     } finally {
       setAboutLoading(false);
     }
-  }, [aboutLoading]);
+  }, [aboutLoading, getServerUrl]);
 
   const handleOpenAbout = async () => {
     setShowAboutModal(true);
@@ -298,7 +326,6 @@ const DesktopTitleBar = ({
         onRequestSubmit={handleCloseApp}
         onSecondarySubmit={handleRetryConnection}
         onRequestClose={() => {}}
-        preventCloseOnClickOutside
         primaryButtonDisabled={isRetryingConnection}
       >
         <p className="desktop-titlebar__connection-modal-copy">
@@ -319,56 +346,70 @@ const DesktopTitleBar = ({
         onRequestClose={() => setShowAboutModal(false)}
       >
         <div className="desktop-titlebar__about">
-          {aboutLoading && <p className="desktop-titlebar__about-loading">Loading client details...</p>}
+          {aboutLoading && <p className="desktop-titlebar__about-loading">Loading version details...</p>}
           {aboutError && <p className="desktop-titlebar__about-error">{aboutError}</p>}
 
           {aboutDetails && (
             <>
+              {/* App Section */}
               <section className="desktop-titlebar__about-section">
-                <h4>Application</h4>
+                <h4>App</h4>
                 <div className="desktop-titlebar__about-grid">
                   <span>Name</span>
-                  <span>{aboutDetails.app?.name || title}</span>
+                  <span>{aboutDetails.client?.app?.name || title}</span>
                   <span>Version</span>
-                  <span>{aboutDetails.app?.version || 'Unknown'}</span>
-                  <span>Electron</span>
-                  <span>{aboutDetails.app?.electron || 'Unknown'}</span>
-                  <span>Chromium</span>
-                  <span>{aboutDetails.app?.chromium || 'Unknown'}</span>
-                  <span>Node.js</span>
-                  <span>{aboutDetails.app?.node || 'Unknown'}</span>
-                  <span>Platform</span>
-                  <span>{aboutDetails.app?.platform || 'Unknown'}</span>
+                  <span>{aboutDetails.client?.app?.version || aboutDetails.backend?.app?.version || '1.0.0'}</span>
+                  {aboutDetails.client?.app?.electron && (
+                    <>
+                      <span>Electron</span>
+                      <span>{aboutDetails.client.app.electron}</span>
+                    </>
+                  )}
+                  {aboutDetails.client?.app?.chromium && (
+                    <>
+                      <span>Chromium</span>
+                      <span>{aboutDetails.client.app.chromium}</span>
+                    </>
+                  )}
+                  {aboutDetails.client?.app?.node && (
+                    <>
+                      <span>Node.js</span>
+                      <span>{aboutDetails.client.app.node}</span>
+                    </>
+                  )}
+                  {aboutDetails.client?.app?.platform && (
+                    <>
+                      <span>Platform</span>
+                      <span>{aboutDetails.client.app.platform}</span>
+                    </>
+                  )}
                 </div>
               </section>
 
-              <section className="desktop-titlebar__about-section">
-                <h4>contract-cli</h4>
-                <div className="desktop-titlebar__about-grid">
-                  <span>Status</span>
-                  <span>{aboutDetails.contractCli?.installed ? 'Installed' : 'Not detected'}</span>
-                  <span>Version</span>
-                  <span>{normalizeContractCliVersion(aboutDetails.contractCli?.version)}</span>
-                  <span>Details</span>
-                  <span>{aboutDetails.contractCli?.details || 'No details available'}</span>
-                </div>
-              </section>
+              {/* Backend Section */}
+              {aboutDetails.backend && (
+                <section className="desktop-titlebar__about-section">
+                  <h4>Backend</h4>
+                  <div className="desktop-titlebar__about-grid">
+                    <span>Version</span>
+                    <span>{aboutDetails.backend.backend?.version || 'Unknown'}</span>
+                    <span>contract-go Version</span>
+                    <span>{aboutDetails.backend.backend?.contract_go_version || 'Unknown'}</span>
+                    <span>OpenSSL Version</span>
+                    <span>{aboutDetails.backend.backend?.openssl_version || 'Unknown'}</span>
+                    <span>Go Version</span>
+                    <span>{aboutDetails.backend.backend?.go_version || 'Unknown'}</span>
+                    <span>Platform</span>
+                    <span>{aboutDetails.backend.backend?.platform || 'Unknown'}</span>
+                  </div>
+                </section>
+              )}
 
-              <section className="desktop-titlebar__about-section">
-                <h4>OpenSSL</h4>
-                <div className="desktop-titlebar__about-grid">
-                  <span>Status</span>
-                  <span>{aboutDetails.openssl?.installed ? 'Installed' : 'Not detected'}</span>
-                  <span>Version</span>
-                  <span>{normalizeOpenSSLVersion(aboutDetails.openssl?.version)}</span>
-                  <span>Details</span>
-                  <span>{aboutDetails.openssl?.details || 'No details available'}</span>
-                </div>
-              </section>
-
-              <p className="desktop-titlebar__about-checked-at">
-                Last checked: {aboutDetails.checkedAt || 'Unknown'}
-              </p>
+              {aboutDetails.client?.checkedAt && (
+                <p className="desktop-titlebar__about-checked-at">
+                  Last checked: {aboutDetails.client.checkedAt}
+                </p>
+              )}
             </>
           )}
         </div>

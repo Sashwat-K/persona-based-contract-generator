@@ -9,10 +9,6 @@ import verificationService from './verificationService';
 const WORKLOAD_TEMPLATE_FALLBACK = `workload:
   compose:
     archive: ""
-  images:
-    - name: ""
-      platforms:
-        - s390x
   type: compose
 `;
 
@@ -120,14 +116,15 @@ class BuildService {
   /**
    * Register attestation key (v2)
    * @param {string} buildId
-   * @param {{mode?: string, public_key?: string, passphrase?: string}} data
+   * @param {{mode?: string, public_key?: string, passphrase?: string, encryption_cert_pem?: string}} data
    * @returns {Promise<Object>}
    */
   async registerAttestationKey(buildId, data = {}) {
     const payload = {
       mode: data.mode || 'generate',
       ...(data.passphrase ? { passphrase: data.passphrase } : {}),
-      ...(data.public_key ? { public_key: data.public_key } : {})
+      ...(data.public_key ? { public_key: data.public_key } : {}),
+      ...(data.encryption_cert_pem ? { encryption_cert_pem: data.encryption_cert_pem } : {})
     };
     try {
       const response = await apiClient.post(`/builds/${buildId}/keys/attestation`, payload);
@@ -231,15 +228,15 @@ class BuildService {
 
   /**
    * Finalize contract (v2 backend-native finalization)
+   * Backend automatically finds the latest signing and attestation keys.
+   * Attestation public key is already encrypted during registration.
    * @param {string} buildId
-   * @param {{signing_key_id: string, attestation_key_id?: string, attestation_cert_pem?: string}} data
+   * @param {{signing_key_passphrase: string}} data
    * @returns {Promise<Object>}
    */
   async finalizeBuildV2(buildId, data) {
     const response = await apiClient.post(`/builds/${buildId}/v2/finalize`, {
-      signing_key_id: data.signing_key_id,
-      ...(data.attestation_key_id ? { attestation_key_id: data.attestation_key_id } : {}),
-      ...(data.attestation_cert_pem ? { attestation_cert_pem: data.attestation_cert_pem } : {})
+      signing_key_passphrase: data.signing_key_passphrase
     });
     useBuildStore.getState().updateBuildStatus(buildId, 'FINALIZED');
     return response.data;

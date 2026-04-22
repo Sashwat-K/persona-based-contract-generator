@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   DataTable,
   Table,
@@ -22,11 +22,13 @@ import {
 import { Add, Renew } from '@carbon/icons-react';
 import userService from '../services/userService';
 import { ROLE_NAMES } from '../utils/constants';
-import { FullPageLoader } from '../components/LoadingSpinner';
+import { DataTableSkeletonLoader } from '../components/LoadingSpinner';
+import { PasswordStrengthMeter, isPasswordValid } from '../components/PasswordStrengthMeter';
 import { formatDateOnly } from '../utils/formatters';
 import { ErrorStatePanel, StatePanel } from '../components/StatePanel';
 import { useAuthStore } from '../store/authStore';
 import { getPrimaryRole } from '../utils/roles';
+import { validateEmail, validateUserName } from '../utils/validators';
 
 const MIN_PASSWORD_LENGTH = 12;
 const ACTIVE_TABLE_HEADERS = [
@@ -74,6 +76,13 @@ const UserManagement = () => {
     roles: [], // Changed from role to roles array
     password: ''
   });
+  
+  // Form validation state
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [nameTouched, setNameTouched] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [emailValidating, setEmailValidating] = useState(false);
 
   // Load users on mount
   useEffect(() => {
@@ -93,6 +102,40 @@ const UserManagement = () => {
       setLoading(false);
     }
   };
+  
+  // Validate email format
+  const validateEmailField = useCallback((email) => {
+    if (!emailTouched) return;
+    const result = validateEmail(email);
+    setEmailError(result.valid ? '' : result.error);
+  }, [emailTouched]);
+  
+  // Validate name
+  const validateNameField = useCallback((name) => {
+    if (!nameTouched) return;
+    const result = validateUserName(name);
+    setNameError(result.valid ? '' : result.error);
+  }, [nameTouched]);
+  
+  // Handle email change with validation
+  const handleEmailChange = useCallback((e) => {
+    const value = e.target.value;
+    setFormData(prev => ({ ...prev, email: value }));
+    if (emailTouched) {
+      const result = validateEmail(value);
+      setEmailError(result.valid ? '' : result.error);
+    }
+  }, [emailTouched]);
+  
+  // Handle name change with validation
+  const handleNameChange = useCallback((e) => {
+    const value = e.target.value;
+    setFormData(prev => ({ ...prev, name: value }));
+    if (nameTouched) {
+      const result = validateUserName(value);
+      setNameError(result.valid ? '' : result.error);
+    }
+  }, [nameTouched]);
   
   const handleRoleToggle = (roleKey) => {
     setFormData(prev => ({
@@ -493,22 +536,25 @@ const UserManagement = () => {
   };
 
   const isCreateFormValid = () => {
-    return formData.name.trim() &&
-           formData.email.trim() &&
+    const nameValid = validateUserName(formData.name).valid;
+    const emailValid = validateEmail(formData.email).valid;
+    return nameValid &&
+           emailValid &&
            formData.roles.length > 0 &&
-           formData.password.length >= MIN_PASSWORD_LENGTH;
+           isPasswordValid(formData.password) &&
+           !emailError &&
+           !nameError;
   };
 
   const isEditFormValid = () => {
-    return formData.name.trim() &&
-           formData.email.trim() &&
-           formData.roles.length > 0;
+    const nameValid = validateUserName(formData.name).valid;
+    const emailValid = validateEmail(formData.email).valid;
+    return nameValid &&
+           emailValid &&
+           formData.roles.length > 0 &&
+           !emailError &&
+           !nameError;
   };
-
-  // Show loading state
-  if (loading) {
-    return <FullPageLoader description="Loading users..." />;
-  }
 
   // Show error state
   if (error) {
@@ -558,7 +604,16 @@ const UserManagement = () => {
         </div>
       </div>
 
-      {users.length === 0 ? (
+      {loading ? (
+        <div className="user-management-loading">
+          <DataTableSkeletonLoader
+            rows={10}
+            columns={7}
+            showHeader={true}
+            showToolbar={true}
+          />
+        </div>
+      ) : users.length === 0 ? (
         <StatePanel
           title="No Users Found"
           description="Get started by creating your first user."
@@ -694,7 +749,14 @@ const UserManagement = () => {
             labelText="Full Name"
             placeholder="John Doe"
             value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            onChange={handleNameChange}
+            onBlur={() => {
+              setNameTouched(true);
+              validateNameField(formData.name);
+            }}
+            invalid={nameTouched && !!nameError}
+            invalidText={nameError}
+            helperText={!nameError ? "2-100 characters, letters, spaces, hyphens, and apostrophes only" : undefined}
             autoComplete="off"
           />
           <TextInput
@@ -702,7 +764,14 @@ const UserManagement = () => {
             labelText="Email Address"
             placeholder="john.doe@example.com"
             value={formData.email}
-            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            onChange={handleEmailChange}
+            onBlur={() => {
+              setEmailTouched(true);
+              validateEmailField(formData.email);
+            }}
+            invalid={emailTouched && !!emailError}
+            invalidText={emailError}
+            helperText={!emailError ? "Valid email address required" : undefined}
             autoComplete="new-email"
           />
           <div className="user-management-role-editor">
@@ -726,16 +795,19 @@ const UserManagement = () => {
               </div>
             </div>
           </div>
-          <TextInput
-            id="user-password"
-            type="password"
-            labelText="Initial Password"
-            placeholder="Minimum 12 characters"
-            value={formData.password}
-            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-            autoComplete="new-password"
-            helperText="User will be required to change this on first login"
-          />
+          <div>
+            <TextInput
+              id="user-password"
+              type="password"
+              labelText="Initial Password"
+              placeholder="Minimum 12 characters"
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              autoComplete="new-password"
+              helperText="User will be required to change this on first login"
+            />
+            <PasswordStrengthMeter password={formData.password} showCriteria={true} />
+          </div>
         </Stack>
       </Modal>
 
@@ -887,21 +959,26 @@ const UserManagement = () => {
           setSelectedUser(null);
           setResetPasswordValue('');
         }}
-        primaryButtonDisabled={resetPasswordValue.length < MIN_PASSWORD_LENGTH}
+        primaryButtonDisabled={!isPasswordValid(resetPasswordValue)}
       >
         <p className="user-management-modal-copy user-management-modal-copy--lead">
           Set a new password for <strong>{selectedUser?.name}</strong>. The user will be required to change it on their next login.
         </p>
-        <TextInput
-          id="admin-reset-password"
-          type="password"
-          labelText="New Password"
-          placeholder={`Minimum ${MIN_PASSWORD_LENGTH} characters`}
-          value={resetPasswordValue}
-          onChange={(e) => setResetPasswordValue(e.target.value)}
-          autoComplete="new-password"
-          helperText="User will be forced to change this password on next login"
-        />
+        <Stack gap={5}>
+          <TextInput
+            id="admin-reset-password"
+            type="password"
+            labelText="New Password"
+            placeholder={`Minimum ${MIN_PASSWORD_LENGTH} characters`}
+            value={resetPasswordValue}
+            onChange={(e) => setResetPasswordValue(e.target.value)}
+            autoComplete="new-password"
+            helperText="User will be forced to change this password on next login"
+          />
+          {resetPasswordValue && (
+            <PasswordStrengthMeter password={resetPasswordValue} />
+          )}
+        </Stack>
       </Modal>
     </div>
   );

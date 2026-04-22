@@ -11,6 +11,9 @@ import Login from './views/Login';
 import NotFound from './views/NotFound';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/ToastManager';
+import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp';
+import CommandPalette from './components/CommandPalette';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { PERSONAS } from './store/mockData';
 import buildService from './services/buildService';
 import { useAuthStore } from './store/authStore';
@@ -56,6 +59,8 @@ function App() {
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [userRole, setUserRole] = useState('ADMIN');
   const [userRoles, setUserRoles] = useState(['ADMIN']);
   const [userEmail, setUserEmail] = useState('');
@@ -312,6 +317,83 @@ function App() {
     handleSelectBuild
   ]);
 
+  // Command palette action handler
+  const handleCommandPaletteAction = useCallback((actionType, payload) => {
+    switch (actionType) {
+      case 'navigate':
+        setActiveNav(payload);
+        break;
+      case 'createBuild':
+        // Trigger create build modal in BuildManagement
+        setActiveNav('BUILDS');
+        break;
+      case 'refreshBuilds':
+        loadBuilds();
+        break;
+      case 'toggleFilters':
+        // This would need to be passed down to BuildManagement
+        break;
+      case 'exportBuilds':
+        // This would need to be passed down to BuildManagement
+        break;
+      case 'createUser':
+        setActiveNav('USERS');
+        break;
+      case 'logout':
+        handleLogout();
+        break;
+      case 'toggleTheme':
+        // Theme toggle would be implemented here
+        break;
+      case 'showShortcuts':
+        setShowShortcutsHelp(true);
+        break;
+      case 'openDocs':
+        window.open('https://docs.example.com', '_blank');
+        break;
+      case 'contactSupport':
+        window.open('mailto:support@example.com', '_blank');
+        break;
+      default:
+        console.warn('Unknown command palette action:', actionType);
+    }
+  }, [loadBuilds, handleLogout]);
+
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    // Command palette
+    'Ctrl+k': (e) => {
+      if (isAuthenticated) {
+        e.preventDefault();
+        setShowCommandPalette(true);
+      }
+    },
+    
+    // Navigation shortcuts
+    'Alt+1': () => isAuthenticated && setActiveNav('HOME'),
+    'Alt+2': () => isAuthenticated && setActiveNav('BUILDS'),
+    'Alt+3': () => isAuthenticated && userRole === 'ADMIN' && setActiveNav('USERS'),
+    'Alt+4': () => isAuthenticated && (userRole === 'ADMIN' || userRole === 'AUDITOR') && setActiveNav('LOGS'),
+    
+    // Help shortcut
+    'Shift+?': () => isAuthenticated && setShowShortcutsHelp(true),
+    
+    // Refresh shortcut
+    'Ctrl+r': (e) => {
+      if (isAuthenticated && activeNav === 'BUILDS') {
+        e.preventDefault();
+        loadBuilds();
+      }
+    },
+    
+    // Close modal shortcut
+    'Escape': () => {
+      if (showWelcomeModal) setShowWelcomeModal(false);
+      if (showShortcutsHelp) setShowShortcutsHelp(false);
+      if (showCommandPalette) setShowCommandPalette(false);
+    }
+  }, isAuthenticated, [isAuthenticated, userRole, activeNav, showWelcomeModal, showShortcutsHelp, showCommandPalette, loadBuilds, handleLogout]);
+
   const welcomeMessage = useMemo(
     () => `Welcome Back, ${ROLE_LABELS[userRole] || 'User'}`,
     [userRole]
@@ -357,6 +439,20 @@ function App() {
               You have successfully authenticated into the IBM Confidential Computing Contract Builder. Your cryptographic identity has been verified and active workflows are ready for review.
             </p>
           </Modal>
+          
+          <KeyboardShortcutsHelp
+            open={showShortcutsHelp}
+            onClose={() => setShowShortcutsHelp(false)}
+          />
+          
+          <CommandPalette
+            open={showCommandPalette}
+            onClose={() => setShowCommandPalette(false)}
+            userRole={userRole}
+            currentView={activeNav}
+            onAction={handleCommandPaletteAction}
+          />
+          
           {activeView}
         </AppShell>
       </ToastProvider>

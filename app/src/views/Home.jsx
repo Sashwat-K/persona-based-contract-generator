@@ -16,7 +16,7 @@ import {
   Renew
 } from '@carbon/icons-react';
 import buildService from '../services/buildService';
-import { FullPageLoader } from '../components/LoadingSpinner';
+import { TileSkeletonLoader, ContentSkeletonLoader } from '../components/LoadingSpinner';
 import { useAuthStore } from '../store/authStore';
 import { formatDateOnly } from '../utils/formatters';
 import { getRoleLabel } from '../utils/roles';
@@ -281,11 +281,6 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
     return `(${daysUntilExpiry} days remaining)`;
   }, []);
 
-  // Show loading state only for builds
-  if (loading) {
-    return <FullPageLoader description="Loading builds..." />;
-  }
-
   return (
     <div className="app-page home-page">
       <div className="app-page__header">
@@ -310,10 +305,24 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
 
       <h2 className="app-section-title">Account Overview</h2>
 
-      <Grid>
-        <Column lg={8} md={4} sm={4} className="home-grid-column">
-          <Tile className="home-tile">
-            <h3 className="home-tile__title">Account Status</h3>
+      {loading ? (
+        <Grid>
+          <Column lg={8} md={4} sm={4} className="home-grid-column">
+            <Tile className="home-tile">
+              <ContentSkeletonLoader heading lines={8} />
+            </Tile>
+          </Column>
+          <Column lg={8} md={4} sm={4} className="home-grid-column">
+            <Tile className="home-tile">
+              <ContentSkeletonLoader heading lines={6} />
+            </Tile>
+          </Column>
+        </Grid>
+      ) : (
+        <Grid>
+          <Column lg={8} md={4} sm={4} className="home-grid-column">
+            <Tile className="home-tile">
+              <h3 className="home-tile__title">Account Status</h3>
 
             <div className="home-status-section">
               <div className="home-status-section__header">
@@ -402,14 +411,31 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
               </div>
             )}
           </Tile>
-        </Column>
-      </Grid>
+          </Column>
+        </Grid>
+      )}
 
       <h2 className="app-section-title home-section-title-spacing">
         Build Overview
       </h2>
 
-      <Grid>
+      {loading ? (
+        <Grid>
+          <Column lg={isViewer ? 16 : 8} md={isViewer ? 8 : 4} sm={4} className="home-grid-column">
+            <Tile className="home-tile">
+              <ContentSkeletonLoader heading lines={6} />
+            </Tile>
+          </Column>
+          {!isViewer && (
+            <Column lg={8} md={4} sm={4} className="home-grid-column">
+              <Tile className="home-tile">
+                <ContentSkeletonLoader heading lines={6} />
+              </Tile>
+            </Column>
+          )}
+        </Grid>
+      ) : (
+        <Grid>
         <Column lg={isViewer ? 16 : 8} md={isViewer ? 8 : 4} sm={4} className="home-grid-column">
           <Tile className="home-tile">
             <h3 className="home-tile__title">My Builds</h3>
@@ -514,8 +540,9 @@ const Home = ({ userEmail, userRole, onNavigate, onSelectBuild }) => {
               )}
             </Tile>
           </Column>
-        )}
-      </Grid>
+          )}
+        </Grid>
+      )}
     </div>
   );
 };
