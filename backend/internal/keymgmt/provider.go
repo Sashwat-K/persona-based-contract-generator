@@ -29,8 +29,8 @@ type KeyRecord struct {
 
 // KeyProvider abstracts key lifecycle operations for Vault and mock providers.
 type KeyProvider interface {
-	CreateSigningKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string) (KeyRecord, error)
-	CreateAttestationKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string) (KeyRecord, *OneTimePrivateExport, error)
+	CreateSigningKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (KeyRecord, error)
+	CreateAttestationKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (KeyRecord, *OneTimePrivateExport, error)
 	GetPublicKey(ctx context.Context, keyID uuid.UUID) (string, error)
 	GetPrivateKey(ctx context.Context, keyID uuid.UUID) ([]byte, error)
 	SignDigest(ctx context.Context, keyID uuid.UUID, digestHex string) (string, error)

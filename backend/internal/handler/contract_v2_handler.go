@@ -168,9 +168,7 @@ func (h *ContractV2Handler) SubmitEnvironment(w http.ResponseWriter, r *http.Req
 }
 
 type finalizeContractV2Request struct {
-	SigningKeyID       string  `json:"signing_key_id"`
-	AttestationKeyID   *string `json:"attestation_key_id,omitempty"`
-	AttestationCertPEM string  `json:"attestation_cert_pem,omitempty"`
+	SigningKeyPassphrase string `json:"signing_key_passphrase"`
 }
 
 // FinalizeContract handles POST /builds/{id}/v2/finalize
@@ -185,22 +183,6 @@ func (h *ContractV2Handler) FinalizeContract(w http.ResponseWriter, r *http.Requ
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, model.ErrInvalidRequest(err.Error()))
 		return
-	}
-
-	signingKeyID, err := uuid.Parse(req.SigningKeyID)
-	if err != nil {
-		writeError(w, model.ErrInvalidRequest("Invalid signing_key_id."))
-		return
-	}
-
-	var attestationKeyID *uuid.UUID
-	if req.AttestationKeyID != nil && *req.AttestationKeyID != "" {
-		parsed, err := uuid.Parse(*req.AttestationKeyID)
-		if err != nil {
-			writeError(w, model.ErrInvalidRequest("Invalid attestation_key_id."))
-			return
-		}
-		attestationKeyID = &parsed
 	}
 
 	actorID, _ := middleware.GetUserID(r.Context())
@@ -223,9 +205,7 @@ func (h *ContractV2Handler) FinalizeContract(w http.ResponseWriter, r *http.Requ
 		ActorIP:              ip,
 		RequestSignature:     sigPtr,
 		RequestSignatureHash: sigHashPtr,
-		SigningKeyID:         signingKeyID,
-		AttestationKeyID:     attestationKeyID,
-		AttestationCertPEM:   req.AttestationCertPEM,
+		SigningKeyPassphrase: req.SigningKeyPassphrase,
 	})
 	if err != nil {
 		logSystemEvent(h.systemLogService, r, "unknown", "V2_CONTRACT_FINALIZED", "Build: "+buildID.String(), "FAILED", "Failed to finalize contract (v2): "+err.Error())
@@ -233,7 +213,8 @@ func (h *ContractV2Handler) FinalizeContract(w http.ResponseWriter, r *http.Requ
 			writeError(w, appErr)
 			return
 		}
-		writeError(w, model.ErrInternal("Failed to finalize contract."))
+		// Include actual error message for debugging
+		writeError(w, model.ErrInternal("Failed to finalize contract: "+err.Error()))
 		return
 	}
 

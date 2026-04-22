@@ -20,6 +20,12 @@ type KeyService struct {
 	auditService      *AuditService
 	store             *v2Store
 	keyProvider       keymgmt.KeyProvider
+	engine            contractEngine
+}
+
+// contractEngine defines the subset of contract operations needed by KeyService
+type contractEngine interface {
+	EncryptString(ctx context.Context, plaintext, certPEM string) (string, error)
 }
 
 // KeyRegistrationResult is returned from key registration endpoints.
@@ -40,6 +46,7 @@ func NewKeyService(
 	assignmentService *AssignmentService,
 	auditService *AuditService,
 	keyProvider keymgmt.KeyProvider,
+	engine contractEngine,
 ) *KeyService {
 	return &KeyService{
 		queries:           queries,
@@ -48,7 +55,13 @@ func NewKeyService(
 		auditService:      auditService,
 		store:             newV2Store(db),
 		keyProvider:       keyProvider,
+		engine:            engine,
 	}
+}
+
+// encryptAttestationPublicKey encrypts the attestation public key using HpcrTextEncrypted
+func (s *KeyService) encryptAttestationPublicKey(ctx context.Context, publicKey, encryptionCertPEM string) (string, error) {
+	return s.engine.EncryptString(ctx, publicKey, encryptionCertPEM)
 }
 
 func (s *KeyService) RegisterSigningKey(
@@ -56,6 +69,7 @@ func (s *KeyService) RegisterSigningKey(
 	buildID, actorID uuid.UUID,
 	mode model.BuildKeyMode,
 	publicKey *string,
+	passphrase *string,
 	ip string,
 	actorRoles []string,
 	requestSignature *string,
@@ -65,7 +79,7 @@ func (s *KeyService) RegisterSigningKey(
 		return nil, err
 	}
 
-	providerRecord, err := s.keyProvider.CreateSigningKey(ctx, buildID, actorID, mode, publicKey)
+	providerRecord, err := s.keyProvider.CreateSigningKey(ctx, buildID, actorID, mode, publicKey, passphrase)
 	if err != nil {
 		return nil, mapKeyProviderError(err)
 	}
@@ -85,20 +99,7 @@ func (s *KeyService) RegisterSigningKey(
 		return nil, err
 	}
 
-	_, _ = s.auditService.LogEvent(ctx, LogEventInput{
-		BuildID:     buildID,
-		EventType:   model.EventSigningKeyCreated,
-		ActorUserID: actorID,
-		IpAddress:   ip,
-		EventData: map[string]string{
-			"key_id":      record.ID.String(),
-			"key_type":    string(model.BuildKeyTypeSigning),
-			"mode":        string(mode),
-			"fingerprint": record.PublicKeyFingerprint,
-		},
-		Signature: requestSignature,
-	})
-
+	// Status transition will log the audit event, so we don't log it here to avoid duplicates
 	if err := s.moveToSigningKeyRegistered(ctx, buildID, actorID, actorRoles, ip, requestSignature, requestSignatureHash); err != nil {
 		return nil, err
 	}
@@ -118,6 +119,8 @@ func (s *KeyService) RegisterAttestationKey(
 	buildID, actorID uuid.UUID,
 	mode model.BuildKeyMode,
 	publicKey *string,
+	passphrase *string,
+	encryptionCertPEM *string,
 	ip string,
 	actorRoles []string,
 	requestSignature *string,
@@ -127,9 +130,19 @@ func (s *KeyService) RegisterAttestationKey(
 		return nil, nil, err
 	}
 
-	providerRecord, exportToken, err := s.keyProvider.CreateAttestationKey(ctx, buildID, actorID, mode, publicKey)
+	providerRecord, exportToken, err := s.keyProvider.CreateAttestationKey(ctx, buildID, actorID, mode, publicKey, passphrase)
 	if err != nil {
 		return nil, nil, mapKeyProviderError(err)
+	}
+
+	// Encrypt the attestation public key using the provided encryption certificate
+	encryptedPublicKey := providerRecord.PublicKey
+	if encryptionCertPEM != nil && strings.TrimSpace(*encryptionCertPEM) != "" {
+		encrypted, err := s.encryptAttestationPublicKey(ctx, providerRecord.PublicKey, *encryptionCertPEM)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to encrypt attestation public key: %w", err)
+		}
+		encryptedPublicKey = encrypted
 	}
 
 	record, err := s.store.createBuildKey(ctx, buildKeyRow{
@@ -139,7 +152,7 @@ func (s *KeyService) RegisterAttestationKey(
 		Mode:                 mode,
 		Status:               model.BuildKeyStatusActive,
 		VaultRef:             providerRecord.VaultRef,
-		PublicKey:            providerRecord.PublicKey,
+		PublicKey:            encryptedPublicKey,
 		PublicKeyFingerprint: providerRecord.PublicKeyFingerprint,
 		CreatedBy:            actorID,
 	})
@@ -147,20 +160,7 @@ func (s *KeyService) RegisterAttestationKey(
 		return nil, nil, err
 	}
 
-	_, _ = s.auditService.LogEvent(ctx, LogEventInput{
-		BuildID:     buildID,
-		EventType:   model.EventAttestationKeyCreated,
-		ActorUserID: actorID,
-		IpAddress:   ip,
-		EventData: map[string]string{
-			"key_id":      record.ID.String(),
-			"key_type":    string(model.BuildKeyTypeAttestation),
-			"mode":        string(mode),
-			"fingerprint": record.PublicKeyFingerprint,
-		},
-		Signature: requestSignature,
-	})
-
+	// Status transition will log the audit event, so we don't log it here to avoid duplicates
 	if err := s.moveToAttestationKeyRegistered(ctx, buildID, actorID, actorRoles, ip, requestSignature, requestSignatureHash); err != nil {
 		return nil, nil, err
 	}

@@ -360,7 +360,7 @@ func (s *BuildService) TransitionStatus(
 }
 
 // FinalizeBuild completes the contract build definitively.
-func (s *BuildService) FinalizeBuild(ctx context.Context, buildID uuid.UUID, contractHash string, contractYaml string, actorID uuid.UUID, ip string, signature string, pubKey string) error {
+func (s *BuildService) FinalizeBuild(ctx context.Context, buildID uuid.UUID, contractHash string, contractYaml string, actorID uuid.UUID, ip string, requestSignature *string, requestSignatureHash *string) error {
 	row, err := s.queries.GetBuildByID(ctx, buildID)
 	if err != nil {
 		return fmt.Errorf("build not found: %w", err)
@@ -390,16 +390,22 @@ func (s *BuildService) FinalizeBuild(ctx context.Context, buildID uuid.UUID, con
 	}
 
 	// Audit Log the finalization
+	// The request signature signs the finalization request (including passphrase hash)
+	// The contract_hash in event data allows verification to use it as the signed content
+	eventData := map[string]string{
+		"contract_hash": contractHash,
+	}
+	if requestSignatureHash != nil && *requestSignatureHash != "" {
+		eventData["request_signature_hash"] = *requestSignatureHash
+	}
+
 	_, err = s.auditService.LogEvent(ctx, LogEventInput{
-		BuildID:        buildID,
-		EventType:      model.EventBuildFinalized,
-		ActorUserID:    actorID,
-		ActorPublicKey: &pubKey,
-		IpAddress:      ip,
-		Signature:      &signature,
-		EventData: map[string]string{
-			"contract_hash": contractHash,
-		},
+		BuildID:     buildID,
+		EventType:   model.EventBuildFinalized,
+		ActorUserID: actorID,
+		IpAddress:   ip,
+		Signature:   requestSignature,
+		EventData:   eventData,
 	})
 	if err != nil {
 		return fmt.Errorf("build finalized but audit parsing failed: %w", err)

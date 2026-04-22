@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -118,4 +119,26 @@ func ParseCertificatePEM(certPEM string) (*x509.Certificate, error) {
 	}
 
 	return cert, nil
+}
+
+// EncryptPrivateKeyPEM encrypts a PEM-encoded private key with a passphrase using x509.EncryptPEMBlock.
+func EncryptPrivateKeyPEM(privateKeyPEM string, passphrase string) (string, error) {
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block")
+	}
+
+	// Encrypt the private key using 3DES (compatible with x509.DecryptPEMBlock)
+	encryptedBlock, err := x509.EncryptPEMBlock(
+		rand.Reader,
+		block.Type,
+		block.Bytes,
+		[]byte(passphrase),
+		x509.PEMCipher3DES,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt PEM block: %w", err)
+	}
+
+	return string(pem.EncodeToMemory(encryptedBlock)), nil
 }

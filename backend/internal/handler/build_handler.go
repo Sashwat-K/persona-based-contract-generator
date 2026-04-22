@@ -239,7 +239,16 @@ func (h *BuildHandler) FinalizeBuild(w http.ResponseWriter, r *http.Request) {
 	actorID, _ := middleware.GetUserID(r.Context())
 	ip := requestIP(r)
 
-	err = h.buildService.FinalizeBuild(r.Context(), buildID, req.ContractHash, req.ContractYaml, actorID, ip, req.Signature, req.PublicKey)
+	// For v1 API, convert string signature and public key to pointers
+	var sigPtr, pubKeyPtr *string
+	if req.Signature != "" {
+		sigPtr = &req.Signature
+	}
+	if req.PublicKey != "" {
+		pubKeyPtr = &req.PublicKey
+	}
+	
+	err = h.buildService.FinalizeBuild(r.Context(), buildID, req.ContractHash, req.ContractYaml, actorID, ip, sigPtr, pubKeyPtr)
 	if err != nil {
 		logSystemEvent(
 			h.systemLogService,

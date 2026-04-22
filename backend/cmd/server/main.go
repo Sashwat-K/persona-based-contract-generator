@@ -83,7 +83,7 @@ func main() {
 	contractEngine := contractgo.New()
 
 	// Initialize v2 services
-	keyService := service.NewKeyService(queries, pool, buildService, assignmentService, auditService, keyProvider)
+	keyService := service.NewKeyService(queries, pool, buildService, assignmentService, auditService, keyProvider, contractEngine)
 	contractService := service.NewContractService(queries, pool, sectionService, buildService, assignmentService, keyService, keyProvider, contractEngine)
 	attestationService := service.NewAttestationService(queries, pool, assignmentService, auditService, keyProvider, contractEngine)
 
@@ -196,6 +196,11 @@ func buildRouter(
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
+	
+	// About/Version information (unauthenticated)
+	aboutHandler := handler.NewAboutHandler()
+	r.Get("/about", aboutHandler.GetAbout)
+	
 	r.Get("/openapi.json", swaggerHandler.OpenAPISpec)
 	r.Get("/swagger", swaggerHandler.UI)
 	r.Get("/swagger/", swaggerHandler.UI)
@@ -410,6 +415,7 @@ func initKeyProvider(cfg *config.Config) (keymgmt.KeyProvider, error) {
 		SecretID:       cfg.VaultSecretID,
 		Token:          cfg.VaultToken,
 		TransitMount:   cfg.VaultTransitMount,
+		KVMount:        cfg.VaultKVMount,
 		RequestTimeout: cfg.VaultRequestTimeout,
 	})
 	if err != nil {

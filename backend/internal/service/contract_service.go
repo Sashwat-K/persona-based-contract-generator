@@ -72,9 +72,7 @@ type FinalizeContractV2Input struct {
 	ActorIP              string
 	RequestSignature     *string
 	RequestSignatureHash *string
-	SigningKeyID         uuid.UUID
-	AttestationKeyID     *uuid.UUID
-	AttestationCertPEM   string
+	SigningKeyPassphrase string
 }
 
 type FinalizeContractV2Result struct {
@@ -184,21 +182,23 @@ func (s *ContractService) FinalizeContract(ctx context.Context, in FinalizeContr
 	if err := s.assignmentService.ValidateAssignmentForSubmission(ctx, in.BuildID, in.ActorID, model.RoleAuditor.String()); err != nil {
 		return nil, err
 	}
-	if in.SigningKeyID == uuid.Nil {
-		return nil, model.ErrInvalidRequest("signing_key_id is required")
+
+	// Automatically find the latest signing key for this build
+	signingKey, err := s.store.getLatestActiveBuildKeyByType(ctx, in.BuildID, model.BuildKeyTypeSigning)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no rows") {
+			return nil, model.ErrInvalidRequest("signing key not found for this build")
+		}
+		return nil, fmt.Errorf("failed to load signing key: %w", err)
 	}
 
-	signingKey, err := s.keyService.GetBuildKey(ctx, in.SigningKeyID)
+	// Automatically find the latest attestation key for this build
+	attestationKey, err := s.store.getLatestActiveBuildKeyByType(ctx, in.BuildID, model.BuildKeyTypeAttestation)
 	if err != nil {
-		return nil, model.ErrInvalidRequest("invalid signing key")
-	}
-	if signingKey.BuildID != in.BuildID || signingKey.KeyType != model.BuildKeyTypeSigning {
-		return nil, model.ErrInvalidRequest("signing key does not belong to this build")
-	}
-
-	attestationKey, err := s.resolveAttestationKey(ctx, in.BuildID, in.AttestationKeyID)
-	if err != nil {
-		return nil, err
+		if strings.Contains(strings.ToLower(err.Error()), "no rows") {
+			return nil, model.ErrInvalidRequest("attestation key not found for this build")
+		}
+		return nil, fmt.Errorf("failed to load attestation key: %w", err)
 	}
 
 	sections, err := s.queries.GetBuildSectionsByBuildID(ctx, in.BuildID)
@@ -218,19 +218,11 @@ func (s *ContractService) FinalizeContract(ctx context.Context, in FinalizeContr
 		return nil, model.ErrInvalidRequest("workload and environment sections are required before finalization")
 	}
 
+	// Attestation public key is already encrypted during registration
 	attestationPayload := strings.TrimSpace(attestationKey.PublicKey)
 	if strings.TrimSpace(attestationPayload) == "" {
 		return nil, model.ErrInvalidRequest("attestation public key is empty")
 	}
-	if strings.TrimSpace(in.AttestationCertPEM) == "" {
-		return nil, model.ErrInvalidRequest("attestation_cert_pem is required to encrypt attestation public key")
-	}
-
-	encryptedAttestation, err := s.engine.EncryptString(ctx, attestationPayload, in.AttestationCertPEM)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt attestation public key: %w", err)
-	}
-	attestationPayload = encryptedAttestation
 
 	privateKeyPEM, err := s.keyProvider.GetPrivateKey(ctx, signingKey.ID)
 	if err != nil {
@@ -251,7 +243,7 @@ func (s *ContractService) FinalizeContract(ctx context.Context, in FinalizeContr
 		return nil, fmt.Errorf("failed to assemble contract: %w", err)
 	}
 
-	contractYAML, _, contractHash, err := s.engine.HpcrContractSign(ctx, contractInputYAML, privateKey, "")
+	contractYAML, _, contractHash, err := s.engine.HpcrContractSign(ctx, contractInputYAML, privateKey, in.SigningKeyPassphrase)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign contract: %w", err)
 	}
@@ -260,13 +252,9 @@ func (s *ContractService) FinalizeContract(ctx context.Context, in FinalizeContr
 		contractHash = appcrypto.SHA256HexString(contractYAML)
 	}
 
-	contractSignature, err := s.keyProvider.SignDigest(ctx, signingKey.ID, contractHash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign contract hash for audit trail: %w", err)
-	}
-
 	// In v2 workflow, ATTESTATION_KEY_REGISTERED -> FINALIZED directly (no CONTRACT_ASSEMBLED step).
 	// FinalizeBuild handles the transition and state validation.
+	// Use the request signature from the finalization request for the audit trail.
 
 	if err := s.buildService.FinalizeBuild(
 		ctx,
@@ -275,8 +263,8 @@ func (s *ContractService) FinalizeContract(ctx context.Context, in FinalizeContr
 		contractYAML,
 		in.ActorID,
 		in.ActorIP,
-		contractSignature,
-		signingKey.PublicKey,
+		in.RequestSignature,
+		in.RequestSignatureHash,
 	); err != nil {
 		return nil, err
 	}

@@ -21,12 +21,18 @@ func signatureHashForEvent(eventType string, eventData []byte, defaultHash strin
 		return defaultHash
 	}
 
+	// For BUILD_FINALIZED and CONTRACT_DOWNLOADED, prefer request_signature_hash if present
+	// (v2 workflow), otherwise fall back to contract_hash (v1 workflow)
 	if eventType == "BUILD_FINALIZED" || eventType == "CONTRACT_DOWNLOADED" {
+		if v, ok := payload["request_signature_hash"].(string); ok && v != "" {
+			return v
+		}
 		if v, ok := payload["contract_hash"].(string); ok && v != "" {
 			return v
 		}
 	}
 
+	// For other events, use request_signature_hash
 	if v, ok := payload["request_signature_hash"].(string); ok && v != "" {
 		return v
 	}
@@ -301,7 +307,9 @@ func (s *VerificationService) VerifyContractIntegrity(ctx context.Context, build
 
 	// Verify signature if present
 	if finalizeEvent.Signature != nil && finalizeEvent.ActorPublicKey != nil {
-		err := crypto.VerifySignature(*finalizeEvent.ActorPublicKey, *build.ContractHash, *finalizeEvent.Signature)
+		// Use the same hash resolution logic as audit trail verification
+		hashToVerify := signatureHashForEvent(finalizeEvent.EventType, finalizeEvent.EventData, *build.ContractHash)
+		err := crypto.VerifySignature(*finalizeEvent.ActorPublicKey, hashToVerify, *finalizeEvent.Signature)
 		if err != nil {
 			result.IsValid = false
 			result.SignatureValid = false

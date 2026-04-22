@@ -26,9 +26,10 @@ func NewKeyHandler(keyService *service.KeyService, systemLogService *service.Sys
 }
 
 type registerKeyRequest struct {
-	Mode       string  `json:"mode"`
-	PublicKey  *string `json:"public_key,omitempty"`
-	Passphrase *string `json:"passphrase,omitempty"`
+	Mode              string  `json:"mode"`
+	PublicKey         *string `json:"public_key,omitempty"`
+	Passphrase        *string `json:"passphrase,omitempty"`
+	EncryptionCertPEM *string `json:"encryption_cert_pem,omitempty"`
 }
 
 // RegisterSigningKey handles POST /builds/{id}/keys/signing
@@ -73,6 +74,7 @@ func (h *KeyHandler) RegisterSigningKey(w http.ResponseWriter, r *http.Request) 
 		actorID,
 		mode,
 		req.PublicKey,
+		req.Passphrase,
 		ip,
 		actorRoles,
 		sigPtr,
@@ -118,6 +120,10 @@ func (h *KeyHandler) RegisterAttestationKey(w http.ResponseWriter, r *http.Reque
 		writeError(w, model.ErrInvalidRequest("Attestation key passphrase is required."))
 		return
 	}
+	if mode == model.BuildKeyModeGenerate && (req.EncryptionCertPEM == nil || strings.TrimSpace(*req.EncryptionCertPEM) == "") {
+		writeError(w, model.ErrInvalidRequest("Encryption certificate is required to encrypt attestation public key."))
+		return
+	}
 
 	actorID, _ := middleware.GetUserID(r.Context())
 	actorRoles := middleware.GetUserRoles(r.Context())
@@ -139,6 +145,8 @@ func (h *KeyHandler) RegisterAttestationKey(w http.ResponseWriter, r *http.Reque
 		actorID,
 		mode,
 		req.PublicKey,
+		req.Passphrase,
+		req.EncryptionCertPEM,
 		ip,
 		actorRoles,
 		sigPtr,

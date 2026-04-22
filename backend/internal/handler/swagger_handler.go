@@ -188,6 +188,42 @@ const openAPISpecJSON = `{
         }
       }
     },
+    "/about": {
+      "get": {
+        "summary": "Get version and system information",
+        "description": "Returns application version, backend version, contract-go version, OpenSSL version, and platform information",
+        "responses": {
+          "200": {
+            "description": "Version information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "app": {
+                      "type": "object",
+                      "properties": {
+                        "version": { "type": "string", "example": "1.0.0" }
+                      }
+                    },
+                    "backend": {
+                      "type": "object",
+                      "properties": {
+                        "version": { "type": "string", "example": "1.0.0" },
+                        "contract_go_version": { "type": "string", "example": "v2.19.0" },
+                        "openssl_version": { "type": "string", "example": "3.0.2" },
+                        "go_version": { "type": "string", "example": "go1.26.1" },
+                        "platform": { "type": "string", "example": "linux/amd64" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "summary": "Login",

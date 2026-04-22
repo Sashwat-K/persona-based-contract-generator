@@ -30,6 +30,7 @@ type Config struct {
 	SecretID       string
 	Token          string
 	TransitMount   string
+	KVMount        string
 	RequestTimeout time.Duration
 }
 
@@ -53,6 +54,9 @@ func New(cfg Config) (*Provider, error) {
 	if strings.TrimSpace(cfg.TransitMount) == "" {
 		cfg.TransitMount = "transit"
 	}
+	if strings.TrimSpace(cfg.KVMount) == "" {
+		cfg.KVMount = "secret"
+	}
 	if strings.TrimSpace(cfg.AuthMethod) == "" {
 		cfg.AuthMethod = "approle"
 	}
@@ -70,15 +74,18 @@ func New(cfg Config) (*Provider, error) {
 	if err := p.ensureTransitMount(context.Background()); err != nil {
 		return nil, err
 	}
+	if err := p.ensureKVMount(context.Background()); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
-func (p *Provider) CreateSigningKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string) (keymgmt.KeyRecord, error) {
-	return p.createKey(ctx, buildID, actorID, model.BuildKeyTypeSigning, mode, publicKeyPEM)
+func (p *Provider) CreateSigningKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (keymgmt.KeyRecord, error) {
+	return p.createKey(ctx, buildID, actorID, model.BuildKeyTypeSigning, mode, publicKeyPEM, passphrase)
 }
 
-func (p *Provider) CreateAttestationKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string) (keymgmt.KeyRecord, *keymgmt.OneTimePrivateExport, error) {
-	record, err := p.createKey(ctx, buildID, actorID, model.BuildKeyTypeAttestation, mode, publicKeyPEM)
+func (p *Provider) CreateAttestationKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (keymgmt.KeyRecord, *keymgmt.OneTimePrivateExport, error) {
+	record, err := p.createKey(ctx, buildID, actorID, model.BuildKeyTypeAttestation, mode, publicKeyPEM, passphrase)
 	if err != nil {
 		return keymgmt.KeyRecord{}, nil, err
 	}
@@ -98,19 +105,28 @@ func (p *Provider) GetPublicKey(ctx context.Context, keyID uuid.UUID) (string, e
 }
 
 func (p *Provider) GetPrivateKey(ctx context.Context, keyID uuid.UUID) ([]byte, error) {
-	signingName := p.vaultKeyName("", model.BuildKeyTypeSigning, keyID)
-	privateKey, err := p.readTransitPrivateKey(ctx, signingName)
-	if err == nil {
-		return []byte(privateKey), nil
+	// Read encrypted private key from KV
+	kvPath := p.kvKeyPath(keyID)
+	data, err := p.readKVSecret(ctx, kvPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read private key from KV at path %s for key_id %s: %w", kvPath, keyID, err)
 	}
 
-	attName := p.vaultKeyName("", model.BuildKeyTypeAttestation, keyID)
-	privateKey, attErr := p.readTransitPrivateKey(ctx, attName)
-	if attErr == nil {
-		return []byte(privateKey), nil
+	privateKeyPEM, ok := data["private_key"].(string)
+	if !ok || privateKeyPEM == "" {
+		return nil, fmt.Errorf("private key field not found or empty in KV at path %s for key_id %s (data keys: %v)", kvPath, keyID, getMapKeys(data))
 	}
 
-	return nil, fmt.Errorf("failed to export private key for key_id %s (signing: %v, attestation: %v)", keyID, err, attErr)
+	// Return the encrypted PEM (caller will decrypt with passphrase)
+	return []byte(privateKeyPEM), nil
+}
+
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func (p *Provider) SignDigest(ctx context.Context, keyID uuid.UUID, digestHex string) (string, error) {
@@ -172,7 +188,49 @@ func (p *Provider) ensureTransitMount(ctx context.Context) error {
 	return nil
 }
 
-func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, keyType model.BuildKeyType, mode model.BuildKeyMode, publicKeyPEM *string) (keymgmt.KeyRecord, error) {
+func (p *Provider) ensureKVMount(ctx context.Context) error {
+	mount := strings.Trim(strings.TrimSpace(p.cfg.KVMount), "/")
+	if mount == "" {
+		mount = "secret"
+	}
+
+	body, err := p.request(ctx, http.MethodGet, "/v1/sys/mounts", nil, true)
+	if err != nil {
+		return fmt.Errorf("failed to verify vault KV mount %q: %w", mount, err)
+	}
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		return fmt.Errorf("failed to parse vault mounts response: %w", err)
+	}
+
+	mounts := top
+	if dataRaw, ok := top["data"]; ok {
+		var data map[string]json.RawMessage
+		if err := json.Unmarshal(dataRaw, &data); err != nil {
+			return fmt.Errorf("failed to parse vault mounts response data: %w", err)
+		}
+		mounts = data
+	}
+
+	entryRaw, ok := mounts[mount+"/"]
+	if !ok {
+		return fmt.Errorf("vault KV mount %q is not enabled", mount)
+	}
+
+	var entry struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(entryRaw, &entry); err != nil {
+		return fmt.Errorf("failed to parse vault mount entry for %q: %w", mount, err)
+	}
+	if entry.Type != "kv" && entry.Type != "kv-v2" {
+		return fmt.Errorf("vault mount %q has type %q (expected \"kv\" or \"kv-v2\")", mount, entry.Type)
+	}
+	return nil
+}
+
+func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, keyType model.BuildKeyType, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (keymgmt.KeyRecord, error) {
 	record := keymgmt.KeyRecord{
 		ID:        uuid.New(),
 		BuildID:   buildID,
@@ -184,18 +242,52 @@ func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, ke
 
 	switch mode {
 	case model.BuildKeyModeGenerate:
-		name := p.vaultKeyName(buildID.String(), keyType, record.ID)
-		// HPCR signing/decryption functions require runtime private-key access.
-		// Keys remain Vault-governed, but must be exportable to backend memory at use time.
-		if err := p.createTransitKey(ctx, name, true); err != nil {
+		// Step 1: Create Transit key for generation and signing
+		transitName := p.vaultKeyName(buildID.String(), keyType, record.ID)
+		if err := p.createTransitKey(ctx, transitName, true); err != nil {
 			return keymgmt.KeyRecord{}, err
 		}
-		publicKey, err := p.readTransitPublicKey(ctx, name)
+
+		// Step 2: Read public key from Transit
+		publicKey, err := p.readTransitPublicKey(ctx, transitName)
 		if err != nil {
 			return keymgmt.KeyRecord{}, err
 		}
 		record.PublicKey = publicKey
-		record.VaultRef = &name
+
+		// Step 3: Export private key from Transit
+		privateKeyPEM, err := p.readTransitPrivateKey(ctx, transitName)
+		if err != nil {
+			return keymgmt.KeyRecord{}, fmt.Errorf("failed to export private key: %w", err)
+		}
+
+		// Step 4: Encrypt private key with passphrase if provided
+		if passphrase != nil && strings.TrimSpace(*passphrase) != "" {
+			encryptedPEM, err := appcrypto.EncryptPrivateKeyPEM(privateKeyPEM, *passphrase)
+			if err != nil {
+				return keymgmt.KeyRecord{}, fmt.Errorf("failed to encrypt private key: %w", err)
+			}
+			privateKeyPEM = encryptedPEM
+		}
+
+		// Step 5: Store encrypted private key in KV
+		kvPath := p.kvKeyPath(record.ID)
+		if err := p.writeKVSecret(ctx, kvPath, map[string]interface{}{
+			"private_key": privateKeyPEM,
+			"key_type":    string(keyType),
+			"build_id":    buildID.String(),
+		}); err != nil {
+			return keymgmt.KeyRecord{}, fmt.Errorf("failed to store private key in KV: %w", err)
+		}
+
+		// Step 6: Keep Transit key for signing operations (SignDigest)
+		// The Transit key remains in Vault for audit trail signatures
+		// The encrypted private key in KV is used for contract signing
+
+		// Store both Transit name and KV path as vault reference
+		record.VaultRef = &transitName
+
+
 	case model.BuildKeyModeUploadPublic:
 		if publicKeyPEM == nil || *publicKeyPEM == "" {
 			return keymgmt.KeyRecord{}, fmt.Errorf("public key is required for upload_public mode")
@@ -450,4 +542,65 @@ func (p *Provider) vaultKeyName(buildID string, keyType model.BuildKeyType, keyI
 func DigestHexForVault(hashHex string) string {
 	sum := sha256.Sum256([]byte(hashHex))
 	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+func (p *Provider) kvKeyPath(keyID uuid.UUID) string {
+	return fmt.Sprintf("build-keys/%s", keyID.String())
+}
+
+func (p *Provider) writeKVSecret(ctx context.Context, path string, data map[string]interface{}) error {
+	mount := strings.Trim(p.cfg.KVMount, "/")
+	// KV v2 uses /data/ in the path
+	apiPath := fmt.Sprintf("/v1/%s/data/%s", mount, path)
+	
+	payload := map[string]interface{}{
+		"data": data,
+	}
+	
+	_, err := p.request(ctx, http.MethodPost, apiPath, payload, true)
+	if err != nil {
+		return fmt.Errorf("failed to write KV secret at %s: %w", path, err)
+	}
+	return nil
+}
+
+func (p *Provider) readKVSecret(ctx context.Context, path string) (map[string]interface{}, error) {
+	mount := strings.Trim(p.cfg.KVMount, "/")
+	// KV v2 uses /data/ in the path
+	apiPath := fmt.Sprintf("/v1/%s/data/%s", mount, path)
+	
+	body, err := p.request(ctx, http.MethodGet, apiPath, nil, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read KV secret at %s: %w", path, err)
+	}
+	
+	var resp struct {
+		Data struct {
+			Data map[string]interface{} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to decode KV response: %w", err)
+	}
+	
+	return resp.Data.Data, nil
+}
+
+func (p *Provider) deleteTransitKey(ctx context.Context, keyName string) error {
+	// First, update key config to allow deletion
+	configPath := fmt.Sprintf("/v1/%s/keys/%s/config", strings.Trim(p.cfg.TransitMount, "/"), url.PathEscape(keyName))
+	configPayload := map[string]interface{}{
+		"deletion_allowed": true,
+	}
+	if _, err := p.request(ctx, http.MethodPost, configPath, configPayload, true); err != nil {
+		return fmt.Errorf("failed to enable deletion for transit key %s: %w", keyName, err)
+	}
+	
+	// Then delete the key
+	deletePath := fmt.Sprintf("/v1/%s/keys/%s", strings.Trim(p.cfg.TransitMount, "/"), url.PathEscape(keyName))
+	if _, err := p.request(ctx, http.MethodDelete, deletePath, nil, true); err != nil {
+		return fmt.Errorf("failed to delete transit key %s: %w", keyName, err)
+	}
+	
+	return nil
 }
