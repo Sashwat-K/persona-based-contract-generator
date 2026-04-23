@@ -84,6 +84,22 @@ const Login = ({ onLogin }) => {
 
   const normalizeServerUrl = (value) => value.trim().replace(/\/+$/, '');
 
+  const extractServerVersion = (payload) => {
+    const candidates = [
+      payload?.version,
+      payload?.backend?.version,
+      payload?.app?.version
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return null;
+  };
+
   const validateServerUrlInput = (value) => {
     const normalizedUrl = normalizeServerUrl(value);
     if (!normalizedUrl) {
@@ -107,6 +123,7 @@ const Login = ({ onLogin }) => {
 
   const runServerHealthCheck = async (url, { withLogs = false } = {}) => {
     const healthUrl = `${url}/health`;
+    const aboutUrl = `${url}/about`;
     const startedAt = Date.now();
 
     if (withLogs) {
@@ -144,11 +161,50 @@ const Login = ({ onLogin }) => {
         payload = {};
       }
 
-      if (withLogs) {
-        appendConnectionLog(`Connection test passed. Reported version: ${payload.version || 'Unknown'}`);
+      let resolvedVersion = extractServerVersion(payload);
+
+      if (!resolvedVersion) {
+        if (withLogs) {
+          appendConnectionLog(`No version in /health payload. Trying ${aboutUrl}`);
+        }
+
+        try {
+          const aboutResponse = await fetch(aboutUrl, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            mode: 'cors',
+            credentials: 'omit',
+            signal: AbortSignal.timeout(5000)
+          });
+
+          if (aboutResponse.ok) {
+            const aboutPayload = await aboutResponse.json().catch(() => ({}));
+            resolvedVersion = extractServerVersion(aboutPayload);
+            if (withLogs) {
+              appendConnectionLog(`Version lookup from /about: ${resolvedVersion || 'Unavailable'}`);
+            }
+          } else if (withLogs) {
+            appendConnectionLog(`/about returned HTTP ${aboutResponse.status}`);
+          }
+        } catch (aboutErr) {
+          if (withLogs) {
+            appendConnectionLog(`Version lookup from /about failed: ${aboutErr.message}`);
+          }
+        }
       }
 
-      return { ok: true, payload };
+      if (withLogs) {
+        appendConnectionLog(`Connection test passed. Reported version: ${resolvedVersion || 'Unavailable'}`);
+      }
+
+      return {
+        ok: true,
+        payload,
+        version: resolvedVersion
+      };
     } catch (err) {
       if (withLogs) {
         appendConnectionLog(`Connection test failed: ${err.message}`);
@@ -175,7 +231,7 @@ const Login = ({ onLogin }) => {
       const result = await runServerHealthCheck(validation.url);
       if (result.ok) {
         setServerStatus('online');
-        setServerVersion(result.payload?.version || 'Unknown');
+        setServerVersion(result.version || null);
       } else {
         setServerStatus('offline');
         setServerVersion(null);
@@ -325,7 +381,7 @@ const Login = ({ onLogin }) => {
     if (result.ok) {
       setLastTestPassed(true);
       setServerStatus('online');
-      setServerVersion(result.payload?.version || 'Unknown');
+      setServerVersion(result.version || null);
       appendConnectionLog('Test finished successfully.');
     } else {
       setLastTestPassed(false);

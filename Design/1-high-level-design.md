@@ -306,7 +306,7 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 |---|---|
 | **Who** | Data Owner or Env Operator (assigned) |
 | **Provides** | Encrypted attestation records file + signature file |
-| **Actions** | Upload evidence via `POST /builds/{id}/attestation/evidence` (multipart). Backend stores evidence blobs and updates `attestation_state` to `UPLOADED`. |
+| **Actions** | Upload evidence via `POST /builds/{id}/attestation/evidence` using signed `application/json` (desktop-preferred) or `multipart/form-data`. Desktop unlocks this action after download acknowledgment (`CONTRACT_DOWNLOADED`). Backend stores evidence blobs and updates `attestation_state` to `UPLOADED`. |
 
 ---
 
@@ -316,7 +316,7 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 |---|---|
 | **Who** | Auditor (assigned) |
 | **Provides** | Verification verdict |
-| **Actions** | Trigger verification via `POST /builds/{id}/attestation/evidence/{evidence_id}/verify`. Backend retrieves attestation private key material from Vault at runtime, decrypts records via `HpcrGetAttestationRecords(...)`, then verifies signature via `HpcrVerifySignatureAttestationRecords(...)`. Returns verdict (`VERIFIED` or `REJECTED`). |
+| **Actions** | Trigger verification via `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` (optional `attestation_key_passphrase` when attestation private key material is encrypted). Backend retrieves attestation private key material from Vault at runtime, decrypts records via `HpcrGetAttestationRecords(...)`, then verifies signature via `HpcrVerifySignatureAttestationRecords(...)`. Returns verdict (`VERIFIED` or `REJECTED`), and rejected outcomes include the contract-go verification error reason. |
 
 ---
 
@@ -393,6 +393,7 @@ stateDiagram-v2
 - **FINALIZED**, **CONTRACT_DOWNLOADED**, and **CANCELLED** are immutable end states for workflow mutations.
 - The only allowed post-finalization state change is the download acknowledgment path (`FINALIZED -> CONTRACT_DOWNLOADED`).
 - Attestation evidence upload and verification are post-finalization operations tracked by `attestation_state`.
+- Desktop unlocks attestation evidence upload only after the build reaches `CONTRACT_DOWNLOADED`.
 - In the v2 flow, contract assembly is performed by the backend using the `contract-go` engine.
 - Signatures are verified against registered public keys, never request-supplied keys.
 - In v2, backend encrypts environment payload server-side; plaintext is processed in-request and only encrypted artifacts are persisted.
@@ -810,6 +811,9 @@ The `GET /builds/{id}/verify` endpoint:
 | `POST` | `/builds/{id}/attestation/evidence` |
 | `POST` | `/builds/{id}/attestation/evidence/{evidence_id}/verify` |
 | `GET` | `/builds/{id}/attestation/status` |
+
+- Upload endpoint accepts either signed JSON payloads or `multipart/form-data`.
+- Verify endpoint accepts optional `attestation_key_passphrase` for encrypted attestation private keys.
 
 ### Audit, Verification, and Export
 

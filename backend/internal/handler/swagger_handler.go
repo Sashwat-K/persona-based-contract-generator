@@ -650,6 +650,22 @@ const openAPISpecJSON = `{
             "schema": { "type": "string", "format": "uuid" }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "attestation_key_passphrase": {
+                    "type": "string",
+                    "description": "Passphrase for decrypting an encrypted attestation private key, if applicable."
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Evidence verified",

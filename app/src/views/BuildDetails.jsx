@@ -22,6 +22,7 @@ import ContractExport from '../components/ContractExport';
 import SectionSubmit from '../components/SectionSubmit';
 import FinaliseContract from '../components/FinaliseContract';
 import AuditViewer from '../components/AuditViewer';
+import AttestationEvidenceSection from '../components/AttestationEvidenceSection';
 import { BUILD_PROGRESS_STEPS, BUILD_STATUS_CONFIG, ROLE_NAMES } from '../utils/constants';
 
 const TAB_LABELS = {
@@ -32,15 +33,17 @@ const TAB_LABELS = {
   attestationKey: 'Add attestation key',
   finalise: 'Finalise contract',
   export: 'Export contract',
+  attestationRecords: 'Attestation records',
+  verifyAttestation: 'Verify attestation',
   audit: 'Audit Trail'
 };
 
 const ROLE_BUILD_TAB_KEYS = {
   ADMIN: ['assignments', 'audit'],
-  AUDITOR: ['assignments', 'signingKey', 'attestationKey', 'finalise', 'audit'],
+  AUDITOR: ['assignments', 'signingKey', 'attestationKey', 'finalise', 'verifyAttestation', 'audit'],
   SOLUTION_PROVIDER: ['assignments', 'workload', 'audit'],
-  DATA_OWNER: ['assignments', 'environment', 'audit'],
-  ENV_OPERATOR: ['assignments', 'export', 'audit'],
+  DATA_OWNER: ['assignments', 'environment', 'attestationRecords', 'audit'],
+  ENV_OPERATOR: ['assignments', 'export', 'attestationRecords', 'audit'],
   VIEWER: ['assignments', 'audit']
 };
 
@@ -242,6 +245,20 @@ const BuildDetails = ({ build, onBack, userRole, advanceBuildState }) => {
                         buildId={build.id}
                         buildStatus={currentStatus}
                         onStatusUpdate={handleStatusUpdate}
+                      />
+                    )}
+                    {t.key === 'attestationRecords' && (
+                      <AttestationEvidenceSection
+                        buildId={build.id}
+                        buildStatus={currentStatus}
+                        mode="upload"
+                      />
+                    )}
+                    {t.key === 'verifyAttestation' && (
+                      <AttestationEvidenceSection
+                        buildId={build.id}
+                        buildStatus={currentStatus}
+                        mode="verify"
                       />
                     )}
                     {t.key === 'audit' && (

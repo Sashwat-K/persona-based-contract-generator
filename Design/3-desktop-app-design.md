@@ -101,7 +101,7 @@ The desktop app uses a three-layer Electron model:
 The renderer calls a Go backend over HTTP/HTTPS.
 
 - base URL is configurable from login flow
-- health checks target `/health`
+- health checks target `/health` and fallback to `/about` for version metadata when needed
 - mutating API requests are signed with local private keys (except explicit exempt endpoints)
 
 ---
@@ -132,7 +132,9 @@ app/
       FinaliseContract.jsx
       ContractExport.jsx
       AuditViewer.jsx
+      AttestationEvidenceSection.jsx
       PasswordManager.jsx
+      PasswordStrengthMeter.jsx
       PublicKeyManager.jsx
       CredentialRotation.jsx
       ...
@@ -361,9 +363,9 @@ About dialog fetches local client runtime/tool metadata:
 | --- | --- |
 | ADMIN | Assignments, Audit Trail |
 | SOLUTION_PROVIDER | Assignments, Add Workload, Audit Trail |
-| DATA_OWNER | Assignments, Add Environment, Audit Trail |
-| AUDITOR | Assignments, Sign & Add Attestation, Finalise Contract, Audit Trail |
-| ENV_OPERATOR | Assignments, Export Contract, Audit Trail |
+| DATA_OWNER | Assignments, Add Environment, Attestation Records, Audit Trail |
+| AUDITOR | Assignments, Add Signing Key, Add Attestation Key, Finalise Contract, Verify Attestation, Audit Trail |
+| ENV_OPERATOR | Assignments, Export Contract, Attestation Records, Audit Trail |
 | VIEWER | Assignments, Audit Trail |
 
 This ensures each persona only sees relevant stage surfaces while preserving audit visibility.
@@ -397,6 +399,8 @@ Downloaded and cancelled builds are treated as terminal/completed in list and ho
 - assignment dropdowns are role-driven (users appear when they hold the target workflow role)
 - multi-role users can be assigned to multiple workflow personas in the same build
 - readiness filtering for assignees (active + setup complete + key registered)
+- toolbar actions include scoped icon-only filter/menu controls and explicit export button action
+- icon alignment fixes are scoped to Build Management toolbar classes (not global Carbon button overrides)
 
 ## 11.2 Assignments Tab
 
@@ -469,6 +473,27 @@ Session-scoped context is stored in `sessionStorage` and reused by finalization.
 
 Expected signed event stages include workload, environment, auditor registration, contract assembly, finalization, and download acknowledgment.
 
+## 11.8 Attestation Evidence Stages (Post-Finalization)
+
+`AttestationEvidenceSection.jsx` adds role-specific post-finalization flows:
+
+- **Data Owner / Env Operator tab: "Attestation records"**
+  - upload attestation records + signature files
+  - desktop unlock condition: build status is `CONTRACT_DOWNLOADED`
+  - upload is enabled only when `attestation_state` is `PENDING_UPLOAD` or `REJECTED`
+  - backend API accepts both signed JSON and multipart payload formats
+  - backend updates `attestation_state` to `UPLOADED`
+
+- **Auditor tab: "Verify attestation"**
+  - action unlock condition: build status is `FINALIZED` or `CONTRACT_DOWNLOADED`
+  - verification is enabled only when `attestation_state` is `UPLOADED` and latest evidence id exists
+  - verifies latest uploaded evidence id for the build
+  - latest evidence id is derived from latest `ATTESTATION_EVIDENCE_UPLOADED` audit event data
+  - includes **Attestation Key Passphrase** input for encrypted attestation private keys
+  - calls verification endpoint with optional `attestation_key_passphrase`
+  - result badge is green for `VERIFIED` and red for `REJECTED`
+  - displays verdict + contract-go rejection reason (`details.reason`) when verdict is `REJECTED`
+
 ---
 
 ## 12. Home and Dashboard Behavior
@@ -537,7 +562,7 @@ for mutating API calls except explicit exempt endpoints (`/auth/logout`, passwor
 ## 14.3 Domain Services
 
 - `authService`: login/logout/password/public key
-- `buildService`: build lifecycle and orchestration helpers
+- `buildService`: build lifecycle and orchestration helpers, including v2 key registration/finalize and attestation evidence APIs
 - `sectionService`: submission and section validation
 - `assignmentService`: role assignment access checks
 - `verificationService`: verify endpoints + local verification utilities
@@ -616,6 +641,7 @@ App formatters force `hour12: false`, resulting in 24-hour timestamps across maj
 - refresh button uses consistent tertiary visual pattern across pages
 - destructive actions gated by modals
 - role-dependent actions disabled/hidden based on current stage and persona
+- Build Management toolbar icon alignment is implemented via scoped classes: `.build-management-toolbar-filter`, `.build-management-toolbar-menu`, `.build-management-toolbar-export`
 
 ---
 
@@ -628,8 +654,10 @@ App formatters force `hour12: false`, resulting in 24-hour timestamps across maj
 - server config modal
 - test connection action with terminal-like log output
 - save gated on successful test for the same URL
+- server version row only renders when backend version is resolved (no forced "Unknown" fallback row)
 
-Server health checks use `/health` with timeout and inline status/tag feedback.
+Server health checks use `/health` with timeout and inline status/tag feedback, then fallback to `/about` for version lookup when `/health` does not include version fields.
+Version extraction currently checks `version`, `backend.version`, and `app.version`.
 
 ---
 
@@ -714,6 +742,7 @@ These are code-observed opportunities, not implemented guarantees:
 ## 22.1 Current In-App Validation Patterns
 
 - explicit stage/status guards before action enablement
+- password policy validation uses `PasswordStrengthMeter` (5 criteria, color-coded progress, criteria checklist) in account and user-management password flows
 - terminal logs for long-running cryptographic operations
 - modal confirmations for destructive actions
 - backend verification endpoints exposed in UI

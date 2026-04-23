@@ -199,6 +199,13 @@ After acknowledgment:
 - status becomes `CONTRACT_DOWNLOADED`
 - re-download/export/userdata/acknowledge paths are blocked
 
+### 7.3 Post-Finalization Attestation Controls
+
+- Evidence upload and verification are controlled by `attestation_state` and do not mutate the build status machine.
+- Desktop unlocks evidence upload only after `CONTRACT_DOWNLOADED`.
+- Backend upload endpoint accepts both signed JSON and `multipart/form-data` payloads under the same authz/signature controls.
+- Rejected verification responses surface contract-go error details for auditor diagnosis while still recording terminal `REJECTED` state.
+
 ---
 
 ## 8. Cryptographic Security Model
@@ -222,10 +229,10 @@ After acknowledgment:
 ### 8.3 Build Key Security (Vault-Managed)
 
 - Signing keys: RSA-4096. Final contract signatures are produced through `HpcrContractSign(...)` using key material retrieved just-in-time from Vault.
-- Attestation keys: RSA-4096, generated in Vault or uploaded (public key only). Decryption paths that call `HpcrGetAttestationRecords(...)` require backend access to the corresponding private key material.
+- Attestation keys: RSA-4096, generated in Vault or uploaded (public key only). Decryption paths that call `HpcrGetAttestationRecords(...)` require backend access to the corresponding private key material and may require a per-request passphrase when key material is encrypted.
 - Key naming convention: `build-signing-<build_id>`, `build-attestation-<build_id>`.
 - Backend authenticates to Vault via AppRole (production) or dev root token (development).
-- Vault policy follows least privilege for build-scoped key refs only. Client-facing APIs never expose private keys, and backend key material handling is memory-only with post-operation zeroization.
+- Vault policy follows least privilege for build-scoped key refs only. Client-facing APIs never expose private keys, and backend key material handling is memory-only with post-operation zeroization. Attestation key passphrases are request-scoped, never persisted, and must be excluded from logs.
 
 ### 8.4 Data Classification (Stored)
 

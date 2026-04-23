@@ -22,6 +22,20 @@ const ENV_TEMPLATE_FALLBACK = `env:
 signingKey: <signing key or certificate>
 `;
 
+const readBrowserFileAsText = async (file) => {
+  if (!file) return '';
+  if (typeof file.text === 'function') {
+    return await file.text();
+  }
+
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => resolve(typeof event?.target?.result === 'string' ? event.target.result : '');
+    reader.onerror = () => reject(new Error('Failed to read uploaded file.'));
+    reader.readAsText(file);
+  });
+};
+
 class BuildService {
   /**
    * Get all builds
@@ -239,6 +253,72 @@ class BuildService {
       signing_key_passphrase: data.signing_key_passphrase
     });
     useBuildStore.getState().updateBuildStatus(buildId, 'FINALIZED');
+    return response.data;
+  }
+
+  /**
+   * Get attestation verification status for a build.
+   * @param {string} buildId
+   * @returns {Promise<Object>}
+   */
+  async getAttestationStatus(buildId) {
+    const response = await apiClient.get(`/builds/${buildId}/attestation/status`);
+    return response.data;
+  }
+
+  /**
+   * Upload attestation evidence files (records + signature).
+   * Uses JSON payload to keep request-signature verification compatible.
+   * @param {string} buildId
+   * @param {{recordsFile: File, signatureFile: File, metadata?: Object}} payload
+   * @returns {Promise<Object>}
+   */
+  async uploadAttestationEvidence(buildId, payload = {}) {
+    const recordsFile = payload.recordsFile || null;
+    const signatureFile = payload.signatureFile || null;
+
+    if (!recordsFile || !signatureFile) {
+      throw new Error('Both records and signature files are required.');
+    }
+
+    const [recordsContent, signatureContent] = await Promise.all([
+      readBrowserFileAsText(recordsFile),
+      readBrowserFileAsText(signatureFile)
+    ]);
+
+    try {
+      const response = await apiClient.post(`/builds/${buildId}/attestation/evidence`, {
+        records_file_name: recordsFile.name || 'attestation-records.txt',
+        records_content: recordsContent,
+        signature_file_name: signatureFile.name || 'attestation-signature.sig',
+        signature_content: signatureContent,
+        metadata: payload.metadata || {}
+      });
+
+      return response.data;
+    } catch (error) {
+      const message = String(error?.message || '').toLowerCase();
+      if (message.includes("content-type isn't multipart/form-data")) {
+        throw new Error('Backend restart required: attestation upload endpoint is still running old multipart-only code.');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Verify attestation evidence by evidence ID.
+   * @param {string} buildId
+   * @param {string} evidenceId
+   * @param {string} attestationKeyPassphrase
+   * @returns {Promise<Object>}
+   */
+  async verifyAttestationEvidence(buildId, evidenceId, attestationKeyPassphrase = '') {
+    if (!evidenceId) {
+      throw new Error('Evidence ID is required for verification.');
+    }
+    const response = await apiClient.post(`/builds/${buildId}/attestation/evidence/${evidenceId}/verify`, {
+      attestation_key_passphrase: attestationKeyPassphrase || ''
+    });
     return response.data;
   }
 

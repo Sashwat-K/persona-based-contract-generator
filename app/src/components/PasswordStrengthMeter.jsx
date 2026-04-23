@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import { ProgressBar, CheckboxGroup, Checkbox } from '@carbon/react';
 import { Checkmark, Close } from '@carbon/icons-react';
 
 /**
@@ -18,10 +17,19 @@ const PASSWORD_CRITERIA = [
 
 const getStrengthLevel = (strength) => {
   if (strength === 0) return { label: 'No password', color: 'gray' };
+  if (strength <= 20) return { label: 'Very Weak', color: 'red' };
   if (strength <= 40) return { label: 'Weak', color: 'red' };
   if (strength <= 60) return { label: 'Fair', color: 'yellow' };
   if (strength <= 80) return { label: 'Good', color: 'cyan' };
   return { label: 'Strong', color: 'green' };
+};
+
+const STRENGTH_COLOR_TOKENS = {
+  red: 'var(--cds-support-error, #da1e28)',
+  yellow: 'var(--cds-support-warning, #f1c21b)',
+  cyan: 'var(--cds-support-info, #0043ce)',
+  green: 'var(--cds-support-success, #198038)',
+  gray: 'var(--cds-border-subtle-01, #c6c6c6)'
 };
 
 const calculatePasswordStrength = (password) => {
@@ -37,7 +45,7 @@ const calculatePasswordStrength = (password) => {
   });
   
   // Calculate strength as percentage (0-100)
-  const strength = (metCount / PASSWORD_CRITERIA.length) * 100;
+  const strength = Math.round((metCount / PASSWORD_CRITERIA.length) * 100);
   
   return { strength, checks, metCount };
 };
@@ -53,6 +61,7 @@ export const PasswordStrengthMeter = ({
   );
   
   const strengthLevel = useMemo(() => getStrengthLevel(strength), [strength]);
+  const strengthFillColor = STRENGTH_COLOR_TOKENS[strengthLevel.color] || 'var(--cds-interactive, #0f62fe)';
   
   // Don't show anything if no password entered
   if (!password) return null;
@@ -70,13 +79,22 @@ export const PasswordStrengthMeter = ({
         </span>
       </div>
       
-      <ProgressBar
-        value={strength}
-        max={100}
-        label="Password strength"
-        hideLabel
-        className={`password-strength-meter__bar password-strength-meter__bar--${strengthLevel.color}`}
-      />
+      <div
+        className="password-strength-meter__bar"
+        role="progressbar"
+        aria-label="Password strength"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={strength}
+      >
+        <div
+          className={`password-strength-meter__bar-fill password-strength-meter__bar-fill--${strengthLevel.color}`}
+          style={{
+            width: `${strength}%`,
+            backgroundColor: strengthFillColor
+          }}
+        />
+      </div>
       
       {showCriteria && (
         <div className="password-strength-meter__criteria">
@@ -107,7 +125,7 @@ export const PasswordStrengthMeter = ({
 
 export const isPasswordStrong = (password) => {
   const { strength } = calculatePasswordStrength(password);
-  return strength >= 80; // Require "Strong" level
+  return strength > 80; // "Strong" is 81-100
 };
 
 export const isPasswordValid = (password) => {

@@ -840,6 +840,7 @@ All `/builds/{id}/...` endpoints below inherit the same `RequireBuildAccess` mid
 #### PATCH /builds/{id}/status
 
 - Auth: required
+- Role: transition-dependent (service validates allowed actor role for target stage)
 - Signature headers: required
 - Transition role validation is applied in service.
 - Request:
@@ -861,7 +862,7 @@ All `/builds/{id}/...` endpoints below inherit the same `RequireBuildAccess` mid
 #### POST /builds/{id}/attestation
 
 - Auth: required
-- Role: `AUDITOR`
+- Role: assigned `AUDITOR`
 - Signature headers: required
 - Purpose: transition to `AUDITOR_KEYS_REGISTERED` (v1 flow).
 - Idempotent success when already at/after that stage.
@@ -1417,12 +1418,24 @@ All attestation endpoints require `BuildAccess` middleware and are nested under 
 #### POST /builds/{id}/attestation/evidence
 
 - Auth: required
+- Role: assigned `DATA_OWNER` or assigned `ENV_OPERATOR`
 - Signature headers: required
-- Content-Type: `multipart/form-data` (max 10MB total)
-- Form fields:
+- Content-Type:
+  - `application/json` (recommended for signed desktop clients)
+  - `multipart/form-data` (max 10MB total)
+- JSON body fields:
+  - `records_file_name` (optional)
+  - `records_content` or `records_content_base64` (required)
+  - `signature_file_name` (optional)
+  - `signature_content` or `signature_content_base64` (required)
+  - `metadata` (optional object)
+- Multipart form fields:
   - `records_file` (required): attestation records file
   - `signature_file` (required): signature file
   - Additional metadata fields (optional)
+- JSON upload defaults:
+  - `records_file_name` defaults to `attestation-records.txt` when omitted
+  - `signature_file_name` defaults to `attestation-signature.sig` when omitted
 
 - Response `201`:
 
@@ -1433,25 +1446,42 @@ All attestation endpoints require `BuildAccess` middleware and are nested under 
   "uploaded_by": "uuid",
   "records_file_name": "se-checksums.txt",
   "signature_file_name": "se-checksums.txt.sig",
-  "created_at": "..."
+  "created_at": "...",
+  "state": "UPLOADED"
 }
 ```
 
+- Upload guardrails:
+  - Build status must be `FINALIZED` or `CONTRACT_DOWNLOADED`
+  - `attestation_state` must be `PENDING_UPLOAD` or `REJECTED`
 - Updates `attestation_state` to `UPLOADED`.
 
 #### POST /builds/{id}/attestation/evidence/{evidence_id}/verify
 
 - Auth: required
-- Role: `AUDITOR`
+- Role: assigned `AUDITOR`
 - Signature headers: required
-- Request: no body required (verification uses stored evidence + attestation key material resolved from `build_keys` + Vault refs).
+- Request body (optional JSON):
+
+```json
+{
+  "attestation_key_passphrase": "optional-passphrase-for-encrypted-attestation-private-key"
+}
+```
+
+- Verification uses stored evidence + attestation key material resolved from `build_keys` + Vault refs.
+- Verification guardrails:
+  - Build status must be `FINALIZED` or `CONTRACT_DOWNLOADED`
+  - `attestation_state` must be `UPLOADED`
 
 - Response `200`:
 
 ```json
 {
+  "verification_id": "uuid",
   "evidence_id": "uuid",
   "verdict": "VERIFIED",
+  "state": "VERIFIED",
   "details": {
     "records_decrypted": true,
     "records_hash": "sha256-hex",
@@ -1462,7 +1492,8 @@ All attestation endpoints require `BuildAccess` middleware and are nested under 
 }
 ```
 
-- Verification flow: `HpcrGetAttestationRecords(...)` decrypts uploaded attestation records, then `HpcrVerifySignatureAttestationRecords(...)` validates signature/certificate.
+- Verification flow: `HpcrGetAttestationRecords(...)` decrypts uploaded attestation records (using the supplied passphrase when the private key is encrypted), then `HpcrVerifySignatureAttestationRecords(...)` validates signature/certificate.
+- On rejected outcomes, `details.reason` returns the contract-go/key-resolution failure reason used by the verifier.
 - Updates `attestation_state` to `VERIFIED` or `REJECTED`.
 
 #### GET /builds/{id}/attestation/status
@@ -1474,9 +1505,23 @@ All attestation endpoints require `BuildAccess` middleware and are nested under 
 {
   "build_id": "uuid",
   "attestation_state": "VERIFIED",
+  "state": "VERIFIED",
   "evidence_count": 1,
   "latest_verdict": "VERIFIED",
-  "verified_at": "..."
+  "verified_at": "...",
+  "verified_by": "uuid",
+  "last_result": {
+    "verification_id": "uuid",
+    "evidence_id": "uuid",
+    "verdict": "VERIFIED",
+    "details": {
+      "records_decrypted": true,
+      "signature_valid": true,
+      "records_hash": "sha256-hex",
+      "key_fingerprint": "sha256-hex"
+    },
+    "created_at": "..."
+  }
 }
 ```
 

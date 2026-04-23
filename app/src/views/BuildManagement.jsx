@@ -822,6 +822,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated, load
                         <Button
                           kind="ghost"
                           size="sm"
+                          className="build-management-toolbar-filter"
                           renderIcon={Filter}
                           iconDescription="Toggle filters"
                           hasIconOnly={!activeFilterCount}
@@ -843,7 +844,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated, load
                             Clear Filters
                           </Button>
                         )}
-                        <TableToolbarMenu>
+                        <TableToolbarMenu className="build-management-toolbar-menu">
                           <TableToolbarAction onClick={() => handleExportCSV(activeRows, 'active-builds')}>
                             Export as CSV
                           </TableToolbarAction>
@@ -851,6 +852,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated, load
                         <Button
                           kind="primary"
                           size="sm"
+                          className="build-management-toolbar-export"
                           renderIcon={Download}
                           onClick={() => handleExportCSV(activeRows, 'active-builds')}
                           aria-label="Export active builds to CSV"
@@ -1010,6 +1012,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated, load
                       <Button
                         kind="ghost"
                         size="sm"
+                        className="build-management-toolbar-filter"
                         renderIcon={Filter}
                         iconDescription="Toggle filters"
                         hasIconOnly={!activeFilterCount}
@@ -1028,7 +1031,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated, load
                           Clear Filters
                         </Button>
                       )}
-                      <TableToolbarMenu>
+                      <TableToolbarMenu className="build-management-toolbar-menu">
                         <TableToolbarAction onClick={() => handleExportCSV(completedRows, 'completed-builds')}>
                           Export as CSV
                         </TableToolbarAction>
@@ -1036,6 +1039,7 @@ const BuildManagement = ({ builds, onSelectBuild, userRole, onBuildCreated, load
                       <Button
                         kind="primary"
                         size="sm"
+                        className="build-management-toolbar-export"
                         renderIcon={Download}
                         onClick={() => handleExportCSV(completedRows, 'completed-builds')}
                       >

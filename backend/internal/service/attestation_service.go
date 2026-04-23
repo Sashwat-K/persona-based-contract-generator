@@ -71,12 +71,13 @@ type AttestationEvidenceUploadResult struct {
 }
 
 type VerifyAttestationEvidenceInput struct {
-	BuildID              uuid.UUID
-	EvidenceID           uuid.UUID
-	ActorID              uuid.UUID
-	ActorIP              string
-	RequestSignature     *string
-	RequestSignatureHash *string
+	BuildID                  uuid.UUID
+	EvidenceID               uuid.UUID
+	ActorID                  uuid.UUID
+	ActorIP                  string
+	AttestationKeyPassphrase string
+	RequestSignature         *string
+	RequestSignatureHash     *string
 }
 
 type VerifyAttestationEvidenceResult struct {
@@ -222,7 +223,7 @@ func (s *AttestationService) VerifyEvidence(ctx context.Context, in VerifyAttest
 		details["reason"] = "attestation private key is unavailable (requires generated Vault-managed key)"
 	} else {
 		defer zeroizeBytes(privateKeyPEM)
-		recordsText, decryptErr := s.engine.HpcrGetAttestationRecords(ctx, string(evidence.RecordsContent), string(privateKeyPEM), "")
+		recordsText, decryptErr := s.engine.HpcrGetAttestationRecords(ctx, string(evidence.RecordsContent), string(privateKeyPEM), strings.TrimSpace(in.AttestationKeyPassphrase))
 		if decryptErr != nil {
 			verdict = model.AttestationVerdictRejected
 			details["reason"] = decryptErr.Error()

@@ -148,9 +148,9 @@ app/
       systemLogService.js
       tokenService.js
       cryptoService.js
-      keyService.js              # TO ADD: v2 key management API calls
-      contractV2Service.js       # TO ADD: v2 section + finalize API calls
-      attestationService.js      # TO ADD: v2 attestation evidence API calls
+      keyService.js              # optional future split; v2 key APIs are currently implemented in buildService.js
+      contractV2Service.js       # optional future split; v2 section/finalize APIs are currently implemented in buildService.js
+      attestationService.js      # optional future split; attestation APIs are currently implemented in buildService.js
     store/
       authStore.js
       buildStore.js
@@ -428,6 +428,7 @@ Post-finalization attestation lifecycle (tracked by `attestation_state`, not bui
 - `UPLOADED -> VERIFIED` (Auditor verifies)
 - `UPLOADED -> REJECTED` (Auditor rejects)
 - `REJECTED -> UPLOADED` (DO/EO re-uploads)
+- backend upload API allows finalized or downloaded builds; desktop UI unlocks upload at `CONTRACT_DOWNLOADED`
 
 Additional rules:
 
@@ -524,9 +525,12 @@ Signed-stage expectation in verification:
 
 ### 7.10 AttestationService (V2)
 
-- accepts multipart evidence upload (records + signature files)
-- verification: resolves attestation key material via `KeyProvider`, decrypts records via `HpcrGetAttestationRecords(...)`, verifies signature via `HpcrVerifySignatureAttestationRecords(...)`
-- returns verdict (`VERIFIED` or `REJECTED`)
+- accepts evidence upload in either multipart form-data or signed JSON payload
+- upload guardrails: build must be `FINALIZED` or `CONTRACT_DOWNLOADED`; `attestation_state` must be `PENDING_UPLOAD` or `REJECTED`
+- verification guardrails: build must be `FINALIZED` or `CONTRACT_DOWNLOADED`; `attestation_state` must be `UPLOADED`
+- verification: resolves attestation key material via `KeyProvider`, decrypts records via `HpcrGetAttestationRecords(...)` (with optional attestation key passphrase), verifies signature via `HpcrVerifySignatureAttestationRecords(...)`
+- verification details include `records_decrypted`, `signature_valid`, and `records_hash`; rejected results include `details.reason` from engine/key operations
+- returns verdict (`VERIFIED` or `REJECTED`) and state alias
 - emits `ATTESTATION_EVIDENCE_UPLOADED` and `ATTESTATION_VERIFIED` audit events
 
 ### 7.11 RotationService
@@ -624,8 +628,8 @@ All `/builds/{id}/...` routes enforce BuildAccess middleware:
 
 ### V2: Attestation Evidence
 
-- `POST /builds/{id}/attestation/evidence` (Sig, multipart)
-- `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` - AUDITOR, Sig
+- `POST /builds/{id}/attestation/evidence` - assigned DATA_OWNER or assigned ENV_OPERATOR, Sig (multipart or JSON)
+- `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` - assigned AUDITOR, Sig (optional `attestation_key_passphrase` in JSON body)
 - `GET /builds/{id}/attestation/status`
 
 Export/userdata/acknowledge still enforce assigned ENV_OPERATOR at service level.
@@ -658,9 +662,9 @@ Export/userdata/acknowledge still enforce assigned ENV_OPERATOR at service level
 
 - ADMIN: Assignments, Audit
 - SOLUTION_PROVIDER: Assignments, Add Workload, Audit
-- DATA_OWNER: Assignments, Add Environment, Audit
-- AUDITOR: Assignments, Sign & Add Attestation, Finalise Contract, Audit
-- ENV_OPERATOR: Assignments, Export Contract, Audit
+- DATA_OWNER: Assignments, Add Environment, Attestation Records, Audit
+- AUDITOR: Assignments, Add Signing Key, Add Attestation Key, Finalise Contract, Verify Attestation, Audit
+- ENV_OPERATOR: Assignments, Export Contract, Attestation Records, Audit
 - VIEWER: Assignments, Audit
 
 ## 9.4 Local Crypto Boundary
@@ -733,7 +737,7 @@ Server startup seeding env vars:
 - Roles are modeled in both `persona_role` enum (`user_roles`) and `roles` table (`build_assignments`, `build_sections`) for backward compatibility and staged migration.
 - OpenAPI endpoint is static and can lag runtime behavior.
 - V1 build states (`AUDITOR_KEYS_REGISTERED`, `CONTRACT_ASSEMBLED`) are retained in the enum for backward compatibility but are not used by the v2 workflow.
-- Electron app v2 service files (`keyService.js`, `contractV2Service.js`, `attestationService.js`) are pending implementation.
+- Frontend v2 API calls are currently consolidated in `buildService.js` (key registration, section/finalize orchestration, attestation evidence upload/verify); dedicated split service files remain optional refactor work.
 
 ---
 

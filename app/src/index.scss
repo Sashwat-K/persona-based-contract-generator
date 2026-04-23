@@ -1009,6 +1009,33 @@ body {
   gap: 1rem;
 }
 
+/* Build Management toolbar icon alignment */
+.build-management-table-stack .build-management-toolbar-filter.cds--btn--icon-only,
+.build-management-table-stack .build-management-toolbar-menu.cds--overflow-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cds-layout-size-height-local);
+  min-width: var(--cds-layout-size-height-local);
+  height: var(--cds-layout-size-height-local);
+  padding: 0;
+}
+
+.build-management-table-stack .build-management-toolbar-filter.cds--btn--icon-only .cds--btn__icon {
+  position: static;
+  margin: 0;
+}
+
+.build-management-table-stack .build-management-toolbar-menu.cds--overflow-menu .cds--overflow-menu__icon {
+  margin: 0;
+}
+
+.build-management-table-stack .build-management-toolbar-export.cds--btn .cds--btn__icon {
+  inset-block-start: 50%;
+  margin-block-start: 0;
+  transform: translateY(-50%);
+}
+
 .build-management-pagination {
   margin-top: 0.75rem;
 }
@@ -1671,6 +1698,69 @@ body {
 
 .workflow-inline-actions--spaced {
   margin-top: 1rem;
+}
+
+.attestation-evidence-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.attestation-evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.attestation-evidence-meta__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 140px;
+}
+
+.attestation-evidence-meta__label {
+  font-size: 0.75rem;
+  color: var(--cds-text-secondary);
+}
+
+.attestation-evidence-uploaders {
+  display: grid;
+  gap: 1rem;
+}
+
+.attestation-evidence-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.attestation-evidence-id {
+  margin-top: 0.75rem;
+}
+
+.attestation-evidence-id .cds--snippet-container {
+  max-width: 100%;
+}
+
+.attestation-evidence-results {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.attestation-evidence-contractgo-error {
+  margin-top: 0.5rem;
+}
+
+.attestation-evidence-contractgo-error__label {
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--cds-support-error);
 }
 
 .workflow-terminal {
@@ -3657,26 +3747,39 @@ html {
 }
 
 .password-strength-meter__bar {
+  background-color: var(--cds-layer);
+  height: 0.5rem;
+  width: 100%;
+  min-width: 3rem;
   margin-bottom: 0.75rem;
+  border-radius: 999px;
+  overflow: hidden;
 }
 
-.password-strength-meter__bar--red .cds--progress-bar__bar {
+.password-strength-meter__bar-fill {
+  height: 100%;
+  width: 0;
+  display: block;
+  transition: width 140ms cubic-bezier(0.2, 0, 0.38, 0.9);
+}
+
+.password-strength-meter__bar-fill--red {
   background-color: var(--cds-support-error);
 }
 
-.password-strength-meter__bar--yellow .cds--progress-bar__bar {
+.password-strength-meter__bar-fill--yellow {
   background-color: var(--cds-support-warning);
 }
 
-.password-strength-meter__bar--cyan .cds--progress-bar__bar {
+.password-strength-meter__bar-fill--cyan {
   background-color: var(--cds-support-info);
 }
 
-.password-strength-meter__bar--green .cds--progress-bar__bar {
+.password-strength-meter__bar-fill--green {
   background-color: var(--cds-support-success);
 }
 
-.password-strength-meter__bar--gray .cds--progress-bar__bar {
+.password-strength-meter__bar-fill--gray {
   background-color: var(--cds-border-subtle-01);
 }
 
@@ -4073,30 +4176,6 @@ html {
 
 .password-strength-meter__icon--error {
   color: var(--cds-text-disabled);
-}
-
-/* Fix button icon and text alignment - Global */
-.cds--btn {
-  align-items: center !important;
-}
-
-.cds--btn svg {
-  vertical-align: middle;
-}
-
-/* Specific fix for table toolbar and batch action buttons */
-.cds--table-toolbar .cds--btn,
-.cds--batch-actions .cds--btn {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-
-/* Only target button icon wrappers, not all children */
-.cds--table-toolbar .cds--btn .cds--btn__icon,
-.cds--batch-actions .cds--btn .cds--btn__icon {
-  display: inline-flex !important;
-  align-items: center !important;
 }
 
 /* ============================================
