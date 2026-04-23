@@ -208,5 +208,3 @@ const BuildStatistics = ({ builds, loading = false }) => {
 };
 
 export default BuildStatistics;
-
-// Made with Bob

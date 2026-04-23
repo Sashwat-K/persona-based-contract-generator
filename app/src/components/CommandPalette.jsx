@@ -423,5 +423,3 @@ const CommandPaletteItem = ({ action, isSelected, onClick }) => {
 };
 
 export default CommandPalette;
-
-// Made with Bob

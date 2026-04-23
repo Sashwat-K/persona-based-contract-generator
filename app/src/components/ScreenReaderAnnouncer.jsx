@@ -57,5 +57,3 @@ export const useScreenReaderAnnouncement = () => {
 };
 
 export default ScreenReaderAnnouncer;
-
-// Made with Bob

@@ -102,5 +102,3 @@ const KeyboardShortcutsHelp = ({ open, onClose }) => {
 };
 
 export default KeyboardShortcutsHelp;
-
-// Made with Bob

@@ -134,5 +134,3 @@ export const isPasswordValid = (password) => {
 };
 
 export default PasswordStrengthMeter;
-
-// Made with Bob

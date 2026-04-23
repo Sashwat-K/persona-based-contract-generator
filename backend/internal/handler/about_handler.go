@@ -85,5 +85,3 @@ func getOpenSSLVersion() string {
 
 	return version
 }
-
-// Made with Bob

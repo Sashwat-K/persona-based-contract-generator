@@ -137,5 +137,3 @@ export const getPlatformShortcut = (shortcut) => {
 };
 
 export default useKeyboardShortcuts;
-
-// Made with Bob

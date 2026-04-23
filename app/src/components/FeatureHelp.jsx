@@ -389,5 +389,3 @@ const FeatureHelp = ({ open, onClose }) => {
 };
 
 export default FeatureHelp;
-
-// Made with Bob

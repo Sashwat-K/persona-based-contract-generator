@@ -367,5 +367,3 @@ const FilterPresetManager = ({
 };
 
 export default FilterPresetManager;
-
-// Made with Bob
