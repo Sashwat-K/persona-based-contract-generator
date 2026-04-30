@@ -1,6 +1,6 @@
 services:
   reverse_proxy:
-    image: nginx:1.27-alpine
+    image: quay.io/sashwatk/nginx:latest
     container_name: hpcr-reverse-proxy
     depends_on:
       backend:
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16-alpine
+    image: quay.io/sashwatk/postgres:latest
     container_name: hpcr-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-hpcr_builder}
@@ -64,7 +64,7 @@ services:
       - db_net
 
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: quay.io/sashwatk/pgadmin4:latest
     container_name: hpcr-pgadmin
     depends_on:
       postgres:
@@ -87,7 +87,7 @@ services:
       - db_net
 
   vault:
-    image: hashicorp/vault:1.19
+    image: quay.io/sashwatk/vault:latest
     container_name: hpcr-vault
     cap_add:
       - IPC_LOCK
@@ -112,7 +112,7 @@ services:
     restart: unless-stopped
 
   vault-init:
-    image: hashicorp/vault:1.19
+    image: quay.io/sashwatk/vault:latest
     container_name: hpcr-vault-init
     depends_on:
       vault:
@@ -138,7 +138,7 @@ services:
       - app_net
 
   vault-ui:
-    image: djenriquez/vault-ui:latest
+    image: quay.io/sashwatk/vault-ui:latest
     container_name: hpcr-vault-ui
     depends_on:
       vault:
@@ -227,7 +227,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    image: migrate/migrate:4
+    image: quay.io/sashwatk/migrate:latest
     container_name: hpcr-migrate
     depends_on:
       postgres:
