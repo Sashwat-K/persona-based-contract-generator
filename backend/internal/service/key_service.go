@@ -30,12 +30,11 @@ type contractEngine interface {
 
 // KeyRegistrationResult is returned from key registration endpoints.
 type KeyRegistrationResult struct {
-	KeyID        uuid.UUID `json:"key_id"`
-	PublicKey    string    `json:"public_key"`
-	Fingerprint  string    `json:"fingerprint"`
-	Mode         string    `json:"mode"`
-	KeyType      string    `json:"key_type"`
-	VaultManaged bool      `json:"vault_managed"`
+	KeyID       uuid.UUID `json:"key_id"`
+	PublicKey   string    `json:"public_key"`
+	Fingerprint string    `json:"fingerprint"`
+	Mode        string    `json:"mode"`
+	KeyType     string    `json:"key_type"`
 }
 
 // NewKeyService creates a key orchestration service.
@@ -81,7 +80,7 @@ func (s *KeyService) RegisterSigningKey(
 
 	providerRecord, err := s.keyProvider.CreateSigningKey(ctx, buildID, actorID, mode, publicKey, passphrase)
 	if err != nil {
-		return nil, mapKeyProviderError(err)
+		return nil, err
 	}
 
 	record, err := s.store.createBuildKey(ctx, buildKeyRow{
@@ -90,7 +89,6 @@ func (s *KeyService) RegisterSigningKey(
 		KeyType:              model.BuildKeyTypeSigning,
 		Mode:                 mode,
 		Status:               model.BuildKeyStatusActive,
-		VaultRef:             providerRecord.VaultRef,
 		PublicKey:            providerRecord.PublicKey,
 		PublicKeyFingerprint: providerRecord.PublicKeyFingerprint,
 		CreatedBy:            actorID,
@@ -105,12 +103,11 @@ func (s *KeyService) RegisterSigningKey(
 	}
 
 	return &KeyRegistrationResult{
-		KeyID:        record.ID,
-		PublicKey:    record.PublicKey,
-		Fingerprint:  record.PublicKeyFingerprint,
-		Mode:         string(record.Mode),
-		KeyType:      string(record.KeyType),
-		VaultManaged: record.VaultRef != nil,
+		KeyID:       record.ID,
+		PublicKey:   record.PublicKey,
+		Fingerprint: record.PublicKeyFingerprint,
+		Mode:        string(record.Mode),
+		KeyType:     string(record.KeyType),
 	}, nil
 }
 
@@ -132,7 +129,7 @@ func (s *KeyService) RegisterAttestationKey(
 
 	providerRecord, exportToken, err := s.keyProvider.CreateAttestationKey(ctx, buildID, actorID, mode, publicKey, passphrase)
 	if err != nil {
-		return nil, nil, mapKeyProviderError(err)
+		return nil, nil, err
 	}
 
 	// Encrypt the attestation public key using the provided encryption certificate
@@ -151,7 +148,6 @@ func (s *KeyService) RegisterAttestationKey(
 		KeyType:              model.BuildKeyTypeAttestation,
 		Mode:                 mode,
 		Status:               model.BuildKeyStatusActive,
-		VaultRef:             providerRecord.VaultRef,
 		PublicKey:            encryptedPublicKey,
 		PublicKeyFingerprint: providerRecord.PublicKeyFingerprint,
 		CreatedBy:            actorID,
@@ -166,12 +162,11 @@ func (s *KeyService) RegisterAttestationKey(
 	}
 
 	return &KeyRegistrationResult{
-		KeyID:        record.ID,
-		PublicKey:    record.PublicKey,
-		Fingerprint:  record.PublicKeyFingerprint,
-		Mode:         string(record.Mode),
-		KeyType:      string(record.KeyType),
-		VaultManaged: record.VaultRef != nil,
+		KeyID:       record.ID,
+		PublicKey:   record.PublicKey,
+		Fingerprint: record.PublicKeyFingerprint,
+		Mode:        string(record.Mode),
+		KeyType:     string(record.KeyType),
 	}, exportToken, nil
 }
 
@@ -193,12 +188,11 @@ func (s *KeyService) GetLatestSigningPublicKey(ctx context.Context, buildID, act
 		return nil, fmt.Errorf("failed to fetch signing key: %w", err)
 	}
 	return &KeyRegistrationResult{
-		KeyID:        row.ID,
-		PublicKey:    row.PublicKey,
-		Fingerprint:  row.PublicKeyFingerprint,
-		Mode:         string(row.Mode),
-		KeyType:      string(row.KeyType),
-		VaultManaged: row.VaultRef != nil,
+		KeyID:       row.ID,
+		PublicKey:   row.PublicKey,
+		Fingerprint: row.PublicKeyFingerprint,
+		Mode:        string(row.Mode),
+		KeyType:     string(row.KeyType),
 	}, nil
 }
 
@@ -275,20 +269,4 @@ func (s *KeyService) moveToAttestationKeyRegistered(
 		requestSignature,
 		requestSignatureHash,
 	)
-}
-
-func mapKeyProviderError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	message := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(message, "vault transit mount") && strings.Contains(message, "not enabled"):
-		return model.ErrInternal("Vault transit engine is not enabled. Enable transit and retry key registration.")
-	case strings.Contains(message, "vault request failed (403)"):
-		return model.ErrInternal("Vault denied the key operation. Check transit policies and token permissions.")
-	default:
-		return err
-	}
 }

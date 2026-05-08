@@ -1,40 +1,27 @@
-package mock
+package db
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/pem"
 	"fmt"
-	"sync"
+	"strings"
 
 	"github.com/google/uuid"
 
 	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
 )
 
-type storedKey struct {
-	record     keymgmt.KeyRecord
-	privateKey *rsa.PrivateKey
-}
-
-// Provider is a development-only in-memory key provider.
+// Provider implements KeyProvider using PostgreSQL for key storage.
+// Private keys are always encrypted with a user-supplied passphrase (AES-256-CBC PEM format).
 type Provider struct {
-	mu   sync.RWMutex
-	keys map[uuid.UUID]storedKey
+	queries repository.Querier
 }
 
-// New creates an in-memory mock key provider.
-func New() *Provider {
-	return &Provider{
-		keys: make(map[uuid.UUID]storedKey),
-	}
+// New creates a database-backed key provider.
+func New(queries repository.Querier) *Provider {
+	return &Provider{queries: queries}
 }
 
 func (p *Provider) CreateSigningKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (keymgmt.KeyRecord, error) {
@@ -46,68 +33,32 @@ func (p *Provider) CreateAttestationKey(ctx context.Context, buildID, actorID uu
 	if err != nil {
 		return keymgmt.KeyRecord{}, nil, err
 	}
-	// Mock provider intentionally does not export private keys by default.
+	// Private key export is intentionally not returned — caller decrypts with passphrase when needed.
 	return record, nil, nil
 }
 
 func (p *Provider) GetPublicKey(ctx context.Context, keyID uuid.UUID) (string, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	key, ok := p.keys[keyID]
-	if !ok {
-		return "", fmt.Errorf("key not found")
-	}
-	return key.record.PublicKey, nil
+	// Public key is stored in build_keys table via v2Store; this is a fallback path.
+	// In practice, the key service reads public keys from the v2Store directly.
+	return "", fmt.Errorf("GetPublicKey: use v2Store.getLatestActiveBuildKeyByType for public key lookups")
 }
 
 func (p *Provider) GetPrivateKey(ctx context.Context, keyID uuid.UUID) ([]byte, error) {
-	_ = ctx
-	p.mu.RLock()
-	key, ok := p.keys[keyID]
-	p.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("key not found")
+	row, err := p.queries.GetBuildKeyPrivate(ctx, keyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read encrypted private key for key_id %s: %w", keyID, err)
 	}
-	if key.privateKey == nil {
-		return nil, fmt.Errorf("private key unavailable for uploaded public-key mode")
-	}
-
-	privDER := x509.MarshalPKCS1PrivateKey(key.privateKey)
-	privPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: privDER,
-	})
-	if len(privPEM) == 0 {
-		return nil, fmt.Errorf("failed to encode private key")
-	}
-	return privPEM, nil
+	// Return the encrypted PEM bytes — caller decrypts with passphrase.
+	return row.EncryptedKey, nil
 }
 
 func (p *Provider) SignDigest(ctx context.Context, keyID uuid.UUID, digestHex string) (string, error) {
-	p.mu.RLock()
-	key, ok := p.keys[keyID]
-	p.mu.RUnlock()
-	if !ok {
-		return "", fmt.Errorf("key not found")
-	}
-	if key.privateKey == nil {
-		return "", fmt.Errorf("key does not support signing")
-	}
-
-	// Match backend verifier semantics (RSA-SHA256 over the hash-hex string bytes).
-	digest := sha256.Sum256([]byte(digestHex))
-	signature, err := rsa.SignPSS(rand.Reader, key.privateKey, crypto.SHA256, digest[:], &rsa.PSSOptions{
-		SaltLength: rsa.PSSSaltLengthEqualsHash,
-		Hash:       crypto.SHA256,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to sign digest: %w", err)
-	}
-	return base64.StdEncoding.EncodeToString(signature), nil
+	// DB provider does not perform server-side signing.
+	// Signing is done in contract_service.go using the decrypted private key + contract-go library.
+	return "", fmt.Errorf("SignDigest is not supported by the DB key provider; use contract-go signing with passphrase")
 }
 
 func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, keyType model.BuildKeyType, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (keymgmt.KeyRecord, error) {
-	_ = ctx
 	record := keymgmt.KeyRecord{
 		ID:        uuid.New(),
 		BuildID:   buildID,
@@ -117,23 +68,35 @@ func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, ke
 		CreatedBy: actorID,
 	}
 
-	var priv *rsa.PrivateKey
 	switch mode {
 	case model.BuildKeyModeGenerate:
-		privateKey, err := rsa.GenerateKey(rand.Reader, 4096)
-		if err != nil {
-			return keymgmt.KeyRecord{}, fmt.Errorf("failed to generate rsa key: %w", err)
+		// Passphrase is mandatory for key generation
+		if passphrase == nil || strings.TrimSpace(*passphrase) == "" {
+			return keymgmt.KeyRecord{}, fmt.Errorf("passphrase is required for key generation")
 		}
-		priv = privateKey
 
-		pubDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
-		if err != nil {
-			return keymgmt.KeyRecord{}, fmt.Errorf("failed to marshal public key: %w", err)
+		// Validate passphrase strength
+		if err := appcrypto.ValidatePassphraseStrength(*passphrase); err != nil {
+			return keymgmt.KeyRecord{}, fmt.Errorf("weak passphrase: %w", err)
 		}
-		record.PublicKey = string(pem.EncodeToMemory(&pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: pubDER,
-		}))
+
+		// Generate RSA-4096 key pair with passphrase-encrypted private key
+		pubPEM, encPrivPEM, err := appcrypto.GenerateEncryptedKeyPair(*passphrase)
+		if err != nil {
+			return keymgmt.KeyRecord{}, fmt.Errorf("failed to generate key pair: %w", err)
+		}
+
+		record.PublicKey = pubPEM
+
+		// Store encrypted private key in build_keys_private table
+		if err := p.queries.StoreBuildKeyPrivate(ctx, repository.StoreBuildKeyPrivateParams{
+			KeyID:          record.ID,
+			EncryptedKey:   []byte(encPrivPEM),
+			EncryptionAlgo: "aes-256-cbc",
+		}); err != nil {
+			return keymgmt.KeyRecord{}, fmt.Errorf("failed to store encrypted private key: %w", err)
+		}
+
 	case model.BuildKeyModeUploadPublic:
 		if publicKeyPEM == nil || *publicKeyPEM == "" {
 			return keymgmt.KeyRecord{}, fmt.Errorf("public key is required for upload_public mode")
@@ -142,6 +105,7 @@ func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, ke
 			return keymgmt.KeyRecord{}, fmt.Errorf("invalid public key: %w", err)
 		}
 		record.PublicKey = *publicKeyPEM
+
 	default:
 		return keymgmt.KeyRecord{}, fmt.Errorf("unsupported key mode: %s", mode)
 	}
@@ -151,10 +115,6 @@ func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, ke
 		return keymgmt.KeyRecord{}, fmt.Errorf("failed to compute public key fingerprint: %w", err)
 	}
 	record.PublicKeyFingerprint = fingerprint
-
-	p.mu.Lock()
-	p.keys[record.ID] = storedKey{record: record, privateKey: priv}
-	p.mu.Unlock()
 
 	return record, nil
 }

@@ -220,7 +220,7 @@ func (s *AttestationService) VerifyEvidence(ctx context.Context, in VerifyAttest
 	privateKeyPEM, err := s.keyProvider.GetPrivateKey(ctx, keyRow.ID)
 	if err != nil {
 		verdict = model.AttestationVerdictRejected
-		details["reason"] = "attestation private key is unavailable (requires generated Vault-managed key)"
+		details["reason"] = "attestation private key is unavailable (requires generated key with passphrase)"
 	} else {
 		defer zeroizeBytes(privateKeyPEM)
 		recordsText, decryptErr := s.engine.HpcrGetAttestationRecords(ctx, string(evidence.RecordsContent), string(privateKeyPEM), strings.TrimSpace(in.AttestationKeyPassphrase))

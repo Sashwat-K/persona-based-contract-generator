@@ -23,11 +23,10 @@ type KeyRecord struct {
 	Status            model.BuildKeyStatus
 	PublicKey         string
 	PublicKeyFingerprint string
-	VaultRef          *string
 	CreatedBy         uuid.UUID
 }
 
-// KeyProvider abstracts key lifecycle operations for Vault and mock providers.
+// KeyProvider abstracts key lifecycle operations for DB and mock providers.
 type KeyProvider interface {
 	CreateSigningKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (KeyRecord, error)
 	CreateAttestationKey(ctx context.Context, buildID, actorID uuid.UUID, mode model.BuildKeyMode, publicKeyPEM *string, passphrase *string) (KeyRecord, *OneTimePrivateExport, error)

@@ -102,18 +102,16 @@ func (s *BuildService) GetBuild(ctx context.Context, id uuid.UUID) (*repository.
 
 // ListBuilds returns a paginated list of builds, optionally filtered by status.
 func (s *BuildService) ListBuilds(ctx context.Context, limit, offset int32, status string) ([]repository.ListBuildsRow, error) {
-	var nullStatus repository.NullBuildStatus
+	var statusPtr *repository.BuildStatus
 	if status != "" {
-		nullStatus = repository.NullBuildStatus{
-			BuildStatus: repository.BuildStatus(status),
-			Valid:       true,
-		}
+		bs := repository.BuildStatus(status)
+		statusPtr = &bs
 	}
 
 	builds, err := s.queries.ListBuilds(ctx, repository.ListBuildsParams{
 		Limit:  limit,
 		Offset: offset,
-		Status: nullStatus,
+		Status: statusPtr,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list builds: %w", err)

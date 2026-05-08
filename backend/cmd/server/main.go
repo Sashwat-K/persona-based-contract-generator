@@ -17,8 +17,7 @@ import (
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/config"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/contract/contractgo"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/handler"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt"
-	vaultprovider "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt/vault"
+	dbprovider "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt/db"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/middleware"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
 	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
@@ -71,13 +70,9 @@ func main() {
 	middleware.SetSystemLogHook(systemLogService.LogEvent)
 	systemLogService.LogEvent(ctx, "system", "SERVER_STARTED", "Backend Server", cfg.ServerHost, "SUCCESS", "Server boot sequence completed")
 
-	// Initialize v2 key provider (Vault)
-	keyProvider, err := initKeyProvider(cfg)
-	if err != nil {
-		slog.Error("failed to initialize key provider", "error", err)
-		os.Exit(1)
-	}
-	slog.Info("key provider initialized", "provider", cfg.KeyProvider)
+	// Initialize DB key provider (keys stored encrypted in PostgreSQL)
+	keyProvider := dbprovider.New(queries)
+	slog.Info("key provider initialized", "provider", "db")
 
 	// Initialize v2 contract engine (Go-native replacement for contract-cli)
 	contractEngine := contractgo.New()
@@ -403,23 +398,4 @@ func seedAdminUser(ctx context.Context, queries repository.Querier, bcryptCost i
 
 	slog.Info("admin user created", "id", admin.ID, "email", admin.Email)
 	return nil
-}
-
-// initKeyProvider creates the Vault key provider.
-func initKeyProvider(cfg *config.Config) (keymgmt.KeyProvider, error) {
-	provider, err := vaultprovider.New(vaultprovider.Config{
-		Addr:           cfg.VaultAddr,
-		Namespace:      cfg.VaultNamespace,
-		AuthMethod:     cfg.VaultAuthMethod,
-		RoleID:         cfg.VaultRoleID,
-		SecretID:       cfg.VaultSecretID,
-		Token:          cfg.VaultToken,
-		TransitMount:   cfg.VaultTransitMount,
-		KVMount:        cfg.VaultKVMount,
-		RequestTimeout: cfg.VaultRequestTimeout,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return provider, nil
 }

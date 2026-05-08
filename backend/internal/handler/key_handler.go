@@ -95,7 +95,6 @@ func (h *KeyHandler) RegisterSigningKey(w http.ResponseWriter, r *http.Request) 
 		"public_key":     result.PublicKey,
 		"fingerprint":    result.Fingerprint,
 		"mode":           result.Mode,
-		"vault_managed":  result.VaultManaged,
 	})
 }
 
@@ -167,7 +166,6 @@ func (h *KeyHandler) RegisterAttestationKey(w http.ResponseWriter, r *http.Reque
 		"public_key":         result.PublicKey,
 		"fingerprint":        result.Fingerprint,
 		"mode":               result.Mode,
-		"vault_managed":      result.VaultManaged,
 	}
 	if exportToken != nil {
 		payload["private_export"] = exportToken
@@ -200,6 +198,5 @@ func (h *KeyHandler) GetSigningPublicKey(w http.ResponseWriter, r *http.Request)
 		"public_key":     result.PublicKey,
 		"fingerprint":    result.Fingerprint,
 		"mode":           result.Mode,
-		"vault_managed":  result.VaultManaged,
 	})
 }

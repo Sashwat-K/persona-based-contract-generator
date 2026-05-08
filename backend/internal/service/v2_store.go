@@ -27,7 +27,6 @@ type buildKeyRow struct {
 	KeyType              model.BuildKeyType
 	Mode                 model.BuildKeyMode
 	Status               model.BuildKeyStatus
-	VaultRef             *string
 	PublicKey            string
 	PublicKeyFingerprint string
 	CreatedBy            uuid.UUID
@@ -37,10 +36,10 @@ type buildKeyRow struct {
 func (s *v2Store) createBuildKey(ctx context.Context, row buildKeyRow) (*buildKeyRow, error) {
 	const q = `
 INSERT INTO build_keys (
-	id, build_id, key_type, mode, status, vault_ref, public_key, public_key_fingerprint, created_by
+	id, build_id, key_type, mode, status, public_key, public_key_fingerprint, created_by
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-RETURNING id, build_id, key_type, mode, status, vault_ref, public_key, public_key_fingerprint, created_by, created_at
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+RETURNING id, build_id, key_type, mode, status, public_key, public_key_fingerprint, created_by, created_at
 `
 	var out buildKeyRow
 	if err := s.db.QueryRow(ctx, q,
@@ -49,7 +48,6 @@ RETURNING id, build_id, key_type, mode, status, vault_ref, public_key, public_ke
 		string(row.KeyType),
 		string(row.Mode),
 		string(row.Status),
-		row.VaultRef,
 		row.PublicKey,
 		row.PublicKeyFingerprint,
 		row.CreatedBy,
@@ -59,7 +57,6 @@ RETURNING id, build_id, key_type, mode, status, vault_ref, public_key, public_ke
 		&out.KeyType,
 		&out.Mode,
 		&out.Status,
-		&out.VaultRef,
 		&out.PublicKey,
 		&out.PublicKeyFingerprint,
 		&out.CreatedBy,
@@ -72,7 +69,7 @@ RETURNING id, build_id, key_type, mode, status, vault_ref, public_key, public_ke
 
 func (s *v2Store) getBuildKeyByID(ctx context.Context, keyID uuid.UUID) (*buildKeyRow, error) {
 	const q = `
-SELECT id, build_id, key_type, mode, status, vault_ref, public_key, public_key_fingerprint, created_by, created_at
+SELECT id, build_id, key_type, mode, status, public_key, public_key_fingerprint, created_by, created_at
 FROM build_keys
 WHERE id = $1
 `
@@ -83,7 +80,6 @@ WHERE id = $1
 		&out.KeyType,
 		&out.Mode,
 		&out.Status,
-		&out.VaultRef,
 		&out.PublicKey,
 		&out.PublicKeyFingerprint,
 		&out.CreatedBy,
@@ -96,7 +92,7 @@ WHERE id = $1
 
 func (s *v2Store) getLatestActiveBuildKeyByType(ctx context.Context, buildID uuid.UUID, keyType model.BuildKeyType) (*buildKeyRow, error) {
 	const q = `
-SELECT id, build_id, key_type, mode, status, vault_ref, public_key, public_key_fingerprint, created_by, created_at
+SELECT id, build_id, key_type, mode, status, public_key, public_key_fingerprint, created_by, created_at
 FROM build_keys
 WHERE build_id = $1 AND key_type = $2 AND status = 'ACTIVE'
 ORDER BY created_at DESC
@@ -109,7 +105,6 @@ LIMIT 1
 		&out.KeyType,
 		&out.Mode,
 		&out.Status,
-		&out.VaultRef,
 		&out.PublicKey,
 		&out.PublicKeyFingerprint,
 		&out.CreatedBy,
