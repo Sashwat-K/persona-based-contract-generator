@@ -5,18 +5,11 @@ FROM docker.io/golang:1.26-alpine AS builder
 
 WORKDIR /src
 
-# Install golang-migrate (used by the migrate entrypoint).
+# Install golang-migrate from source (no pre-built s390x binary available).
 ARG MIGRATE_VERSION=v4.18.3
-RUN set -eux; \
-    apk add --no-cache curl; \
-    ARCH="$(uname -m)"; \
-    case "${ARCH}" in \
-      x86_64)  ARCH=amd64 ;; \
-      s390x)   ARCH=s390x ;; \
-    esac; \
-    curl -fsSL "https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-${ARCH}.tar.gz" \
-      | tar -xz -C /usr/local/bin migrate; \
-    chmod +x /usr/local/bin/migrate
+RUN CGO_ENABLED=0 go install -tags 'postgres' -ldflags="-s -w" \
+    -o /usr/local/bin/migrate \
+    github.com/golang-migrate/migrate/v4/cmd/migrate@${MIGRATE_VERSION}
 
 # Cache Go module dependencies.
 COPY go.mod go.sum ./
