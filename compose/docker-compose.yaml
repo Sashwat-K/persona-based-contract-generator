@@ -81,7 +81,7 @@ services:
 
 
   backend:
-    image: ghcr.io/sashwat-k/persona-based-contract-generator:latest
+    image: ghcr.io/sashwat-k/persona-based-contract-generator:16c886c@sha256:5fdaabb341ab46c01c3340434fbadc8405acb000018d6cf190211091425d1a30
     container_name: hpcr-backend
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
@@ -130,7 +130,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    image: ghcr.io/sashwat-k/persona-based-contract-generator:latest
+    image: ghcr.io/sashwat-k/persona-based-contract-generator:16c886c@sha256:5fdaabb341ab46c01c3340434fbadc8405acb000018d6cf190211091425d1a30
     container_name: hpcr-migrate
     depends_on:
       postgres:
