@@ -8,8 +8,8 @@ WORKDIR /src
 # Install golang-migrate from source (no pre-built s390x binary available).
 ARG MIGRATE_VERSION=v4.18.3
 RUN CGO_ENABLED=0 go install -tags 'postgres' -ldflags="-s -w" \
-    -o /usr/local/bin/migrate \
-    github.com/golang-migrate/migrate/v4/cmd/migrate@${MIGRATE_VERSION}
+    github.com/golang-migrate/migrate/v4/cmd/migrate@${MIGRATE_VERSION} \
+    && mv $(go env GOPATH)/bin/migrate /usr/local/bin/migrate
 
 # Cache Go module dependencies.
 COPY go.mod go.sum ./
