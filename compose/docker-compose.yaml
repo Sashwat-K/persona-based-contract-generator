@@ -81,7 +81,7 @@ services:
 
 
   backend:
-    image: docker.io/sashwatk/persona-based-contract-generator:latest
+    image: ghcr.io/sashwat-k/persona-based-contract-generator:latest
     container_name: hpcr-backend
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
@@ -130,7 +130,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    image: docker.io/sashwatk/persona-based-contract-generator:latest
+    image: ghcr.io/sashwat-k/persona-based-contract-generator:latest
     container_name: hpcr-migrate
     depends_on:
       postgres:
