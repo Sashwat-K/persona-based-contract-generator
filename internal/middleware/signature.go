@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/crypto"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 )
 
 const signatureTolerance = 5 * time.Minute

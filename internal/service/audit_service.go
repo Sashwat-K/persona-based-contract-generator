@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/crypto"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 )
 
 // AuditService handles the deterministic hash chain of build events.

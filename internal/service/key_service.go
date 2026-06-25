@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/keymgmt"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 )
 
 // KeyService orchestrates build-scoped signing and attestation keys.

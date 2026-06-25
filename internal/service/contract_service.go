@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 
-	contractengine "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/contract"
-	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	contractengine "github.com/Sashwat-K/persona-based-contract-generator/internal/contract"
+	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/internal/crypto"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 )
 
 // ContractService owns backend-native section encryption and finalization logic.
@@ -97,6 +97,14 @@ func (s *ContractService) GetContractTemplate(ctx context.Context, templateType 
 		return "", "", model.ErrInvalidRequest("failed to load contract template")
 	}
 	return normalized, template, nil
+}
+
+func (s *ContractService) ListAvailableEncCertVersions(ctx context.Context) ([]string, error) {
+	versions, err := s.engine.ListAvailableEncCertVersions(ctx)
+	if err != nil {
+		return nil, model.ErrInternal("failed to retrieve available encryption certificate versions")
+	}
+	return versions, nil
 }
 
 func (s *ContractService) SubmitWorkloadSection(ctx context.Context, in SubmitSectionV2Input) (*repository.BuildSection, error) {

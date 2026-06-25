@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 )
 
 // AssignmentService handles build-to-user-to-role assignments.

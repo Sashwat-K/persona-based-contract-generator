@@ -22,17 +22,17 @@ Thumbs.db
 !.env.example
 
 # Go Backend
-backend/bin/
-backend/server
-backend/*.exe
-backend/*.exe~
-backend/*.dll
-backend/*.so
-backend/*.dylib
-backend/*.test
-backend/*.out
-backend/vendor/
-backend/coverage.txt
+bin/
+server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+coverage.txt
 
 # macOS Build
 DerivedData/
@@ -48,7 +48,7 @@ xcuserdata/
 *.xcarchive
 
 # Docker / Local Datastores
-backend/pgdata/
+pgdata/
 docker-volume/
 config/nginx/certs/
 

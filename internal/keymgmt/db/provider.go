@@ -7,10 +7,10 @@ import (
 
 	"github.com/google/uuid"
 
-	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/internal/crypto"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/keymgmt"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 )
 
 // Provider implements KeyProvider using PostgreSQL for key storage.

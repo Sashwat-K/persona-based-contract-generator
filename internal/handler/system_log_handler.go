@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/service"
 )
 
 type SystemLogHandler struct {

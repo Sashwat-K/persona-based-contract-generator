@@ -7,9 +7,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/middleware"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/middleware"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/service"
 )
 
 // BuildHandler handles build management endpoints.
@@ -247,7 +247,7 @@ func (h *BuildHandler) FinalizeBuild(w http.ResponseWriter, r *http.Request) {
 	if req.PublicKey != "" {
 		pubKeyPtr = &req.PublicKey
 	}
-	
+
 	err = h.buildService.FinalizeBuild(r.Context(), buildID, req.ContractHash, req.ContractYaml, actorID, ip, sigPtr, pubKeyPtr)
 	if err != nil {
 		logSystemEvent(

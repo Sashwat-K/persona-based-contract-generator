@@ -6,9 +6,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/middleware"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/middleware"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/service"
 )
 
 // ExportHandler handles contract export and verification endpoints.

@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 
-	contractengine "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/contract"
-	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	contractengine "github.com/Sashwat-K/persona-based-contract-generator/internal/contract"
+	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/internal/crypto"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 )
 
 // AttestationService handles evidence uploads and verification.

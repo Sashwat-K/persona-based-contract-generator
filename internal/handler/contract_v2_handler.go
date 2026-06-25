@@ -7,9 +7,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/middleware"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/middleware"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/service"
 )
 
 // ContractV2Handler handles backend-native contract operations (v2 endpoints).
@@ -57,6 +57,23 @@ func (h *ContractV2Handler) GetContractTemplate(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"template_type": resolvedType,
 		"content":       content,
+	})
+}
+
+// ListAvailableEncCertVersions handles GET /v2/encryption-certificates/versions
+func (h *ContractV2Handler) ListAvailableEncCertVersions(w http.ResponseWriter, r *http.Request) {
+	versions, err := h.contractService.ListAvailableEncCertVersions(r.Context())
+	if err != nil {
+		if appErr, ok := err.(*model.AppError); ok {
+			writeError(w, appErr)
+			return
+		}
+		writeError(w, model.ErrInternal("Failed to retrieve available encryption certificate versions."))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"versions": versions,
 	})
 }
 

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )

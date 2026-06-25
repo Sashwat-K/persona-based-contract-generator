@@ -14,13 +14,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/config"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/contract/contractgo"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/handler"
-	dbprovider "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt/db"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/middleware"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/config"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/contract/contractgo"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/handler"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/middleware"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/service"
+
+	dbprovider "github.com/Sashwat-K/persona-based-contract-generator/internal/keymgmt/db"
 )
 
 func main() {
@@ -191,11 +192,11 @@ func buildRouter(
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
-	
+
 	// About/Version information (unauthenticated)
 	aboutHandler := handler.NewAboutHandler()
 	r.Get("/about", aboutHandler.GetAbout)
-	
+
 	r.Get("/openapi.json", swaggerHandler.OpenAPISpec)
 	r.Get("/swagger", swaggerHandler.UI)
 	r.Get("/swagger/", swaggerHandler.UI)
@@ -215,6 +216,7 @@ func buildRouter(
 		// Roles reference data
 		r.Get("/roles", roleHandler.ListRoles)
 		r.Post("/v2/contract-template", contractV2Handler.GetContractTemplate)
+		r.Get("/v2/encryption-certificates/versions", contractV2Handler.ListAvailableEncCertVersions)
 
 		// User management (ADMIN-only mutations; ADMIN/AUDITOR can list)
 		r.Route("/users", func(r chi.Router) {

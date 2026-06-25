@@ -3,8 +3,8 @@ package handler
 import (
 	"net/http"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/middleware"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/middleware"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/service"
 )
 
 func requestIP(r *http.Request) string {

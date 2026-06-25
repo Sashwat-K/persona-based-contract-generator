@@ -14,10 +14,11 @@ import (
 	"fmt"
 	"strings"
 
+	hpcertificate "github.com/ibm-hyper-protect/contract-go/v2/certificate"
 	hpcontract "github.com/ibm-hyper-protect/contract-go/v2/contract"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/contract"
-	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/contract"
+	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/internal/crypto"
 )
 
 type encryptedEnvelope struct {
@@ -82,7 +83,7 @@ signingKey: <signing key or certificate>
 // "hyper-protect-basic.<encrypted-password>.<encrypted-data>".
 func (e *Engine) EncryptString(ctx context.Context, plaintext, certPEM string) (string, error) {
 	_ = ctx
-	encrypted, _, _, err := hpcontract.HpcrTextEncrypted(plaintext, "", certPEM)
+	encrypted, _, _, err := hpcontract.HpcrTextEncrypted(plaintext, "", certPEM, "")
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt plaintext with contract-go v2: %w", err)
 	}
@@ -336,4 +337,39 @@ func parseRSAPrivateKey(privateKeyPEM, password string) (*rsa.PrivateKey, error)
 		return nil, fmt.Errorf("private key is not RSA")
 	}
 	return key, nil
+}
+
+// ListAvailableEncCertVersions returns the list of available encryption certificate versions
+// by calling HpcrListAvailableEncCertVersions from contract-go certificate package.
+// It returns all available certificate versions in JSON format.
+func (e *Engine) ListAvailableEncCertVersions(ctx context.Context) ([]string, error) {
+	_ = ctx
+	// Get all available certificate versions in JSON format
+	// Empty osType returns all OS types, "json" format returns structured data
+	versionsJSON, err := hpcertificate.HpcrListAvailableEncCertVersions("", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list available encryption certificate versions: %w", err)
+	}
+
+	// Parse the JSON response to extract version strings
+	var certData map[string][]string
+	if err := json.Unmarshal([]byte(versionsJSON), &certData); err != nil {
+		return nil, fmt.Errorf("failed to parse certificate versions JSON: %w", err)
+	}
+
+	// Collect all unique versions from all OS types
+	versionSet := make(map[string]bool)
+	for _, versions := range certData {
+		for _, version := range versions {
+			versionSet[version] = true
+		}
+	}
+
+	// Convert set to slice
+	result := make([]string, 0, len(versionSet))
+	for version := range versionSet {
+		result = append(result, version)
+	}
+
+	return result, nil
 }

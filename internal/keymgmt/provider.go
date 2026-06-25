@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
 )
 
 // OneTimePrivateExport is returned only for explicitly exportable key operations.
@@ -16,14 +16,14 @@ type OneTimePrivateExport struct {
 
 // KeyRecord contains provider-managed metadata returned during key registration.
 type KeyRecord struct {
-	ID                uuid.UUID
-	BuildID           uuid.UUID
-	Type              model.BuildKeyType
-	Mode              model.BuildKeyMode
-	Status            model.BuildKeyStatus
-	PublicKey         string
+	ID                   uuid.UUID
+	BuildID              uuid.UUID
+	Type                 model.BuildKeyType
+	Mode                 model.BuildKeyMode
+	Status               model.BuildKeyStatus
+	PublicKey            string
 	PublicKeyFingerprint string
-	CreatedBy         uuid.UUID
+	CreatedBy            uuid.UUID
 }
 
 // KeyProvider abstracts key lifecycle operations for DB and mock providers.

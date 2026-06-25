@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
 )
 
 const maxRequestBodySize = 1 << 20 // 1MB default for JSON requests

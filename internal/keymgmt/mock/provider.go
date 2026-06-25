@@ -14,9 +14,9 @@ import (
 
 	"github.com/google/uuid"
 
-	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/backend/internal/crypto"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/keymgmt"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/model"
+	appcrypto "github.com/Sashwat-K/persona-based-contract-generator/internal/crypto"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/keymgmt"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/model"
 )
 
 type storedKey struct {

@@ -1,18 +1,18 @@
-module github.com/Sashwat-K/persona-based-contract-generator/backend
+module github.com/Sashwat-K/persona-based-contract-generator
 
 go 1.26.1
 
 require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
-	github.com/ibm-hyper-protect/contract-go/v2 v2.19.0
+	github.com/ibm-hyper-protect/contract-go/v2 v2.22.0
 	github.com/jackc/pgx/v5 v5.9.2
 	golang.org/x/crypto v0.50.0
 	golang.org/x/time v0.15.0
 )
 
 require (
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

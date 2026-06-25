@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/repository"
-	"github.com/Sashwat-K/persona-based-contract-generator/backend/internal/service"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/repository"
+	"github.com/Sashwat-K/persona-based-contract-generator/internal/service"
 )
 
 // Auth returns middleware that validates Bearer token authentication.
